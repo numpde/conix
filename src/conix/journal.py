@@ -41,7 +41,6 @@ def advisory_key(settings: Settings) -> int:
 
 
 SCHEMA = """
-CREATE SCHEMA IF NOT EXISTS conix;
 CREATE TABLE IF NOT EXISTS conix.source_progress (
     id smallint PRIMARY KEY CHECK (id = 1),
     schema_version integer NOT NULL CHECK (schema_version = 1),
@@ -353,6 +352,14 @@ class Writer:
         self._require_active()
         settings = self._journal.settings
         async with self._connection.transaction():
+            # An authorized schema may be provisioned by a separate database
+            # owner. CREATE SCHEMA IF NOT EXISTS still requires database-wide
+            # CREATE even when the schema already exists; do not request it.
+            result = await (await self._connection.execute(
+                "SELECT to_regnamespace('conix') AS schema_id"
+            )).fetchone()
+            if result["schema_id"] is None:
+                await self._connection.execute("CREATE SCHEMA conix")
             for statement in SCHEMA.split(";"):
                 if statement.strip():
                     await self._connection.execute(statement)
