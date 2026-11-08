@@ -6,6 +6,12 @@ It exercises exactly the public owner installer, twice, to verify idempotence.
 
 import asyncio
 import os
+import sys
+from pathlib import Path
+
+# PYTHONSAFEPATH deliberately omits the executed script's directory.
+# The trusted test fixture lives in the installed image's fixed /tests tree.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
