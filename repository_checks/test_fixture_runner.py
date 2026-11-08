@@ -194,6 +194,22 @@ class FixtureRunnerTests(unittest.TestCase):
             self.assertFalse(campaign.sql_retired)
             producer.assert_not_called()
 
+    def test_timed_out_owned_process_is_reaped_before_retirement(self):
+        import time
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "stdout"
+            error = Path(directory) / "stderr"
+            start = time.monotonic()
+            with self.assertRaises(runner.CampaignError):
+                runner.owned_command(
+                    [sys.executable, "-c", "import time; time.sleep(30)"],
+                    output=output, error_file=error, env=os.environ.copy(),
+                    timeout=0.1,
+                )
+            self.assertLess(time.monotonic() - start, 5)
+            self.assertTrue(output.is_file())
+            self.assertTrue(error.is_file())
+
     def test_sibling_path_is_explicit_and_non_symlinked(self):
         with tempfile.TemporaryDirectory() as path:
             root = Path(path)
