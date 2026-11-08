@@ -62,6 +62,22 @@ elif "compose" in args and "config" in args:
                       "read_only": True, "user": "65532:65532"},
             "postgres": {"read_only": True, "user": "999:999", "image": os.environ["CONIX_POSTGRES_IMAGE"]}},
             "networks": {"tests": {"internal": not bool(os.getenv("CONIX_FAKE_BAD_NETWORK"))}}}))
+elif "run" in args and args[args.index("run") + 1:]:
+    # Runtime deployment checks execute only a non-root, read-only, one-shot
+    # installed-Python input inspection. This is a known operation, not a
+    # blanket acceptance of arbitrary docker run commands.
+    tail = args[args.index("run") + 1:]
+    if (
+        "--rm" not in tail
+        or "--network" not in tail
+        or "none" not in tail
+        or "--read-only" not in tail
+        or "--entrypoint" not in tail
+        or tail[tail.index("--entrypoint") + 1] != "python"
+        or "-c" not in tail
+    ):
+        print("Recording Docker refuses an unrecognized container run.", file=sys.stderr)
+        sys.exit(97)
 elif "compose" in args:
     # The recording client may simulate only the operations exercised by the
     # current operator. New Docker commands require an explicit fixture update.
