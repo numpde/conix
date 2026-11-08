@@ -16,7 +16,7 @@ import sys
 from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fixture_protocol import FixtureError, decode, receipt
+from fixture_protocol import FixtureError, _bad_constant, _pairs, decode, receipt
 
 from eth_abi import encode
 from eth_utils import keccak, to_checksum_address
@@ -40,7 +40,10 @@ def _input():
     if len(source) > ONE_MIB:
         raise FixtureError("Contained fixture request exceeded 1 MiB.")
     try:
-        content = json.loads(source.decode("utf-8"))
+        content = json.loads(
+            source.decode("utf-8"), object_pairs_hook=_pairs,
+            parse_constant=_bad_constant,
+        )
     except (ValueError, UnicodeError) as error:
         raise FixtureError("Contained fixture request is invalid JSON.") from None
     if type(content) is not dict or set(content) != {"descriptor", "state"}:
