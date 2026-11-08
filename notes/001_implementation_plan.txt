@@ -509,3 +509,35 @@ Outstanding independently qualified concerns: selected production HBA/database
 admission; actual rootless UID/network mapping; live Anvil and pay-to-play
 financial integration; failover and full reorganization scenarios. The
 disposable CI role split does not certify the target deployment's grants.
+
+
+Addendum (2026-11-09): dapp32 fixture-handoff implementation for T0-A
+---------------------------------------------------------------------
+
+The first T0-A vertical slice consumes the real producer JSON rather than
+owning a second Solidity compilation, Anvil server or fixture lifecycle.
+This refines the preceding "existing real-contract fixture" decision while
+preserving the original T0-A through T0-F acceptance criteria above.
+
+One explicit tests/fixture command selects a local rootless Docker Engine,
+an absolute dapp32 checkout and an already built immutable Conix fixture
+test image. The host operator invokes dapp32's supported up/info/down Make
+targets without modifying its files. It validates the bounded private JSON
+including ABI, chain, deployment, project and test accounts, then checks the
+actual producer-owned internal network and running Anvil service. A fresh
+random ID establishes ownership; failed/unknown creation does not imply a
+right to erase an unverified project. No automatic existing-fixture attach.
+
+Conix owns only the disposable SQL project: bootstrap, owner-only source
+initialization, a set of installed observer/indexer tests, and its cleanup.
+One test-only Foundry Cast binary signs voucherDigest returned by the actual
+deployed PayToPlay contract; no test EIP-712/hash engine or secret wallet enters
+the core package. The same Tier-0 run_session, checked journal, observer and
+repair_to execute, including across distinct runner process lifetimes.
+
+The campaign demonstrates real event/position/coverage/restart/reorg behavior,
+but DOES NOT claim full Tier-0 completion until the existing pay-to-play
+accounting consumer is wired to Conix and the financial cycle/reconciliation
+tests pass. Unknown-COMMIT and production network/finality qualification also
+remain explicit gates. CI without a verified real rootless sibling fixture
+cannot be represented as successful T0-A live qualification.

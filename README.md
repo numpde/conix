@@ -224,3 +224,63 @@ Not in Tier 0: retries, automatic fork recovery, prefetch, caches, alternative
 payment logic, parallel/range scanning, multiple writers, other chains or
 automatic schema upgrades. An unsupported observation fails rather than
 manufacturing complete history, current canonicality or finality evidence.
+
+
+Real-contract fixture campaign (explicit, test-only)
+---------------------------------------------------
+
+Conix consumes dapp32's existing pay-to-play.local-fixture.v1 interface. The
+producer checkout, contracts and Anvil Compose stack are NOT copied or edited.
+The test harness invokes dapp32's supported fixture/up, validates the returned
+private one-line JSON (including exact chain/deployment/ABI identities), checks
+the actual internal Docker network and producer-owned Anvil container, then
+independently invokes fixture/info. A new unpredictable fixture ID is generated
+per test. Attached/existing fixtures are never mutated or automatically removed.
+
+Choose an explicit local rootless Docker context and a real absolute dapp32
+checkout. The sibling's own pinned Solidity dependencies/build prerequisites
+must be prepared in that checkout before its fixture/up operation; Conix does
+not change or install them. Conix builds its test-only Cast tool from dapp32's
+reviewed Foundry-image digest. Neither the normal runtime nor the ordinary SQL
+test image contains the signing tool.
+
+    make deps/images/prepare DOCKER_CONTEXT=science
+    wheels="$(make -s deps/wheelhouse/build DOCKER_CONTEXT=science)"
+    make deps/fixture-image/prepare DOCKER_CONTEXT=science
+    fixture="$(make -s tests/fixture/image/build DOCKER_CONTEXT=science WHEELHOUSE_IMAGE="$wheels")"
+    make tests/fixture/image/smoke DOCKER_CONTEXT=science CONIX_FIXTURE_IMAGE="$fixture"
+    make tests/fixture DOCKER_CONTEXT=science \
+      DAPP32_DIR=/absolute/path/to/dapp32 CONIX_FIXTURE_IMAGE="$fixture"
+
+What this explicit lane exercises:
+  - dapp32 emits a receipt-verified real contract deployment as JSON;
+  - no fixture metadata is accepted from an unverified project/network;
+  - Conix creates disposable PostgreSQL roles with separate owner/runtime
+    privileges and installs its real schema through the owner-only operation;
+  - the original run_session scans real blocks and empty blocks;
+  - the test-only transaction driver funds a real position, registers its
+    voucher key, signs the contract's own voucherDigest using Cast, and
+    collects two actual vouchers across a payee change;
+  - the concrete observer serves matching collection pages, pinned position
+    values and canonical block evidence;
+  - a separate test container restarts the ordinary session on retained SQL
+    state with no duplicate effects;
+  - Anvil snapshot/revert replaces collection blocks, the same Tier-0 session
+    detects and persists the contradiction, the original checked repair_to
+    rewinds to a verified retained ancestor, and normal scanning resumes
+    without old collection events or valid old cursors.
+
+Private fixture test keys arrive only as stdin to one-shot test containers;
+they are absent from image layers, Docker environment and ordinary worker
+credentials. Test-only Anvil account impersonation is NEVER a production
+transaction-submission mechanism. The temporary Conix SQL stack is retired
+before the producer-owned dapp32 fixture. On an uncertain outcome, the harness
+retains a private diagnostic directory and prints exact recovery coordinates.
+Do not publish its fixture.json or stderr receipts.
+
+The hosted CI campaign proves source contracts and optionally builds/smokes
+the test image; it does not create a dapp32 fixture. An actual local run must
+be reported separately. Successful Conix event scanning does not establish
+pay-to-play invoice acceptance, payment-cycle reconciliation, unknown-COMMIT
+fault injection or production finality safety; those remaining T0-D/T0-F gates
+require the real accounting consumer and causal failure tests.

@@ -58,3 +58,18 @@ and real PostgreSQL tests run in a contained, disposable stack with a restricted
 runtime database role. The full Anvil and pay-to-play accounting scenario must
 be qualified independently; do not claim it passed merely because source, SQL
 or container tests are green.
+
+
+Sibling-fixture campaign
+------------------------
+The explicit tests/fixture lane consumes the public dapp32 repository's
+supported fixture/up, fixture/info and fixture/down contract, never changes its
+source or starts a replacement Anvil implementation. The descriptor is a
+bounded private stdin handoff; its test keys cannot appear in output, Docker
+labels, environment variables, log messages or runtime image layers.
+The optional Foundry Cast binary belongs in the fixture image alone. Prefer
+the deployed contract's voucherDigest over a duplicate EIP-712 implementation.
+Only Conix-owned SQL and verified newly created producer fixtures may be
+retired automatically; preserve exact recovery records on uncertain outcomes.
+The real fixture campaign and the pay-to-play accounting acceptance gate are
+distinct qualifications and must be reported separately.
