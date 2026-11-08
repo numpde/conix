@@ -468,6 +468,7 @@ class Docker:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--from-make", action="store_true")
     parser.add_argument("--context", default="")
     parser.add_argument("--origin", default="undefined")
     parser.add_argument("action", choices=(
@@ -487,6 +488,25 @@ def main():
     parser.add_argument("--rpc-network")
     args = parser.parse_args()
     try:
+        if args.from_make:
+            # Make exports simple, literally captured values via $(value VAR).
+            # No operator text is ever interpolated into a shell recipe.
+            raw = {key: os.environ.get("CONIX_MAKE_" + key, "") for key in (
+                "DOCKER_CONTEXT", "WHEELHOUSE_IMAGE", "CONIX_IMAGE",
+                "CONIX_TEST_IMAGE", "CONIX_CONFIG_FILE", "CONIX_DSN_FILE",
+                "CONIX_INPUT_VOLUME", "CONIX_DEPLOYMENT",
+                "CONIX_DATABASE_NETWORK", "CONIX_RPC_NETWORK",
+            )}
+            args.context = raw["DOCKER_CONTEXT"]
+            args.wheelhouse_image = raw["WHEELHOUSE_IMAGE"]
+            args.image = raw["CONIX_IMAGE"]
+            args.test_image = raw["CONIX_TEST_IMAGE"]
+            args.config_file = raw["CONIX_CONFIG_FILE"]
+            args.dsn_file = raw["CONIX_DSN_FILE"]
+            args.volume = raw["CONIX_INPUT_VOLUME"]
+            args.deployment = raw["CONIX_DEPLOYMENT"]
+            args.database_network = raw["CONIX_DATABASE_NETWORK"]
+            args.rpc_network = raw["CONIX_RPC_NETWORK"]
         endpoint = select_endpoint(args.context, args.origin)
         with tempfile.TemporaryDirectory(prefix="conix-docker-client-") as directory:
             config = Path(directory)
