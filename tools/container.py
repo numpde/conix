@@ -146,6 +146,15 @@ class Docker:
                      env=env, timeout=240)
         except Exception as error:
             failure = error
+            # Capture bounded diagnostics before teardown, not after the
+            # disposable container has been removed. These are fixture-only
+            # services; never use this on a deployment with private inputs.
+            try:
+                self.run(*compose, "ps", "--all", env=env, timeout=15)
+                self.run(*compose, "logs", "--no-color", "--tail", "35",
+                         "postgres", "tests", env=env, timeout=15)
+            except OperationError:
+                pass
         finally:
             try:
                 self.run(*compose, "down", "--volumes", "--remove-orphans",

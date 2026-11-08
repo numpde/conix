@@ -7,6 +7,7 @@ services:
       POSTGRES_USER: conix
       POSTGRES_PASSWORD: conix-disposable-container-tests
       POSTGRES_DB: conix_test
+    user: "999:999"
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
