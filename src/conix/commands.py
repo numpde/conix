@@ -121,9 +121,11 @@ def main(argv=None):
     except (ConfigurationError, CorruptStore, StateChanged, Blocked, BranchConflict,
             WriterBusy, ObservationProtocolError, ObservationUnavailable,
             HistoryUnavailable, RpcUnavailable, RpcProtocolError, RpcError,
-            ValueError, OSError) as error:
+            ValueError, TimeoutError, OSError) as error:
         # The operator owns the DSN file; never show its contents or the DSN.
-        if isinstance(error, OSError):
+        if isinstance(error, TimeoutError):
+            detail = "Operation deadline exceeded; inspect the selected RPC and database, then restart from durable progress."
+        elif isinstance(error, OSError):
             detail = f"{type(error).__name__}; inspect configured file, database and permissions."
         else:
             detail = str(error)

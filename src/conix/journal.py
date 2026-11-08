@@ -178,6 +178,17 @@ class Journal:
             self._dsn, autocommit=True, row_factory=dict_row,
             connect_timeout=10,
         ) as connection:
+            # PostgreSQL enforces these deadlines independently of Python
+            # cancellation or an unreachable database/client connection.
+            milliseconds = max(1, int(self.settings.operation_timeout_seconds * 1000))
+            await connection.execute(
+                "SELECT set_config('statement_timeout', %s, false)",
+                (f"{milliseconds}ms",),
+            )
+            await connection.execute(
+                "SELECT set_config('lock_timeout', %s, false)",
+                (f"{min(milliseconds, 5000)}ms",),
+            )
             yield connection
 
     @asynccontextmanager

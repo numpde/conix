@@ -77,7 +77,10 @@ async def run_session(journal, chain: Chain, stop: asyncio.Event):
                 f"Stored checkpoint at block {basis.checkpoint.number} is no longer canonical.",
             )
         while not stop.is_set():
-            result = await advance_one(writer, chain)
+            # Bound the entire one-block operation, not only each individual
+            # RPC request. Cancellation still unwinds the owned writer session.
+            async with asyncio.timeout(chain.settings.operation_timeout_seconds):
+                result = await advance_one(writer, chain)
             if not result.changed:
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=chain.settings.poll_seconds)

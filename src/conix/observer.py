@@ -4,7 +4,9 @@ No ledger dependency and no second scan algorithm. Every read is anchored to a
 durable complete prefix and checked against the configured canonical source.
 """
 
+import asyncio
 from datetime import UTC, datetime
+from functools import wraps
 
 from eth_typing import ChecksumAddress
 
@@ -22,6 +24,20 @@ from conix.models import (
     ObservationUnavailable,
     PositionObservation,
 )
+
+
+def _operation_deadline(method):
+    """One bounded semantic operation; never catch external task cancellation."""
+    @wraps(method)
+    async def call(self, *args, **kwargs):
+        try:
+            async with asyncio.timeout(self.journal.settings.operation_timeout_seconds):
+                return await method(self, *args, **kwargs)
+        except TimeoutError as error:
+            raise ObservationUnavailable(
+                f"Cannot {method.__name__}: observation exceeded its configured operation deadline."
+            ) from error
+    return call
 
 
 class Observer:
@@ -61,9 +77,11 @@ class Observer:
             head,
         )
 
+    @_operation_deadline
     async def latest_checkpoint(self) -> Checkpoint:
         return await self._checkpoint()
 
+    @_operation_deadline
     async def latest_position(self, customer: ChecksumAddress, channel_id: int) -> PositionObservation:
         checkpoint = await self._checkpoint()
         asset, position = await self.chain.contract.position(customer, channel_id, checkpoint.block)
@@ -72,6 +90,7 @@ class Observer:
         await self.journal.ensure_checkpoint(checkpoint)
         return PositionObservation(checkpoint, datetime.now(UTC), asset, position)
 
+    @_operation_deadline
     async def voucher_collected_events(
         self, checkpoint: Checkpoint, *, cursor: CollectionCursor | None, limit: int,
     ) -> CollectionPage:
@@ -81,6 +100,7 @@ class Observer:
         await self.journal.ensure_checkpoint(checkpoint)
         return page
 
+    @_operation_deadline
     async def canonical_evidence(
         self, checkpoint: Checkpoint, block_numbers: tuple[int, ...], *, include_finalized: bool,
     ) -> CanonicalEvidence:
