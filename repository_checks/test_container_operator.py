@@ -33,7 +33,8 @@ elif "compose" in args and "config" in args:
     print(json.dumps({"services": {
         "tests": {"image": os.environ["CONIX_TEST_IMAGE"],
                   "read_only": True, "user": "65532:65532"},
-        "postgres": {"read_only": True, "image": os.environ["CONIX_POSTGRES_IMAGE"]}}}))
+        "postgres": {"read_only": True, "user": "999:999", "image": os.environ["CONIX_POSTGRES_IMAGE"]}},
+        "networks": {"tests": {"internal": not bool(os.getenv("CONIX_FAKE_BAD_NETWORK"))}}}))
 elif "compose" in args and "up" in args and os.getenv("CONIX_FAKE_UP_FAIL"):
     sys.exit(3)
 elif "compose" in args and "down" in args and os.getenv("CONIX_FAKE_DOWN_FAIL"):
@@ -57,7 +58,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 with self.assertRaises(operator.OperationError):
                     operator.select_endpoint("science", "environment")
 
-    def run_fake(self, *, fail_up=False, fail_down=False):
+    def run_fake(self, *, fail_up=False, fail_down=False, bad_network=False):
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)
             fake = directory / "docker"
@@ -74,6 +75,8 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 env["CONIX_FAKE_UP_FAIL"] = "1"
             if fail_down:
                 env["CONIX_FAKE_DOWN_FAIL"] = "1"
+            if bad_network:
+                env["CONIX_FAKE_BAD_NETWORK"] = "1"
             image = "sha256:" + "a" * 64
             run = subprocess.run([
                 sys.executable, str(TOOL),
@@ -104,6 +107,13 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0)
         self.assertTrue(any("up" in item["args"] for item in calls))
         self.assertTrue(any("down" in item["args"] for item in calls))
+
+    def test_external_test_network_is_rejected_before_creation(self):
+        completed, calls = self.run_fake(bad_network=True)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertFalse(any("up" in item["args"] for item in calls))
+        self.assertFalse(any("down" in item["args"] for item in calls))
+        self.assertIn("network", completed.stderr)
 
     def test_uncertain_teardown_is_reported_as_failure(self):
         completed, calls = self.run_fake(fail_down=True)
