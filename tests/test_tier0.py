@@ -185,6 +185,21 @@ class PostgreSQLContracts(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(result.changed)
         self.assertEqual((await self.journal.basis()).collection_count, 1)
 
+    async def test_runtime_database_role_has_no_cluster_or_ledger_authority(self):
+        # The disposable campaign provisions a separate bootstrap owner and a
+        # named restricted runtime identity. Exercising all SQL as POSTGRES_USER
+        # would mask illicit cross-schema access in the production package.
+        import psycopg
+
+        async with await AsyncConnection.connect(self.dsn, autocommit=True) as connection:
+            cursor = await connection.execute(
+                "SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls "
+                "FROM pg_roles WHERE rolname = current_user"
+            )
+            self.assertEqual(tuple(await cursor.fetchone()), (False,) * 5)
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                await connection.execute("SELECT * FROM ledger.operator_private")
+
     async def test_one_writer_on_same_session_as_all_mutations(self):
         async with self.journal.writer() as first:
             await first.basis()
