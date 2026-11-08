@@ -456,7 +456,7 @@ class Docker:
                 or services["bootstrap"].get("image") != images["postgres"]
                 or services["bootstrap"].get("user") != "999:999"
                 or services["bootstrap"].get("read_only") is not True
-                or any(s.get("ports") or s.get("privileged") or s.get("network_mode") for s in services.values())
+                or any(s.get("build") or s.get("ports") or s.get("privileged") or s.get("network_mode") for s in services.values())
                 or any(any(v.get("type") == "bind" for v in s.get("volumes", [])) for s in services.values())
                 or len(networks) != 1
                 or not next(iter(networks.values())).get("internal")):
@@ -471,9 +471,9 @@ class Docker:
             self.run(*compose, "up", "--detach", "--no-build", "--pull", "never",
                      "--wait", "--wait-timeout", "60", "postgres",
                      env=env, timeout=90)
-            self.run(*compose, "run", "--rm", "--no-deps", "--no-build", "--pull",
+            self.run(*compose, "run", "--rm", "--no-deps", "--pull",
                      "never", "bootstrap", env=env, timeout=60)
-            self.run(*compose, "run", "--rm", "--no-deps", "--no-build", "--pull",
+            self.run(*compose, "run", "--rm", "--no-deps", "--pull",
                      "never", "tests", env=env, timeout=240)
         except Exception as error:
             failure = error
