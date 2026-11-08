@@ -40,6 +40,8 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Check installed entry point
         run: conix --help
+      - name: Generate exact wheel-hash lock candidates for review
+        run: python tools/lock_wheels.py --emit-b64
       - name: Build the production container image
         run: docker build --target runtime -t conix-tier0:ci .
       - name: Exercise the packaged container entry point
