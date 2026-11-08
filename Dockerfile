@@ -19,15 +19,16 @@ RUN --network=none python -m pip wheel --no-deps --no-build-isolation \
 
 FROM ${PYTHON_BASE_IMAGE} AS runtime
 ENV HOME=/tmp PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONSAFEPATH=1
-COPY requirements/runtime.lock /build/requirements/runtime.lock
-RUN --network=none --mount=type=bind,source=wheelhouse,target=/wheels,readonly \
+RUN --network=none \
+    --mount=type=bind,source=requirements/runtime.lock,target=/tmp/conix-runtime.lock,readonly \
+    --mount=type=bind,source=wheelhouse,target=/wheels,readonly \
     python -m pip install --no-cache-dir --no-index --find-links=/wheels \
-    --require-hashes --only-binary=:all: -r /build/requirements/runtime.lock
-COPY --from=package /dist/conix-0.1.0-py3-none-any.whl /dist/conix-0.1.0-py3-none-any.whl
-RUN --network=none python -m pip install --no-cache-dir --no-index \
-    --no-deps /dist/conix-0.1.0-py3-none-any.whl \
-    && python -m pip check \
-    && rm -rf /dist /build
+    --require-hashes --only-binary=:all: -r /tmp/conix-runtime.lock
+RUN --network=none \
+    --mount=type=bind,from=package,source=/dist/conix-0.1.0-py3-none-any.whl,target=/tmp/conix-0.1.0-py3-none-any.whl,readonly \
+    python -m pip install --no-cache-dir --no-index \
+    --no-deps /tmp/conix-0.1.0-py3-none-any.whl \
+    && python -m pip check
 USER 65532:65532
 WORKDIR /tmp
 ENTRYPOINT ["conix"]
