@@ -541,3 +541,52 @@ accounting consumer is wired to Conix and the financial cycle/reconciliation
 tests pass. Unknown-COMMIT and production network/finality qualification also
 remain explicit gates. CI without a verified real rootless sibling fixture
 cannot be represented as successful T0-A live qualification.
+
+
+Amendment (2026-11-09): use the existing NMR shared wheelhouse protocol
+---------------------------------------------------------------------
+
+Conix's per-repository wheelhouse Docker image was a temporary convenience,
+not a Tier-0 design requirement. Replace that extra image with the shared
+host-local WHEELHOUSE used by the NMR repositories. Keep runtime.lock and
+build.lock as the single issuer-owned requirements/hashes; do not convert
+or duplicate them into a second maintained pylock. The reusable released
+nmr-provider-tools wheelhouse tool is pinned by version and complete SHA-256,
+and its source-lock-bound pylock projection is an ephemeral acquisition input.
+
+Warm check: select under the target CPython 3.12 installation environment in
+a contained, networkless, read-only, unprivileged worker. Require every
+selected wheel to be present and hash-admitted by the original locks.
+Ordinary builds must never choose an index, resolve dependencies, download,
+or acquire additional artifacts. The one explicitly authorized acquire goal
+may contact package metadata and wheel URLs only when the pool misses a
+selected dependency or released tool; selected artifacts are published under
+the shared tool's pool locks, no clobber and atomic-rename/hardlink guarantees.
+A complete warm pool needs no network. The selected host path is explicit:
+no implicit WHEELHOUSE default, no repository-local staging directory,
+no wheelhouse image or image export/copy.
+
+BuildKit gets a streamed, curated tar context containing checked source and
+exact selected wheel bytes from the common pool. Pip runs ONLY in image build
+stages with --no-index and --require-hashes, using the mounted temporary
+context wheel directory. The wheel set must not survive in the final image.
+A successful build is admitted only when BOTH streamer and Docker build
+complete and the immutable image ID is established; tag only afterward.
+
+The selected Docker Engine endpoint remains pinned across image acquisition,
+pool checks, BuildKit, tests, input staging and cleanup. Do not send shared
+wheel bytes to any other selected Engine. Containers receive exact source
+mounts, rootless/host-owned pool read/write identities, cap_drop ALL,
+no-new-privileges, memory/PID/time limits, network none except explicit cold
+acquisition, and read-only roots. The host script may use the released
+standalone zipapp as a *streamer*; all dependency installation happens inside
+Docker image build, never with host pip. CI must qualify both reuse and cold
+acquisition, no image-in-image cache coupling, and the negative no-network and
+host-path boundary.
+
+This amends Tier-0 build/qualification plumbing, not scanner, journal,
+schema owner, observer, repair, or financial acceptance semantics. The
+existing NMR interface-bound gateway is an independent egress-routing
+mechanism: unless separately installed/qualified, an acquisition worker
+on a standard Docker bridge is NOT proof of interface binding. Record
+that limitation, and never claim the shared cache implies an egress firewall.
