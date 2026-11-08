@@ -26,6 +26,10 @@ jobs:
           make image/smoke DOCKER_CONTEXT=default CONIX_IMAGE="$runtime"
           test_image="$(make -s tests/image/build DOCKER_CONTEXT=default WHEELHOUSE_IMAGE="$wheelhouse")"
           make tests/container DOCKER_CONTEXT=default CONIX_TEST_IMAGE="$test_image"
+          # The signer exists only in this optional, separately built test image.
+          make deps/fixture-image/prepare DOCKER_CONTEXT=default
+          fixture_image="$(make -s tests/fixture/image/build DOCKER_CONTEXT=default WHEELHOUSE_IMAGE="$wheelhouse")"
+          make tests/fixture/image/smoke DOCKER_CONTEXT=default CONIX_FIXTURE_IMAGE="$fixture_image"
           # Stage the real distribution's fixed inputs in a private engine volume.
           # A second, unprivileged, read-only container proves readability.
           candidate="$(mktemp)"

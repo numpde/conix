@@ -26,7 +26,7 @@ override export CONIX_MAKE_CONIX_DATABASE_NETWORK := $(value CONIX_DATABASE_NETW
 override export CONIX_MAKE_CONIX_RPC_NETWORK := $(value CONIX_RPC_NETWORK)
 
 .PHONY: help check/container check/inputs deps/images/prepare deps/fixture-image/prepare deps/wheelhouse/build \
-	image/build tests/image/build tests/fixture/image/build image/smoke tests/container tests/fixture \
+	image/build tests/image/build tests/fixture/image/build tests/fixture/image/smoke image/smoke tests/container tests/fixture \
 	inputs/stage inputs/proof inputs/remove schema/init runtime/start runtime/stop runtime/status
 
 help:
@@ -41,6 +41,7 @@ help:
 	  '  make tests/image/build DOCKER_CONTEXT=<context> WHEELHOUSE_IMAGE=sha256:<id>' \
 	  '  make tests/container DOCKER_CONTEXT=<context> CONIX_TEST_IMAGE=sha256:<id>' \
   '  make tests/fixture/image/build DOCKER_CONTEXT=<context> WHEELHOUSE_IMAGE=sha256:<id>' \
+  '  make tests/fixture/image/smoke DOCKER_CONTEXT=<context> CONIX_FIXTURE_IMAGE=sha256:<id>' \
   '  make tests/fixture DOCKER_CONTEXT=<context> DAPP32_DIR=/path/to/dapp32 CONIX_FIXTURE_IMAGE=sha256:<id>' \
 	  '  make image/smoke DOCKER_CONTEXT=<context> CONIX_IMAGE=sha256:<id>' \
 	  '  make inputs/stage|inputs/proof DOCKER_CONTEXT=<context> CONIX_IMAGE=sha256:<id>' \
@@ -107,3 +108,6 @@ tests/fixture/image/build:
 # Docker socket, contract source checkout, or test signing account keys.
 tests/fixture:
 	@python3 tools/fixture.py --from-make --origin "$(origin DOCKER_CONTEXT)"
+
+tests/fixture/image/smoke:
+	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" tests/fixture/image/smoke

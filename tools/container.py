@@ -217,6 +217,21 @@ class Docker:
                  "--pids-limit", "64", "--memory", "256m",
                  "--user", "65532:65532", image, "--help", timeout=30)
 
+    def smoke_fixture(self, image):
+        """Verify the installed optional image, no network or fixture credentials."""
+        if not IMAGE_ID.fullmatch(image or ""):
+            raise OperationError("CONIX_FIXTURE_IMAGE must select an immutable prebuilt image.")
+        self.require_image(image)
+        grants = (
+            "run", "--rm", "--network", "none", "--read-only",
+            "--user", "65532:65532", "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true",
+            "--pids-limit", "64", "--memory", "256m",
+        )
+        self.run(*grants, "--entrypoint", "cast", image, "--version", timeout=20)
+        self.run(*grants, "--entrypoint", "python", image,
+                 "-I", "/tests/fixture_campaign.py", "--help", timeout=20)
+
     def private_bytes(self, value, max_size, *, secret):
         path = Path(value)
         if not path.is_absolute():
@@ -577,7 +592,7 @@ def main():
     parser.add_argument("--origin", default="undefined")
     parser.add_argument("action", choices=(
         "deps/images/prepare", "deps/fixture-image/prepare", "deps/wheelhouse/build", "image/build",
-        "image/smoke", "tests/image/build", "tests/fixture/image/build", "tests/container",
+        "image/smoke", "tests/image/build", "tests/fixture/image/build", "tests/fixture/image/smoke", "tests/container",
         "inputs/stage", "inputs/proof", "inputs/remove", "schema/init",
         "runtime/start", "runtime/stop", "runtime/status",
     ))
@@ -629,6 +644,8 @@ def main():
                 docker.test(args.test_image or "", images)
             elif args.action == "image/smoke":
                 docker.smoke(args.image)
+            elif args.action == "tests/fixture/image/smoke":
+                docker.smoke_fixture(os.environ.get("CONIX_MAKE_CONIX_FIXTURE_IMAGE", "") if args.from_make else args.image)
             elif args.action in ("inputs/stage", "inputs/proof"):
                 docker.stage_inputs(args.image, args.config_file, args.dsn_file,
                                     proof=args.action == "inputs/proof")

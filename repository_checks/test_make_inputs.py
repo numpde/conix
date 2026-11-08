@@ -19,6 +19,8 @@ PARAMETERS = {
     "image/build": "WHEELHOUSE_IMAGE",
     "image/smoke": "CONIX_IMAGE",
     "tests/container": "CONIX_TEST_IMAGE",
+    "tests/fixture/image/smoke": "CONIX_FIXTURE_IMAGE",
+    "tests/fixture": "DAPP32_DIR",
     "inputs/stage": "CONIX_CONFIG_FILE",
     "inputs/proof": "CONIX_DSN_FILE",
     "inputs/remove": "CONIX_INPUT_VOLUME",
