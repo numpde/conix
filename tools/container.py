@@ -23,7 +23,7 @@ IMAGE_ID = re.compile(r"sha256:[a-f0-9]{64}\Z")
 def pinned_images():
     document = json.loads((ROOT / "containers/images.json").read_text(encoding="utf-8"))
     if set(document) != {"python_base", "postgres", "foundry"}:
-        raise OperationError("Reviewed image manifest must contain only python_base and postgres.")
+        raise OperationError("Reviewed image manifest must contain exactly python_base, postgres and foundry.")
     for role, name in document.items():
         if (type(name) is not str or "@sha256:" not in name
                 or not IMAGE_ID.fullmatch("sha256:" + name.rsplit("@sha256:", 1)[-1])):
@@ -52,7 +52,9 @@ def environment(client_config=None):
     # Ambient client/Compose overrides are not authority to select an Engine,
     # Compose file, project, profile or build path.
     result = {k: v for k, v in os.environ.items()
-              if not k.startswith(("DOCKER_", "COMPOSE_"))}
+              if not k.startswith(("DOCKER_", "COMPOSE_", "BUILDX_", "BUILDKIT_"))
+              and k not in ("CONTAINER_HOST", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                            "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy")}
     result["COMPOSE_DISABLE_ENV_FILE"] = "1"
     result["DOCKER_BUILDKIT"] = "1"
     if client_config is not None:
@@ -171,42 +173,6 @@ class Docker:
     def prepare_fixture_tool(self, images):
         """Explicit acquisition of the optional, test-only Foundry image."""
         self.run("pull", "--platform", "linux/amd64", images["foundry"], timeout=240)
-
-    def build(self, target, images, wheelhouse_image=None):
-        self.require_image(images["python_base"])
-        if target == "wheelhouse":
-            dockerfile, context, network = "containers/wheelhouse/Dockerfile", ".", "default"
-            kwargs = ()
-        else:
-            if not IMAGE_ID.fullmatch(wheelhouse_image or ""):
-                raise OperationError("WHEELHOUSE_IMAGE must name a prepared immutable local image ID.")
-            if self.require_image(wheelhouse_image) != wheelhouse_image:
-                raise OperationError("Selected wheelhouse image identity changed.")
-            # Dockerfile FROM consumes a local content-labelled tag, not the
-            # operator's mutable 'latest'. Verify this source by ID first;
-            # pip additionally verifies every selected wheel against the lock.
-            source = "conix-wheelhouse:sha-" + wheelhouse_image[7:27]
-            self.run("tag", wheelhouse_image, source, timeout=10)
-            dockerfile, context, network = "Dockerfile", ".", "none"
-            kwargs = ("--build-arg", "WHEELHOUSE_IMAGE=" + source)
-            if target == "fixture":
-                self.require_image(images["foundry"])
-                kwargs += ("--build-arg", "FOUNDRY_IMAGE=" + images["foundry"])
-        with tempfile.TemporaryDirectory(prefix="conix-image-") as directory:
-            iid = Path(directory) / "iid"
-            self.run(
-                "build", "--pull=false", "--platform", "linux/amd64",
-                *(("--target", target) if target != "wheelhouse" else ()),
-                "--network", network, "--file", dockerfile,
-                "--build-arg", "PYTHON_BASE_IMAGE=" + images["python_base"],
-                *kwargs, "--iidfile", str(iid),
-                "--tag", f"conix-tier0-{target}:local", context,
-                timeout=600, progress_to_stderr=True,
-            )
-            result = iid.read_text(encoding="ascii").strip()
-        if not IMAGE_ID.fullmatch(result):
-            raise OperationError("The image build did not provide an immutable image ID.")
-        return result
 
     def smoke(self, image):
         if not IMAGE_ID.fullmatch(image or ""):
@@ -605,13 +571,13 @@ def main():
     parser.add_argument("--context", default="")
     parser.add_argument("--origin", default="undefined")
     parser.add_argument("action", choices=(
-        "deps/images/prepare", "deps/fixture-image/prepare", "deps/wheelhouse/build", "image/build",
+        "deps/images/prepare", "deps/fixture-image/prepare", "deps/wheelhouse/check", "deps/wheelhouse/acquire", "image/build",
         "image/smoke", "tests/image/build", "tests/fixture/image/build", "tests/fixture/image/smoke", "tests/container",
         "inputs/stage", "inputs/proof", "inputs/remove", "schema/init",
         "runtime/start", "runtime/stop", "runtime/status",
     ))
     parser.add_argument("--test-image")
-    parser.add_argument("--wheelhouse-image")
+    parser.add_argument("--wheelhouse")
     parser.add_argument("--image")
     parser.add_argument("--config-file")
     parser.add_argument("--dsn-file")
@@ -626,13 +592,13 @@ def main():
             # Make exports simple, literally captured values via $(value VAR).
             # No operator text is ever interpolated into a shell recipe.
             raw = {key: os.environ.get("CONIX_MAKE_" + key, "") for key in (
-                "DOCKER_CONTEXT", "WHEELHOUSE_IMAGE", "CONIX_IMAGE",
+                "DOCKER_CONTEXT", "WHEELHOUSE", "CONIX_IMAGE",
                 "CONIX_TEST_IMAGE", "CONIX_CONFIG_FILE", "CONIX_DSN_FILE",
                 "CONIX_OWNER_DSN_FILE", "CONIX_INPUT_VOLUME", "CONIX_DEPLOYMENT",
                 "CONIX_DATABASE_NETWORK", "CONIX_RPC_NETWORK",
             )}
             args.context = raw["DOCKER_CONTEXT"]
-            args.wheelhouse_image = raw["WHEELHOUSE_IMAGE"]
+            args.wheelhouse = raw["WHEELHOUSE"]
             args.image = raw["CONIX_IMAGE"]
             args.test_image = raw["CONIX_TEST_IMAGE"]
             args.config_file = raw["CONIX_CONFIG_FILE"]
@@ -652,8 +618,12 @@ def main():
                 docker.prepare(images)
             elif args.action == "deps/fixture-image/prepare":
                 docker.prepare_fixture_tool(images)
-            elif args.action == "deps/wheelhouse/build":
-                print(docker.build("wheelhouse", images))
+            elif args.action in ("deps/wheelhouse/check", "deps/wheelhouse/acquire"):
+                from wheelhouse_operations import SharedWheelhouse
+                pool = SharedWheelhouse(docker, images, args.wheelhouse)
+                selected = pool.check() if args.action.endswith("/check") else pool.acquire()
+                print(f"Verified {len(selected)} hash-locked artifacts in the selected shared WHEELHOUSE.",
+                      file=sys.stderr)
             elif args.action == "tests/container":
                 docker.test(args.test_image or "", images)
             elif args.action == "image/smoke":
@@ -683,7 +653,8 @@ def main():
                     "tests/image/build": "tests",
                     "tests/fixture/image/build": "fixture",
                 }[args.action]
-                print(docker.build(target, images, args.wheelhouse_image))
+                from wheelhouse_operations import SharedWheelhouse
+                print(SharedWheelhouse(docker, images, args.wheelhouse).build(target))
     except (OperationError, OSError) as error:
         raise SystemExit(f"Conix container operation refused or failed: {error}") from None
 

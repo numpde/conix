@@ -1,14 +1,15 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 # Runtime packaging is offline; the acquisition Dockerfile is separate.
 ARG PYTHON_BASE_IMAGE
-ARG WHEELHOUSE_IMAGE
 ARG FOUNDRY_IMAGE=ghcr.io/foundry-rs/foundry:v1.7.1@sha256:8347b728d5d393dac1c018691b36f506d23b9dcd78341d40ea0fcb11c3a19cdd
-FROM ${WHEELHOUSE_IMAGE} AS wheelhouse
 
+# The curated BuildKit context contains exact hash-verified wheels streamed
+# from the NMR shared WHEELHOUSE. Only the RUN mounts see those files; no
+# stage COPYs the wheel pool into a persistent image layer.
 FROM ${PYTHON_BASE_IMAGE} AS package
 WORKDIR /build
 COPY requirements/build.lock /build/requirements/build.lock
-RUN --network=none --mount=type=bind,from=wheelhouse,source=/wheels,target=/wheels \
+RUN --network=none --mount=type=bind,source=wheelhouse,target=/wheels,readonly \
     python -m pip install --no-cache-dir --no-index --find-links=/wheels \
     --require-hashes --only-binary=:all: -r /build/requirements/build.lock
 COPY pyproject.toml .
@@ -19,7 +20,7 @@ RUN --network=none python -m pip wheel --no-deps --no-build-isolation \
 FROM ${PYTHON_BASE_IMAGE} AS runtime
 ENV HOME=/tmp PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONSAFEPATH=1
 COPY requirements/runtime.lock /build/requirements/runtime.lock
-RUN --network=none --mount=type=bind,from=wheelhouse,source=/wheels,target=/wheels \
+RUN --network=none --mount=type=bind,source=wheelhouse,target=/wheels,readonly \
     python -m pip install --no-cache-dir --no-index --find-links=/wheels \
     --require-hashes --only-binary=:all: -r /build/requirements/runtime.lock
 COPY --from=package /dist/conix-0.1.0-py3-none-any.whl /dist/conix-0.1.0-py3-none-any.whl
