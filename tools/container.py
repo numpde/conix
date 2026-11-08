@@ -196,6 +196,7 @@ class Docker:
             iid = Path(directory) / "iid"
             self.run(
                 "build", "--pull=false", "--platform", "linux/amd64",
+                *(("--target", target) if target != "wheelhouse" else ()),
                 "--network", network, "--file", dockerfile,
                 "--build-arg", "PYTHON_BASE_IMAGE=" + images["python_base"],
                 *kwargs, "--iidfile", str(iid),
