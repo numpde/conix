@@ -1,34 +1,52 @@
+# Disposable test project: no host binds, host ports or Docker Engine socket.
 services:
   postgres:
     image: postgres:16.6-bookworm
+    pull_policy: never
     environment:
       POSTGRES_USER: conix
       POSTGRES_PASSWORD: conix-disposable-container-tests
       POSTGRES_DB: conix_test
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1
+    tmpfs:
+      - /var/run/postgresql:rw,nosuid,nodev,noexec,uid=999,gid=999,mode=0700,size=16m
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777,size=16m
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U conix -d conix_test"]
+      test: [CMD, pg_isready, -h, "127.0.0.1", -U, conix, -d, conix_test]
       interval: 2s
       timeout: 3s
       retries: 20
     networks: [tests]
-
   tests:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-      target: tests
+    image: ${CONIX_TEST_IMAGE:?select exact installed test image}
+    pull_policy: never
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       CONIX_TEST_DSN: postgresql://conix:conix-disposable-container-tests@postgres:5432/conix_test
-    read_only: true
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
     user: "65532:65532"
+    read_only: true
+    init: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777,size=32m
     cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 0.5
     networks: [tests]
-
 networks:
   tests:
     internal: true
+volumes:
+  pgdata: {}
