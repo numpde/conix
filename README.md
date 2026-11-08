@@ -13,7 +13,8 @@ rule and notes/001_implementation_plan.txt for scope and acceptance gates.
 Run only the exact deployment and configured history origin
 -----------------------------------------------------------
 
-Build the container with 'make image/build'. Construct a TOML file based on
+Build the runtime image through the explicit acquisition and offline packaging
+lanes described below. Construct a TOML file based on
 examples/conix.toml, replacing the contract address and all deployment values.
 The example intentionally uses a zero address and cannot observe a real
 PayToPlay deployment. Select the first block whose complete logs you need:
@@ -25,9 +26,19 @@ create only its designated conix schema and its tables. Do not give conix
 privileges over the payment ledger. The configured RPC must permit historical
 block-hash-pinned eth_call and contract-specific eth_getLogs at a block hash.
 
-Mount the TOML and connection-file read-only into the container at their
-configured absolute paths. Supply the intended Docker network explicitly.
-The runtime image starts as uid/gid 65532 and does not expose ports.
+Mount the TOML and connection-file read-only at their configured absolute
+container paths. Supply separately authorized RPC and PostgreSQL network access.
+The runtime image starts as uid/gid 65532 and exposes no ports. A bridge network
+alone is not an egress firewall. Do not mount Docker Engine sockets into conix.
+
+Rootless engines translate container UIDs/GIDs; a host-owned mode-0600 credential
+is not readable merely because the container uses the same numeric UID. For
+host bind mounts, use the selected engine's verified linux-idmap mapping and
+stage appropriately owned, private inputs. Do not silently chmod secrets
+world-readable or rely on same-number host/container IDs. Static inputs may
+instead be staged in a private engine-owned volume; the supplied test stack
+uses engine-owned volumes and no host file binds. That staging/deployment
+workflow is operator-owned and is not automated by these Tier-0 commands.
 
     conix init --config /absolute/conix.toml
     conix run --config /absolute/conix.toml
@@ -62,16 +73,42 @@ An importable conix.observer.Observer supplies the four existing observation
 methods over a Journal and Chain. The caller explicitly owns chain/network
 and database-resource lifetimes. No HTTP server or alternate scanner exists.
 
-Verification
-------------
+Container preparation and verification
+--------------------------------------
 
-    make tests/container
+The Docker engine is selected explicitly for each Make invocation. Use
+DOCKER_CONTEXT=<local-context> on the command line; without a terminal, an
+omitted choice is rejected. Docker's ambient DOCKER_HOST, DOCKER_CONTEXT and
+COMPOSE_* variables do not authorize the operation. The selected local Unix
+socket is pinned through build, run and teardown; remote Engines are refused.
 
-This uses the actual installed package, a disposable PostgreSQL instance and
-controlled RPC test data; it tears down its own project and volume after
-success or failure. CI independently installs and tests the wheel. Real
-PayToPlay/Anvil and payment-ledger end-to-end qualification is tracked
-separately; source-only or controlled-RPC tests do not substitute for it.
+    make check/container
+    make deps/images/prepare DOCKER_CONTEXT=science
+    wheels="$(make -s deps/wheelhouse/build DOCKER_CONTEXT=science)"
+    runtime="$(make -s image/build DOCKER_CONTEXT=science WHEELHOUSE_IMAGE="$wheels")"
+    make image/smoke DOCKER_CONTEXT=science CONIX_IMAGE="$runtime"
+    tests="$(make -s tests/image/build DOCKER_CONTEXT=science WHEELHOUSE_IMAGE="$wheels")"
+    make tests/container DOCKER_CONTEXT=science CONIX_TEST_IMAGE="$tests"
+
+Replace 'science' with your selected Docker context. The preparatory commands
+are deliberately networked and consume reviewed base-image digests and the
+committed per-wheel SHA-256 locks. Runtime/test packaging does not download
+Python dependencies. A missing source wheel or base image fails explicitly;
+no alternate image or unpinned package resolution is attempted. Upgrade locks
+and base digests only through deliberate, reviewed changes. Python wheel lock
+regeneration is supported for CPython 3.12 on Linux x86_64 using
+'python tools/lock_wheels.py --write'; it contacts the network and must be
+run separately from ordinary verification.
+
+The test command does not build or pull an image. It uses the exact selected
+image ID, an isolated network, a uniquely named disposable PostgreSQL volume,
+non-root read-only containers, bounded resources and no host-published ports.
+It attempts to remove its own resources on success/failure; uncertain teardown
+reports the owned project for manual recovery. The Docker operator tests run
+without a Docker daemon. CI independently installs and checks the wheel.
+
+Real PayToPlay/Anvil and payment-ledger end-to-end qualification is outstanding:
+source-only or controlled-RPC tests do not substitute for that proof.
 
 Not in Tier 0: retries, automatic fork recovery, prefetch, caches, alternative
 payment logic, parallel/range scanning, multiple writers, other chains or

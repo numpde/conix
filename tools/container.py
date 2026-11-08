@@ -199,13 +199,19 @@ class Docker:
             rendered = json.loads(self.run(*compose, "config", "--format", "json",
                                           env=env, timeout=20, capture=True))
             services = rendered["services"]
-            if (services["tests"].get("image") != image
+            networks = rendered["networks"]
+            if (set(services) != {"tests", "postgres"}
+                or services["tests"].get("image") != image
                 or services["tests"].get("read_only") is not True
                 or services["tests"].get("user") != "65532:65532"
                 or services["postgres"].get("image") != images["postgres"]
+                or services["postgres"].get("user") != "999:999"
                 or services["postgres"].get("read_only") is not True
-                or any(s.get("ports") for s in services.values())):
-                raise OperationError("Rendered test services violate the selected image or confinement.")
+                or any(s.get("ports") or s.get("privileged") or s.get("network_mode") for s in services.values())
+                or any(any(v.get("type") == "bind" for v in s.get("volumes", [])) for s in services.values())
+                or len(networks) != 1
+                or not next(iter(networks.values())).get("internal")):
+                raise OperationError("Rendered test services violate selected images, no-bind, network or confinement rules.")
         except (KeyError, ValueError) as error:
             raise OperationError("Cannot validate rendered test deployment.") from error
         failure = None
