@@ -63,7 +63,7 @@ class SharedWheelhouse:
             "run", *worker_grants(self.pool, user=self.user, network=network, write=write),
             *self.input_mounts(), *extra_mounts, "--entrypoint", "python",
             self.images["python_base"], "-I", *argv,
-            timeout=timeout, capture=capture,
+            timeout=timeout, capture=capture, public_diagnostic=network,
         )
 
     def check(self):

@@ -62,15 +62,27 @@ def environment(client_config=None):
     return result
 
 
-def command(argv, *, env, timeout=60, capture=False, progress_to_stderr=False):
+def command(argv, *, env, timeout=60, capture=False, progress_to_stderr=False, public_diagnostic=False):
     try:
         result = subprocess.run(argv, cwd=ROOT, env=env, timeout=timeout,
-                                text=capture, capture_output=capture,
-                                stdout=sys.stderr if progress_to_stderr else None,
+                                text=capture or public_diagnostic,
+                                capture_output=capture or public_diagnostic,
+                                stdout=None if capture or public_diagnostic else
+                                    (sys.stderr if progress_to_stderr else None),
                                 check=False)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise OperationError(f"Command failed to run: {argv[-1]} ({type(error).__name__}).") from error
     if result.returncode:
+        # Only nonsecret acquisition workers may opt in to bounded stdout/
+        # stderr diagnostics. Never echo a runtime credential or a fixture
+        # descriptor from generic Docker/Compose operations.
+        if public_diagnostic:
+            detail = (result.stderr or "")[-1200:]
+            detail = detail.replace("\r", " ").replace("\x00", " ")
+            raise OperationError(
+                f"Contained public wheel acquisition failed (exit {result.returncode}): "
+                + (detail.strip() or "no worker diagnostic returned.")
+            )
         raise OperationError(f"Docker operation {argv[-1]} failed (exit {result.returncode}).")
     if capture and len(result.stdout) > 65536:
         raise OperationError("Docker returned an oversized response.")
@@ -127,10 +139,10 @@ class Docker:
         self.base = ["docker", "--config", str(config_dir), "--host", endpoint]
         self.env = environment(config_dir)
 
-    def run(self, *args, timeout=60, capture=False, env=None, progress_to_stderr=False):
+    def run(self, *args, timeout=60, capture=False, env=None, progress_to_stderr=False, public_diagnostic=False):
         return command(self.base + list(args), env=self.env if env is None else env,
                        timeout=timeout, capture=capture,
-                       progress_to_stderr=progress_to_stderr)
+                       progress_to_stderr=progress_to_stderr, public_diagnostic=public_diagnostic)
 
     def require_image(self, reference):
         """Check exact local image identity without printing JSON into Make output."""
