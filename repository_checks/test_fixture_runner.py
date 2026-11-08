@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -68,6 +69,51 @@ class FakeDocker:
 
 
 class FixtureRunnerTests(unittest.TestCase):
+    def test_sibling_context_is_frozen_in_private_docker_client(self):
+        with tempfile.TemporaryDirectory() as folder:
+            selected = SimpleNamespace(
+                endpoint="unix:///tmp/selected-engine.sock",
+                config_dir=Path(folder),
+                env={"DOCKER_CONFIG": folder, "COMPOSE_DISABLE_ENV_FILE": "1"},
+            )
+            commands = []
+            def controlled(argv, **kwargs):
+                commands.append((argv, kwargs))
+                if "inspect" in argv:
+                    return SimpleNamespace(returncode=0, stdout=selected.endpoint + "\n")
+                return SimpleNamespace(returncode=0, stdout="created\n")
+            with patch.object(runner.subprocess, "run", side_effect=controlled):
+                runner.pin_sibling_context(selected, "science")
+            self.assertEqual(len(commands), 2)
+            for argv, kwargs in commands:
+                self.assertEqual(argv[:3], ["docker", "--config", folder])
+                self.assertEqual(kwargs["env"]["DOCKER_CONFIG"], folder)
+            self.assertIn("host=" + selected.endpoint, commands[0][0])
+            with patch.object(runner.subprocess, "run", side_effect=[
+                SimpleNamespace(returncode=0, stdout="created\n"),
+                SimpleNamespace(returncode=0, stdout="unix:///tmp/foreign.sock\n"),
+            ]):
+                with self.assertRaises(runner.CampaignError):
+                    runner.pin_sibling_context(selected, "science")
+
+    def test_sibling_make_receives_only_private_bound_context(self):
+        with tempfile.TemporaryDirectory() as folder:
+            docker = FakeDocker()
+            docker.config_dir = Path(folder)
+            campaign = runner.Campaign(
+                docker, "science", Path(folder), "sha256:" + "a" * 64,
+                Path(folder),
+            )
+            with patch.object(runner, "owned_command", return_value=b"{}") as invoke:
+                campaign._dapp32("info")
+            argv = invoke.call_args.args[0]
+            self.assertIn("DOCKER_CONTEXT=science", argv)
+            self.assertIn("FIXTURE_ID=" + campaign.fixture_id, argv)
+            env = invoke.call_args.kwargs["env"]
+            self.assertEqual(env["DOCKER_CONFIG"], folder)
+            self.assertNotIn("DOCKER_HOST", env)
+            self.assertNotIn("COMPOSE_FILE", env)
+
     def test_fixture_network_identity_and_live_service_are_required(self):
         instance = descriptor_for("conix-abcdef123456")
         docker = FakeDocker()
