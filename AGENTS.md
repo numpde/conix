@@ -73,3 +73,20 @@ Only Conix-owned SQL and verified newly created producer fixtures may be
 retired automatically; preserve exact recovery records on uncertain outcomes.
 The real fixture campaign and the pay-to-play accounting acceptance gate are
 distinct qualifications and must be reported separately.
+
+Shared wheelhouse
+-----------------
+Use only an explicitly selected WHEELHOUSE host-local pool shared with NMR
+consumers, never a per-repository wheelhouse Docker image or host pip install.
+Keep original runtime/build hash locks authoritative and use temporary
+source-lock-bound syntax projections only for the upstream released metadata
+locator. Warm target-Python selection must run in a contained, networkless,
+read-only worker; only explicit acquisition of missing artifacts may use a
+network and writable pool mount. Pin wheelhouse-tool by full released SHA-256.
+Stream only tracked, hashed source inputs and the selected wheel manifest
+directly into the same selected Engine's offline BuildKit; the installer
+never accesses a package index or writes wheels into final image layers.
+Do not assume rootless UID mapping or network interface binding from Docker
+context names; the security proof must be per selected Engine. Cross-repo
+dapp32 fixture creation requires an explicit named context, not a silent
+interactive re-selection by a second Make process.

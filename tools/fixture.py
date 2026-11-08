@@ -363,6 +363,14 @@ def main():
         if not IMAGE_ID.fullmatch(args.fixture_image or ""):
             raise CampaignError("Provide exact CONIX_FIXTURE_IMAGE=sha256:<id> built by tests/fixture/image/build.")
         sibling = sibling_checkout(args.dapp32_dir)
+        # The sibling Make handoff requires a concrete context *name*, not
+        # just an interactively selected Unix endpoint. An empty forwarded
+        # DOCKER_CONTEXT would allow the producer to select another Engine.
+        if args.origin != "command line" or not args.context:
+            raise CampaignError(
+                "The dapp32 fixture campaign requires explicit "
+                "DOCKER_CONTEXT=<local-name> on the Make command line."
+            )
         endpoint = select_endpoint(args.context, args.origin)
         with tempfile.TemporaryDirectory(prefix="conix-fixture-client-") as directory:
             from container import environment

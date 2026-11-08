@@ -12,6 +12,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
+import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -105,6 +106,19 @@ def source_allowlist(root=ROOT):
     modules = tuple(sorted(file.relative_to(root).as_posix() for file in src.rglob("*.py")))
     if not modules or "src/conix/__init__.py" not in modules:
         raise PoolError("Conix source package is absent from the selected build context.")
+    try:
+        tracked = subprocess.run(
+            ["git", "ls-files", "--cached", "-z", "--", "src/conix"],
+            cwd=root, capture_output=True, timeout=10, check=True,
+        ).stdout.decode("utf-8").split("\0")
+    except (OSError, UnicodeError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        raise PoolError("Cannot establish the declared Git source inventory.") from None
+    declared = {name for name in tracked if name}
+    if declared != set(modules):
+        raise PoolError(
+            "Source package differs from tracked Git inputs; do not stream "
+            "unreviewed or untracked Python files into a build."
+        )
     paths = (*relative, *modules)
     if len(paths) != len(set(paths)):
         raise PoolError("The curated image source list contains duplicates.")
