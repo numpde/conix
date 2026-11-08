@@ -29,12 +29,29 @@ if args[:2] == ["context", "ls"]:
     print("remote\ttcp://example.invalid:2375")
 elif "image" in args and "inspect" in args:
     print("sha256:" + "a" * 64)
+elif "volume" in args and "inspect" in args:
+    volume = args[-1]
+    print(json.dumps([{"Labels": {"io.conix.input-token": volume.removeprefix("conix-inputs-")}}]))
+elif "network" in args and "inspect" in args:
+    print(args[-1])
 elif "compose" in args and "config" in args:
-    print(json.dumps({"services": {
-        "tests": {"image": os.environ["CONIX_TEST_IMAGE"],
-                  "read_only": True, "user": "65532:65532"},
-        "postgres": {"read_only": True, "user": "999:999", "image": os.environ["CONIX_POSTGRES_IMAGE"]}},
-        "networks": {"tests": {"internal": not bool(os.getenv("CONIX_FAKE_BAD_NETWORK"))}}}))
+    if any("runtime.yml" in item for item in args):
+        named_volume = os.environ["CONIX_INPUT_VOLUME"]
+        item = {"image": os.environ["CONIX_IMAGE"], "user": "65532:65532",
+                "read_only": True, "pull_policy": "never", "cap_drop": ["ALL"],
+                "volumes": [{"source": named_volume, "type": "volume",
+                             "target": "/run/conix", "read_only": True}]}
+        if os.getenv("CONIX_FAKE_BAD_RUNTIME_BIND"):
+            item["volumes"].append({"type": "bind", "source": "/tmp", "target": "/tmp"})
+        print(json.dumps({"services": {"indexer": item}, "networks": {
+            "database": {"name": os.environ["CONIX_DATABASE_NETWORK"]},
+            "rpc": {"name": os.environ["CONIX_RPC_NETWORK"]}}}))
+    else:
+        print(json.dumps({"services": {
+            "tests": {"image": os.environ["CONIX_TEST_IMAGE"],
+                      "read_only": True, "user": "65532:65532"},
+            "postgres": {"read_only": True, "user": "999:999", "image": os.environ["CONIX_POSTGRES_IMAGE"]}},
+            "networks": {"tests": {"internal": not bool(os.getenv("CONIX_FAKE_BAD_NETWORK"))}}}))
 elif "compose" in args and "up" in args and os.getenv("CONIX_FAKE_UP_FAIL"):
     sys.exit(3)
 elif "compose" in args and "down" in args and os.getenv("CONIX_FAKE_DOWN_FAIL"):
@@ -114,6 +131,49 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertFalse(any("up" in item["args"] for item in calls))
         self.assertFalse(any("down" in item["args"] for item in calls))
         self.assertIn("network", completed.stderr)
+
+    def run_runtime_fake(self, *, bad_bind=False):
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            fake = directory / "docker"
+            fake.write_text(FAKE)
+            fake.chmod(0o755)
+            log = directory / "docker.jsonl"
+            env = os.environ.copy()
+            env["PATH"] = str(directory) + os.pathsep + env["PATH"]
+            env["CONIX_FAKE_LOG"] = str(log)
+            env["DOCKER_HOST"] = "tcp://malicious.invalid:2375"
+            env["COMPOSE_FILE"] = "/tmp/foreign.yml"
+            if bad_bind:
+                env["CONIX_FAKE_BAD_RUNTIME_BIND"] = "1"
+            result = subprocess.run([
+                sys.executable, str(TOOL),
+                "--context", "science", "--origin", "command line",
+                "runtime/start", "--deployment", "pilot",
+                "--image", "sha256:" + "a" * 64,
+                "--volume", "conix-inputs-" + "b" * 24,
+                "--database-network", "db-conix", "--rpc-network", "rpc-conix",
+            ], env=env, capture_output=True, text=True, timeout=15)
+            return result, [json.loads(line) for line in log.read_text().splitlines()]
+
+    def test_runtime_reuses_engine_and_never_builds_or_pulls(self):
+        run, calls = self.run_runtime_fake()
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertTrue(any("stop" in item["args"] for item in calls))
+        self.assertTrue(any("up" in item["args"] for item in calls))
+        self.assertFalse(any("build" in item["args"] or "pull" in item["args"] for item in calls))
+        projects = [item["args"][item["args"].index("-p") + 1]
+                    for item in calls if "compose" in item["args"]]
+        self.assertEqual(set(projects), {"conix-pilot"})
+        for item in calls:
+            if "context" not in item["args"]:
+                self.assertIn("unix:///tmp/science-docker.sock", item["args"])
+
+    def test_runtime_bind_mount_rejected_before_start(self):
+        run, calls = self.run_runtime_fake(bad_bind=True)
+        self.assertNotEqual(run.returncode, 0)
+        self.assertFalse(any("stop" in item["args"] or "up" in item["args"] for item in calls))
+        self.assertIn("confinement", run.stderr)
 
     def test_uncertain_teardown_is_reported_as_failure(self):
         completed, calls = self.run_fake(fail_down=True)
