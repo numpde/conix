@@ -128,6 +128,14 @@ class LocalDockerOperatorTests(unittest.TestCase):
                       "unix:///", "unix:///run/docker.sock?query=1"):
             self.assertFalse(operator.local_socket(value))
 
+    def test_host_root_is_refused_before_engine_discovery(self):
+        with patch.object(operator.os, "geteuid", return_value=0), patch.object(
+            operator, "command", side_effect=AssertionError("Docker contacted before host identity admission")
+        ):
+            with self.assertRaises(operator.OperationError) as error:
+                operator.select_endpoint("science", "command line")
+        self.assertIn("root", str(error.exception).lower())
+
     def test_invalid_or_ambient_context_does_not_choose_an_engine(self):
         with patch.object(operator, "command", return_value="science\tunix:///tmp/science.sock\n"):
             with self.assertRaises(operator.OperationError):
