@@ -140,7 +140,7 @@ class Journal:
             role = await (await connection.execute(
                 "SELECT r.rolname, r.rolsuper, r.rolcreatedb, r.rolcreaterole, "
                 "r.rolreplication, r.rolbypassrls, "
-                "pg_has_role(current_user, n.nspowner, 'member') AS owner_member, "
+                "pg_has_role(current_user, pg_get_userbyid(n.nspowner), 'member') AS owner_member, "
                 "has_schema_privilege(current_user, 'conix', 'CREATE') AS schema_create "
                 "FROM pg_roles r JOIN pg_namespace n ON n.nspname = 'conix' "
                 "WHERE r.rolname = current_user"

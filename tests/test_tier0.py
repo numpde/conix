@@ -259,7 +259,7 @@ class PostgreSQLContracts(unittest.IsolatedAsyncioTestCase):
             ):
                 with self.subTest(statement=statement), self.assertRaises(psycopg.errors.InsufficientPrivilege):
                     await connection.execute(statement)
-        with self.assertRaises((ValueError, PermissionError)):
+        with self.assertRaises(ConfigurationError):
             await initialize(self.dsn, self.config)
 
     async def test_owner_owned_records_keep_normal_publication_and_repair(self):

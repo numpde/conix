@@ -446,7 +446,7 @@ class Docker:
                                           env=env, timeout=20, capture=True))
             services = rendered["services"]
             networks = rendered["networks"]
-            if (set(services) != {"tests", "postgres", "bootstrap"}
+            if (set(services) != {"tests", "postgres", "bootstrap", "initialize"}
                 or services["tests"].get("image") != image
                 or services["tests"].get("read_only") is not True
                 or services["tests"].get("user") != "65532:65532"
@@ -456,6 +456,9 @@ class Docker:
                 or services["bootstrap"].get("image") != images["postgres"]
                 or services["bootstrap"].get("user") != "999:999"
                 or services["bootstrap"].get("read_only") is not True
+                or services["initialize"].get("image") != image
+                or services["initialize"].get("user") != "65532:65532"
+                or services["initialize"].get("read_only") is not True
                 or any(s.get("build") or s.get("ports") or s.get("privileged") or s.get("network_mode") for s in services.values())
                 or any(any(v.get("type") == "bind" for v in s.get("volumes", [])) for s in services.values())
                 or len(networks) != 1
@@ -474,6 +477,8 @@ class Docker:
             self.run(*compose, "run", "--rm", "--no-deps", "--pull",
                      "never", "bootstrap", env=env, timeout=60)
             self.run(*compose, "run", "--rm", "--no-deps", "--pull",
+                     "never", "initialize", env=env, timeout=60)
+            self.run(*compose, "run", "--rm", "--no-deps", "--pull",
                      "never", "tests", env=env, timeout=240)
         except Exception as error:
             failure = error
@@ -483,7 +488,7 @@ class Docker:
             try:
                 self.run(*compose, "ps", "--all", env=env, timeout=15)
                 self.run(*compose, "logs", "--no-color", "--tail", "35",
-                         "postgres", "bootstrap", "tests", env=env, timeout=15)
+                         "postgres", "bootstrap", "initialize", "tests", env=env, timeout=15)
             except OperationError:
                 pass
         finally:
