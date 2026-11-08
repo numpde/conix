@@ -1,0 +1,42 @@
+name: conix Tier 0 checks
+
+on:
+  push:
+    branches: [20261108-tier0-executable-core]
+  pull_request:
+
+jobs:
+  installed-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16.6-bookworm
+        env:
+          POSTGRES_DB: conix_test
+          POSTGRES_USER: conix
+          POSTGRES_PASSWORD: conix-ci-disposable-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U conix -d conix_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      CONIX_TEST_DSN: postgresql://conix:conix-ci-disposable-password@localhost:5432/conix_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install actual distribution
+        run: python -m pip install .
+      - name: Check Python syntax
+        run: python -m compileall -q src tests
+      - name: Check installed dependency consistency
+        run: python -m pip check
+      - name: Execute installed tests against PostgreSQL
+        run: python -m unittest discover -s tests -v
+      - name: Check installed entry point
+        run: conix --help
