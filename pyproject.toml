@@ -12,6 +12,7 @@ dependencies = [
     "psycopg[binary]==3.3.6",
     "eth-abi==6.0.0",
     "eth-utils==6.0.0",
+    "eth-hash[pycryptodome]==0.8.0",
     "eth-typing==6.0.0",
 ]
 
