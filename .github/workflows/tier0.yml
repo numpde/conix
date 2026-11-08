@@ -50,3 +50,12 @@ jobs:
           make image/smoke DOCKER_CONTEXT=default CONIX_IMAGE="$runtime"
           test_image="$(make -s tests/image/build DOCKER_CONTEXT=default WHEELHOUSE_IMAGE="$wheelhouse")"
           make tests/container DOCKER_CONTEXT=default CONIX_TEST_IMAGE="$test_image"
+          # Stage the real distribution's fixed inputs in a private engine volume.
+          # A second, unprivileged, read-only container proves readability.
+          candidate="$(mktemp)"
+          dsn="$(mktemp)"
+          trap 'rm -f -- "$candidate" "$dsn"' EXIT
+          cp examples/conix.toml "$candidate"
+          printf '%s\\n' 'postgresql://fixture:disposable@postgres:5432/conix_test' > "$dsn"
+          make inputs/proof DOCKER_CONTEXT=default CONIX_IMAGE="$runtime" \\
+            CONIX_CONFIG_FILE="$candidate" CONIX_DSN_FILE="$dsn"
