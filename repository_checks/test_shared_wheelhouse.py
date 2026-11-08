@@ -93,6 +93,21 @@ class SharedWheelhouseContracts(unittest.TestCase):
             with self.subTest(changed=changed), self.assertRaises(pool.PoolError):
                 pool.selection_manifest(json.dumps(changed).encode())
 
+    def test_warm_failure_does_not_authorize_network_without_missing_code(self):
+        from unittest.mock import patch
+        import wheelhouse_operations as operation
+        fake = object.__new__(operation.SharedWheelhouse)
+        fake.pin = {"name": "wheelhouse-tool-0.5.14.pyz"}
+        fake.pool = Path("/not/used")
+        for error in (ValueError("invalid lock"), RuntimeError("Docker failed")):
+            with self.subTest(error=type(error).__name__), patch.object(
+                operation, "has_tool", return_value=True
+            ), patch.object(fake, "check", side_effect=error), patch.object(
+                fake, "run", side_effect=AssertionError("Network permission improperly granted")
+            ):
+                with self.assertRaises(type(error)):
+                    fake.acquire()
+
     def test_acquisition_and_offline_workers_have_nonoverlapping_permissions(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "wheels"

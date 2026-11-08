@@ -95,11 +95,14 @@ class SharedWheelhouse:
                 raise PoolError("Contained wheelhouse-tool bootstrap returned without the pinned release.")
         try:
             return self.check()
-        except Exception:
-            # Only explicit acquisition may consult metadata. The upstream
-            # source-lock projection remains temporary; the original signed
-            # requirements lock authorizes each wheel hash.
-            pass
+        except Exception as error:
+            # Network escalation is permitted ONLY for target-Python's exact
+            # missing-wheel status. Docker outages, malformed locks and hash
+            # conflicts remain terminal without metadata requests.
+            if getattr(error, "exit_code", None) != 10:
+                raise
+            # The upstream source-lock projection remains temporary; original
+            # issuer requirements authorize the recovered artifact hashes.
         with tempfile.TemporaryDirectory(prefix="conix-wheelhouse-projection-") as tmp:
             for name in ("runtime", "build"):
                 # Preserve the original pinned Conix lock. The NMR locator's

@@ -34,7 +34,9 @@ def pinned_images():
 
 
 class OperationError(Exception):
-    pass
+    def __init__(self, detail, *, exit_code=None):
+        super().__init__(detail)
+        self.exit_code = exit_code
 
 
 def local_socket(endpoint):
@@ -81,9 +83,11 @@ def command(argv, *, env, timeout=60, capture=False, progress_to_stderr=False, p
             detail = detail.replace("\r", " ").replace("\x00", " ")
             raise OperationError(
                 f"Contained public wheel acquisition failed (exit {result.returncode}): "
-                + (detail.strip() or "no worker diagnostic returned.")
+                + (detail.strip() or "no worker diagnostic returned."),
+                exit_code=result.returncode,
             )
-        raise OperationError(f"Docker operation {argv[-1]} failed (exit {result.returncode}).")
+        raise OperationError(f"Docker operation {argv[-1]} failed (exit {result.returncode}).",
+                             exit_code=result.returncode)
     if capture and len(result.stdout) > 65536:
         raise OperationError("Docker returned an oversized response.")
     return result.stdout if capture else None

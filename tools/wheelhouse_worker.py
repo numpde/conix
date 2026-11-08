@@ -12,6 +12,10 @@ import subprocess
 import sys
 
 
+class MissingSelection(Exception):
+    """The target Python reported an absent required distribution in the pool."""
+
+
 def run(pool, release, runtime, build):
     pin = json.loads(release.read_text())
     tool = pool / ("wheelhouse-tool-" + pin["version"] + ".pyz")
@@ -29,9 +33,19 @@ def run(pool, release, runtime, build):
     ]
     result = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, timeout=90)
     if result.returncode:
+        # Missing is the ONLY offline status that permits explicit acquisition.
+        # Hash mismatches, invalid locks, file permission errors and other
+        # installer failures must never escalate to a network-enabled worker.
+        explanation = result.stderr.decode("utf-8", errors="replace")
+        if (
+            "No matching distribution found" in explanation
+            and "THESE PACKAGES DO NOT MATCH THE HASHES" not in explanation
+        ):
+            print("Missing one or more target-compatible locked wheels.", file=sys.stderr)
+            raise MissingSelection()
         raise ValueError(
-            "The selected target interpreter could not satisfy both original "
-            "hash-locked requirements from the shared pool."
+            "The selected target interpreter rejected cached wheel integrity "
+            "or requirements; do not start network acquisition."
         )
     converted = subprocess.run(
         [
@@ -58,6 +72,8 @@ def main():
     args = parser.parse_args()
     try:
         run(args.pool, args.release, args.runtime, args.build)
+    except MissingSelection:
+        return 10
     except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
         print(f"Shared wheelhouse offline selection refused: {type(error).__name__}.", file=sys.stderr)
         return 2
