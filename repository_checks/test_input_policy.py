@@ -119,6 +119,10 @@ class OfflineInputChecks(unittest.TestCase):
         self.assertEqual(dockerfile.count("source=wheelhouse,target=/wheels,readonly"), 2)
         self.assertIn("--no-index", dockerfile)
         self.assertIn("--require-hashes", dockerfile)
+        self.assertNotIn("COPY --from=package /dist/", dockerfile,
+                         "The Conix distribution wheel must not remain in a runtime image layer.")
+        self.assertIn("--mount=type=bind,from=package,", dockerfile,
+                      "The built Conix wheel must enter installation as an ephemeral mount.")
         from_file = (ROOT / "requirements/wheelhouse-tool-release.json").read_text()
         pin = json.loads(from_file)
         self.assertEqual(pin["version"], "0.5.14")
