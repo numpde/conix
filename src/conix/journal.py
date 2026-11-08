@@ -18,7 +18,7 @@ from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 
 from conix.configuration import Settings
-from conix.errors import Blocked, ConfigurationError, CorruptStore, StateChanged, WriterBusy
+from conix.errors import Blocked, BranchConflict, ConfigurationError, CorruptStore, StateChanged, WriterBusy
 from conix.models import Block, Checkpoint, Collection, CollectionCursor, CollectionPage, HistoryUnavailable
 
 VERSION = 1
@@ -438,10 +438,15 @@ class Writer:
                 (uuid4(), reason),
             )
 
-    async def repair_to(self, expected: Basis, target: Block | None):
-        """Sole repair mutation: checked suffix rewind or complete origin reset."""
+    async def repair_to(self, expected: Basis, target: Block | None, chain):
+        """Sole repair mutation: validate canonical source, then atomically rewind."""
         self._require_active()
         settings = self._journal.settings
+        # The controller may propose a target; it cannot certify one. RPC is
+        # outside the SQL transaction, but checked under exclusive ownership.
+        await chain.assert_source()
+        if target is not None and not await chain.canonical(target):
+            raise BranchConflict("The repair target is no longer canonical; choose a verified ancestor.")
         async with self._connection.transaction():
             current = await _check_basis(self._connection, settings, expected)
             if target is not None:

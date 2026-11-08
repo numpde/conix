@@ -209,7 +209,7 @@ class PostgreSQLContracts(unittest.IsolatedAsyncioTestCase):
                 original, cursor=None, limit=5
             )
         async with self.journal.writer() as writer:
-            await writer.repair_to(await writer.basis(), first)
+            await writer.repair_to(await writer.basis(), first, fake)
         replacement = block(2, 5, first.hash)
         fake.blocks[2] = replacement
         async with self.journal.writer() as writer:

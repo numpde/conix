@@ -97,7 +97,7 @@ async def _execute(arguments):
                             f"Selected repair target {number}:0x{block_hash.hex()} is not the source's canonical block."
                         )
                 # Same concrete repair primitive called by future Tier-1 controller.
-                await writer.repair_to(basis, target)
+                await writer.repair_to(basis, target, chain)
             print("Conix history repaired; a fresh normal worker session must reindex the remaining blocks.")
             return
 
