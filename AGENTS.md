@@ -40,6 +40,11 @@ Container and dependency authority
 - Do not expand the Docker build context or installer inputs implicitly.
 - Private DSN bytes must never appear in image layers, argv, service logs or
   repository files. Staging is an explicit one-time confined operation.
+- Schema installation and upgrades use a separate non-superuser owner login and
+  the explicit one-shot schema/init path. Runtime sessions and observers use
+  only conix_runtime DML. No owner credentials in the ordinary worker's volume.
+- Never add DDL to the concrete Journal/Writer. Evolve schema ownership and
+  migration authorization outside the protected Tier-0 scanner and read guard.
 - Disposable resources have exact owners and must be retired on success/failure.
   Report uncertain cleanup rather than claiming it succeeded.
 - Do not infer runtime egress isolation, UID mapping or genuine chain finality

@@ -20,11 +20,23 @@ The example intentionally uses a zero address and cannot observe a real
 PayToPlay deployment. Select the first block whose complete logs you need:
 coverage never silently begins at deployment birth or before that block.
 
-Put the PostgreSQL connection string in a separate absolute regular file,
-owned by the operator and mode 0600. The database role must be authorized to
-create only its designated conix schema and its tables. Do not give conix
-privileges over the payment ledger. The configured RPC must permit historical
-block-hash-pinned eth_call and contract-specific eth_getLogs at a block hash.
+The database operator first provisions a separate `conix_owner` login,
+`conix_runtime` login and an existing `conix` schema owned by `conix_owner`.
+Neither application identity needs PostgreSQL superuser, CREATEDB or CREATEROLE.
+Only the schema owner installs tables/constraints and grants runtime DML; it
+must not be the account used by the worker or ordinary observation clients.
+Keep PostgreSQL bootstrap credentials outside Conix. The database owner also
+controls database CONNECT/HBA rules, avoiding unwanted sibling-database access.
+
+Put each PostgreSQL connection string in a separate absolute regular file,
+owned by the operator and mode 0600. The normal runtime credential must select
+the explicit database.runtime_role and receive no schema ownership, CREATE or
+TRUNCATE permission; only SELECT/UPDATE on source_progress, SELECT/INSERT/DELETE
+on blocks, and SELECT/INSERT on collections. The checked repair path uses
+DELETE on blocks with the existing foreign-key cascade; it does not need DDL.
+Do not grant Conix access to pay-to-play's accounting tables. The configured RPC
+must permit historical block-hash-pinned eth_call and contract-specific
+eth_getLogs at a block hash.
 
 Mount the TOML and connection-file read-only at their configured absolute
 container paths. Supply separately authorized RPC and PostgreSQL network access.
@@ -43,13 +55,42 @@ private settings and DSN before activation. The source files remain owned by
 the operator and are not altered. The volume is a fixed snapshot: updates
 require a new staging generation, not silently edited live files.
 
-    conix init --config /absolute/conix.toml
-    conix run --config /absolute/conix.toml
-    conix status --config /absolute/conix.toml
+Install the schema separately, using ONLY the owner's credential. The
+operator's TOML config must name database.dsn_file=/run/conix/connection.dsn
+and database.runtime_role=conix_runtime; owner credentials are supplied in
+their own host-owned mode-0600 file. The controlled owner lane creates a new
+temporary private volume containing this config and owner credential, verifies
+the non-root read boundary, invokes the real conix init command on the
+selected database network, and retires that volume after the result:
 
-Run these as container commands with mounts and network configured by the
-operator. The entry point does not acquire credentials from ambient Docker
-or infer a database or RPC from the container environment.
+    make schema/init DOCKER_CONTEXT=science CONIX_IMAGE="$runtime" \
+      CONIX_CONFIG_FILE=/absolute/config.toml \
+      CONIX_OWNER_DSN_FILE=/absolute/owner-postgres.dsn \
+      CONIX_DATABASE_NETWORK=payment-db
+
+The one-shot installed command is:
+
+    conix init --config /run/conix-owner/config.toml \
+      --owner-dsn-file /run/conix-owner/connection.dsn
+
+This does not require the runtime DSN to be mounted. The owner-only command
+refuses a schema owned by another role, a privileged owner login, or a runtime
+role that could become the owner; it never silently resets a different source.
+A live writer blocks owner initialization through the same advisory lock.
+For a schema upgrade in a future tier, extend this owner-only installation
+boundary with an explicitly reviewed migration; never invoke DDL from the
+ordinary worker or an automatic recovery wrapper.
+
+Stage runtime inputs separately using the (different) conix_runtime DSN.
+The worker and ordinary observers execute only:
+
+    conix run --config /run/conix/config.toml
+    conix status --config /run/conix/config.toml
+
+The commands neither infer credentials from ambient Docker nor select another
+database or RPC. An operator must explicitly retire a failed owner-init input
+volume if its cleanup is reported unconfirmed. No ordinary runtime container
+may mount or retain the owner's secret.
 
 The worker advances one complete block per transaction, including empty
 blocks, and checks the retained checkpoint against the currently configured
