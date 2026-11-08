@@ -260,8 +260,8 @@ class PostgreSQLContracts(unittest.IsolatedAsyncioTestCase):
         async with self.journal._connection() as connection:
             statement = await (await connection.execute("SHOW statement_timeout")).fetchone()
             locking = await (await connection.execute("SHOW lock_timeout")).fetchone()
-        self.assertNotEqual(statement[0], "0")
-        self.assertNotEqual(locking[0], "0")
+        self.assertNotEqual(statement["statement_timeout"], "0")
+        self.assertNotEqual(locking["lock_timeout"], "0")
 
     async def test_one_writer_on_same_session_as_all_mutations(self):
         async with self.journal.writer() as first:
