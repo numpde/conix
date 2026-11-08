@@ -1,0 +1,151 @@
+"""Admit only the verified dapp32 PayToPlay fixture-v1 JSON contract.
+
+No account keys are ever included in diagnostic exceptions or process output.
+The descriptor establishes deployment facts; Docker network inspection and
+real RPC checks independently qualify their corresponding live identities.
+"""
+import json
+import re
+
+LIMIT = 1048576
+IDENTITY = re.compile(r"[a-z0-9][a-z0-9_-]{0,47}\Z")
+ADDRESS = re.compile(r"0x[0-9a-fA-F]{40}\Z")
+KEY = re.compile(r"0x[0-9a-fA-F]{64}\Z")
+REQUIRED_ACCOUNTS = frozenset({"admin", "customer", "relayer", "payee"})
+REQUIRED_CONTRACTS = frozenset({"CamRoot", "PayToPlay", "PayToPlayUI"})
+EVENT = [
+    ("customer", "address", True),
+    ("channelId", "uint256", True),
+    ("payee", "address", True),
+    ("amount", "uint256", False),
+    ("voucherPaid", "uint256", False),
+    ("invoiceHash", "bytes32", False),
+]
+FUNCTIONS = {
+    "createChannel": ("address", "address", "uint64"),
+    "setPayee": ("uint256", "address"),
+    "registerVoucherKey": ("uint256", "address"),
+    "fund": ("uint256", "uint256"),
+    "collect": ("address", "uint256", "uint256", "bytes32", "uint256", "bytes"),
+    "voucherDigest": ("address", "uint256", "uint256", "bytes32"),
+}
+
+
+class FixtureError(ValueError):
+    """A descriptor lacks the precise source, identity or ABI contract."""
+
+
+def _pairs(rows):
+    result = {}
+    for name, value in rows:
+        if name in result:
+            raise FixtureError("Fixture JSON contains duplicate object members.")
+        result[name] = value
+    return result
+
+
+def _bad_constant(_value):
+    raise FixtureError("Fixture JSON contains a nonfinite number.")
+
+
+def _address(value):
+    return type(value) is str and ADDRESS.fullmatch(value) is not None
+
+
+def _uint(value, maximum=2**63 - 1):
+    return type(value) is int and 0 <= value <= maximum
+
+
+def decode(raw: bytes, *, fixture_id: str):
+    if type(fixture_id) is not str or IDENTITY.fullmatch(fixture_id) is None:
+        raise FixtureError("Fixture identity must use the dapp32 supported lowercase name format.")
+    if type(raw) is not bytes or not 0 < len(raw) <= LIMIT or len(raw.splitlines()) != 1:
+        raise FixtureError("Fixture descriptor must be exactly one bounded UTF-8 JSON line.")
+    try:
+        document = json.loads(
+            raw.decode("utf-8"), object_pairs_hook=_pairs,
+            parse_constant=_bad_constant,
+        )
+    except (UnicodeError, ValueError, RecursionError) as error:
+        raise FixtureError("Fixture descriptor is not well-formed unique-key UTF-8 JSON.") from None
+    if type(document) is not dict or set(document) != {
+        "schema", "fixtureId", "composeProject", "dockerNetwork",
+        "rpcUrl", "chainId", "contracts", "publicFixtureAccounts",
+    }:
+        raise FixtureError("Fixture descriptor does not match the exact v1 envelope.")
+    project = "dapps-pay-to-play-fixture-" + fixture_id
+    network = project + "_pay-to-play_local"
+    if (
+        document["schema"] != "pay-to-play.local-fixture.v1"
+        or document["fixtureId"] != fixture_id
+        or document["composeProject"] != project
+        or document["dockerNetwork"] != network
+        or document["rpcUrl"] != "http://pay-to-play-anvil:8545"
+        or type(document["chainId"]) is not int or document["chainId"] != 31337
+    ):
+        raise FixtureError("Fixture source identity, network or RPC endpoint differs from the selected fixture.")
+    contracts = document["contracts"]
+    if type(contracts) is not dict or set(contracts) != REQUIRED_CONTRACTS:
+        raise FixtureError("Fixture must declare exactly the verified base deployment contracts.")
+    for name, item in contracts.items():
+        required = {"address", "deploymentBlock", "creationTransaction"}
+        if name == "PayToPlay":
+            required.add("abi")
+        if (type(item) is not dict or set(item) != required or not _address(item["address"])
+            or not _uint(item["deploymentBlock"])
+            or type(item["creationTransaction"]) is not str
+            or KEY.fullmatch(item["creationTransaction"]) is None):
+            raise FixtureError("Fixture deployment coordinates or creation transaction are malformed.")
+    pay_to_play = contracts["PayToPlay"]
+    abi = pay_to_play["abi"]
+    if type(abi) is not list or not 0 < len(abi) <= 256 or any(type(row) is not dict for row in abi):
+        raise FixtureError("Fixture PayToPlay ABI must be a bounded list of entries.")
+    event = [
+        row for row in abi if row.get("type") == "event" and row.get("name") == "VoucherCollected"
+    ]
+    if len(event) != 1 or event[0].get("anonymous") is not False or [
+        (item.get("name"), item.get("type"), item.get("indexed"))
+        for item in event[0].get("inputs", [])
+    ] != EVENT:
+        raise FixtureError("Fixture VoucherCollected ABI does not match the indexed contract.")
+    for name, types in FUNCTIONS.items():
+        matches = [
+            row for row in abi if row.get("type") == "function" and row.get("name") == name
+            and tuple(argument.get("type") for argument in row.get("inputs", ())) == types
+        ]
+        if len(matches) != 1:
+            raise FixtureError("Fixture PayToPlay method signatures differ from the tested deployment.")
+    accounts = document["publicFixtureAccounts"]
+    if type(accounts) is not dict or set(accounts) != REQUIRED_ACCOUNTS:
+        raise FixtureError("Fixture must provide exactly the four public test accounts.")
+    for item in accounts.values():
+        if (type(item) is not dict or set(item) != {"address", "privateKey"}
+            or not _address(item["address"]) or type(item["privateKey"]) is not str
+            or KEY.fullmatch(item["privateKey"]) is None):
+            raise FixtureError("Fixture test-account coordinates are malformed.")
+    if len({value["address"].lower() for value in accounts.values()}) != 4:
+        raise FixtureError("Fixture test-account addresses must be distinct.")
+    return document
+
+
+def receipt(raw: bytes):
+    """Read only a nonsecret, exact phase-result JSON object."""
+    if type(raw) is not bytes or not 0 < len(raw) <= 16 * 1024 or len(raw.splitlines()) != 1:
+        raise FixtureError("Phase receipt is not a bounded single JSON line.")
+    try:
+        result = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs)
+    except (ValueError, UnicodeError) as error:
+        raise FixtureError("Phase receipt is invalid JSON.") from None
+    if type(result) is not dict or set(result) != {
+        "phase", "generation", "height", "block_hash", "collection_count", "snapshot",
+    }:
+        raise FixtureError("Phase receipt fields are missing or unexpected.")
+    if (result["phase"] not in ("baseline", "collected", "restart", "reorg")
+        or type(result["generation"]) is not str
+        or not re.fullmatch(r"[0-9a-f-]{36}", result["generation"])
+        or not _uint(result["height"])
+        or type(result["block_hash"]) is not str or KEY.fullmatch(result["block_hash"]) is None
+        or not _uint(result["collection_count"])
+        or type(result["snapshot"]) is not str or len(result["snapshot"]) > 80):
+        raise FixtureError("Phase receipt contains invalid public checkpoint fields.")
+    return result
