@@ -132,12 +132,18 @@ omitted choice is rejected. Docker's ambient DOCKER_HOST, DOCKER_CONTEXT and
 COMPOSE_* variables do not authorize the operation. The selected local Unix
 socket is pinned through build, run and teardown; remote Engines are refused.
 
+    # Select the existing host-local pool shared with NMR repositories.
+    pool="$HOME/Downloads/wheelhouse"
     make check/container
     make deps/images/prepare DOCKER_CONTEXT=science
-    wheels="$(make -s deps/wheelhouse/build DOCKER_CONTEXT=science)"
-    runtime="$(make -s image/build DOCKER_CONTEXT=science WHEELHOUSE_IMAGE="$wheels")"
+    make deps/wheelhouse/check DOCKER_CONTEXT=science WHEELHOUSE="$pool"
+
+    # Explicit acquisition ONLY if the pinned tool or locked wheels are absent.
+    make deps/wheelhouse/acquire DOCKER_CONTEXT=science WHEELHOUSE="$pool"
+
+    runtime="$(make -s image/build DOCKER_CONTEXT=science WHEELHOUSE="$pool")"
     make image/smoke DOCKER_CONTEXT=science CONIX_IMAGE="$runtime"
-    tests="$(make -s tests/image/build DOCKER_CONTEXT=science WHEELHOUSE_IMAGE="$wheels")"
+    tests="$(make -s tests/image/build DOCKER_CONTEXT=science WHEELHOUSE="$pool")"
     make tests/container DOCKER_CONTEXT=science CONIX_TEST_IMAGE="$tests"
 
 
@@ -200,15 +206,50 @@ Input staging and startup on a particular operator rootless Engine still
 require local qualification. Passing CI on a hosted Docker Engine does not
 establish that another host's Docker mapping or network topology matches it.
 
-Replace 'science' with your selected Docker context. The preparatory commands
-are deliberately networked and consume reviewed base-image digests and the
-committed per-wheel SHA-256 locks. Runtime/test packaging does not download
-Python dependencies. A missing source wheel or base image fails explicitly;
-no alternate image or unpinned package resolution is attempted. Upgrade locks
-and base digests only through deliberate, reviewed changes. Python wheel lock
-regeneration is supported for CPython 3.12 on Linux x86_64 using
-'python tools/lock_wheels.py --write'; it contacts the network and must be
-run separately from ordinary verification.
+Replace 'science' with your selected Docker context. Every Docker action
+resolves one local Unix-socket endpoint, disables ambient client/build/proxy
+overrides, and uses that same endpoint for contained acquisition, BuildKit,
+service startup, read-only inspection and teardown. An absent context in an
+unattended operation is never guessed.
+
+The shared WHEELHOUSE is an existing absolute directory owned by the invoking
+operator without symlink ancestors or group/other write access. It is the
+same host-local pool that NMR repositories consume. Conix does not create a
+per-repository wheelhouse image or a staging directory. The standalone NMR
+wheelhouse-tool v0.5.14 is pinned by SHA-256 and reused by byte identity.
+A warm check runs target CPython 3.12 pip in --dry-run mode inside a read-only,
+networkless container. The only cold acquisition lane bootstraps that release
+if missing, derives temporary source-lock-bound pylocks from the original
+issuer locks, and acquires missing hash-approved wheels through the upstream
+atomic no-clobber publisher. The cold locator uses the explicit PyPI HTTPS
+Simple API. Conflicting cached files are preserved, not overwritten.
+
+Target selection and actual Python dependency installation remain in contained
+Python/BuildKit environments. Builds use --no-index and --require-hashes and
+stream exact selected wheels from the pool under a reader lock, alongside
+only checked source inputs. The wheels are mounted ephemerally into installation
+steps, not copied into the final image or an intermediate wheelhouse image.
+A build tag is published only after both streaming and offline BuildKit
+succeed. The host executes the released zipapp only as a streamer; it never
+runs pip install.
+
+The pool worker uses the invoking nonzero host UID on a rootful CI Engine.
+On a rootless Engine, the namespace's uid 0 maps to the unprivileged host
+owner of the shared pool; that worker has no Linux capabilities, no new
+privileges, a read-only root and only its explicit pool bind permissions.
+Warm workers mount the pool read-only with network disabled. Explicit cold
+acquisition gets a writable pool mount and Docker-bridge network reachability.
+That bridge is NOT equivalent to NMR's separately qualified interface-bound
+proxy: egress routing policy must be enforced independently.
+
+Explicit base-image preparation may consult registries for digest-pinned
+Python, PostgreSQL, Foundry and Dockerfile frontend images; repeated pulls
+reuse Docker's cached layers. These are separate from warm wheel selection
+and ordinary offline builds. A missing wheel or base image fails without
+silent alternatives. Upgrade locks and base digests through reviewed changes.
+Python wheel lock regeneration using 'python tools/lock_wheels.py --write'
+is a separate operator action; the image installation path never invokes
+host pip.
 
 The test command does not build or pull an image. It uses the exact selected
 image ID, an isolated network, a uniquely named disposable PostgreSQL volume,
@@ -244,10 +285,11 @@ not change or install them. Conix builds its test-only Cast tool from dapp32's
 reviewed Foundry-image digest. Neither the normal runtime nor the ordinary SQL
 test image contains the signing tool.
 
+    pool="$HOME/Downloads/wheelhouse"
     make deps/images/prepare DOCKER_CONTEXT=science
-    wheels="$(make -s deps/wheelhouse/build DOCKER_CONTEXT=science)"
+    make deps/wheelhouse/check DOCKER_CONTEXT=science WHEELHOUSE="$pool"
     make deps/fixture-image/prepare DOCKER_CONTEXT=science
-    fixture="$(make -s tests/fixture/image/build DOCKER_CONTEXT=science WHEELHOUSE_IMAGE="$wheels")"
+    fixture="$(make -s tests/fixture/image/build DOCKER_CONTEXT=science WHEELHOUSE="$pool")"
     make tests/fixture/image/smoke DOCKER_CONTEXT=science CONIX_FIXTURE_IMAGE="$fixture"
     make tests/fixture DOCKER_CONTEXT=science \
       DAPP32_DIR=/absolute/path/to/dapp32 CONIX_FIXTURE_IMAGE="$fixture"
