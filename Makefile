@@ -4,6 +4,13 @@
 override SHELL := /bin/sh
 .DEFAULT_GOAL := help
 
+# GNU Make automatically exports command-line variables and may recursively
+# expand $(shell ...) in their values while constructing the child environment.
+# Suppress that path; only the simple $(value)-captured copies are exported.
+unexport DOCKER_CONTEXT WHEELHOUSE_IMAGE CONIX_IMAGE CONIX_TEST_IMAGE
+unexport CONIX_CONFIG_FILE CONIX_DSN_FILE CONIX_INPUT_VOLUME
+unexport CONIX_DEPLOYMENT CONIX_DATABASE_NETWORK CONIX_RPC_NETWORK
+
 override export CONIX_MAKE_DOCKER_CONTEXT := $(value DOCKER_CONTEXT)
 override export CONIX_MAKE_WHEELHOUSE_IMAGE := $(value WHEELHOUSE_IMAGE)
 override export CONIX_MAKE_CONIX_IMAGE := $(value CONIX_IMAGE)
