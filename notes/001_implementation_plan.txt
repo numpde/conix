@@ -1,0 +1,462 @@
+Focused PayToPlay indexer: cumulative implementation plan
+========================================================
+
+Date: 2026-11-08
+Status: implementation plan. All steps are pending; no runtime or qualification
+is established by these notes. Governing rule: 000_architecture_guidelines.txt.
+
+0. Product and acceptance target
+--------------------------------
+
+Build conix as an installable Python package with PostgreSQL persistence, a
+worker command and an importable observation API. It observes one explicitly
+configured PayToPlay deployment using one trusted Ethereum JSON-RPC source.
+It indexes VoucherCollected, not every transaction or every contract event.
+Authoritative asset()/viewPosition() calls supply position state at the indexed
+block. Do not reimplement Solidity balances, deadlines or lifecycle transitions.
+
+The first milestone is the COMPLETE installed package and its real consumer:
+
+  deploy the actual supported PayToPlay contract on disposable Anvil
+    -> fund a customer position
+    -> accept a signed invoice/voucher through pay-to-play
+    -> collect through its existing collection executor
+    -> index the actual VoucherCollected event
+    -> supply coherent position/history/canonical evidence
+    -> run the existing payment cycle and commit irreversible paid status
+    -> restart conix and repeat reads/cycle processing
+    -> retain the same evidence without another financial effect
+
+This is not an ingestion-only milestone followed by a future integration task.
+No fake ledger, fabricated event, manual SQL seeding or substitute contract
+stands in for the real acceptance path. Focused fault tests can use test doubles;
+the end-to-end gate cannot.
+
+Only these two notes are being added now. The code, packaging and sibling-repo
+changes below are future work, not existing files or already-authorized edits.
+
+1. Ownership and concrete code boundaries
+-----------------------------------------
+
+conix owns chain access, ABI interpretation for the supported contract,
+rebuildable collection history, checkpoints, canonicality guards and recovery.
+It does not depend on the pay-to-play ledger at runtime. pay-to-play owns the
+composition adapter and continues to own invoices, acceptance, risk policy,
+payment cycles, reconciliation and the collector.
+
+Reuse/rehome the narrow existing RPC/ABI logic after inspecting its exact
+version and ownership. Do not import the whole accounting service into conix or
+maintain an independently handwritten decoder for the same contract. Preserve
+provenance and compare the supported ABI with the actual dapp32 export.
+Keep any consumer-type translation in a thin pay-to-play adapter; it must not
+perform another scan, create another history store or weaken conix checks.
+
+Proposed responsibility groups, not an instruction to precreate empty modules:
+  model/validation: facts, identity, coverage and typed failure categories.
+  rpc/chain/paytoplay: bounded reads, branch evidence and ABI interpretation.
+  journal: writer lifetime, PostgreSQL reads and all durable mutations.
+  engine/session: advance_one(), sequential polling and normal lifecycle.
+  observer: the four guarded consumer operations.
+  commands/composition: installable entry points and explicit object wiring.
+  extensions: added only in their tiers; concrete delegation, no replacements.
+
+Tier 0 functions remain the actual authoritative implementations in all tiers.
+The core imports no extensions. Composition may change; protected algorithms
+must not grow flags for retry, repair, prefetch, cache or optimized execution.
+
+2. Tier 0: complete package with explicit manual recovery
+--------------------------------------------------------
+
+2.1 Included surface
+
+One wheel, one worker entry point, one container image, explicit configuration
+example, one README and contained tests of the installed distribution. Use
+Python entry points for lifecycle logic; Make targets may orchestrate builds
+and contained tests. Building/preparing dependencies is separate from testing.
+
+Proposed commands:
+  conix init --config FILE
+  conix run --config FILE
+  conix status --config FILE
+  conix repair --config FILE --to NUMBER:HASH
+  conix rebuild --config FILE --from-configured-origin
+
+init creates/adopts only an explicitly identified conix schema under its schema
+owner. run validates the schema version; it does not silently migrate or reset.
+repair/rebuild require exclusive writer ownership and are deliberate operator
+operations. rebuild affects only conix-owned records, never the payment ledger.
+All commands validate configuration and provide contextual failure diagnostics.
+
+Configuration explicitly supplies source identity, RPC and database connection,
+inclusive history-start height, polling cadence, operation/network deadlines,
+response/page/work limits and deployment-specific trust inputs. Validate values
+and source/schema compatibility. Do not invent financial thresholds or silently
+fall back to environment-selected endpoints, another chain or another database.
+Credentials must not appear in logs, status output or test receipts.
+
+Use one configured source and one writer per instance, with concurrent readers.
+Observe the configured canonical head, including provisional blocks. Payment
+recognition/finality policy stays with accounting; finalized-only recognition
+is not imposed to simplify conix.
+
+2.2 Persistence and identities
+
+Three logical data tables are sufficient; schema-migration metadata is separate:
+
+source_progress:
+  configured chain/deployment/start/ABI identity, generation, revision,
+  nullable completed checkpoint, collection_count, last observed upstream head
+  with observation time, and durable history-blocked reason when applicable.
+  A null checkpoint means not started; zero is a real block height.
+
+blocks:
+  source, number, hash, parent hash and timestamp for every indexed block,
+  including blocks without collections. Keep the origin/predecessor evidence
+  needed to validate the initial boundary, with an explicit genesis case.
+
+collections:
+  source, block number/hash/time, transaction hash/index, log index, customer,
+  channel, actual payee, actual positive amount, resulting voucher_paid,
+  invoice_hash and a dense history offset within the current retained prefix.
+
+The event occurrence key is source + block_hash + block-global log_index.
+Transaction hash and other fields must agree on repetition; conflicting bytes
+are an error, not an ON CONFLICT DO NOTHING success. Transaction hash alone is
+not event identity. Sequence offsets come from the transactionally committed
+collection_count, not a nontransactional sequence that can leave cursor gaps.
+
+Preserve uint256 values exactly. Use validated integer inputs and unscaled
+NUMERIC with integral/range constraints, not floating point or a scale-zero
+column that can silently round fractional inputs. Addresses/hashes retain
+validated fixed-length representations; external address formatting is a
+boundary concern, not a different identity.
+
+source identifies coverage and interpretation, not merely an RPC URL.
+generation changes when history is invalidated/repaired/rebuilt, not on an
+ordinary process restart. revision changes on durable mutations and rejects
+stale prepared work even after branch A -> B -> A. Advancing normally does not
+invalidate every older complete checkpoint. A generation change alone does
+not prove that a particular retained collection became orphaned.
+
+Retain all indexed headers/collections in this tier. History begins at the
+configured start, not necessarily at deployment creation. Missing earlier
+coverage remains unknown. Payment decisions retain their own specific evidence;
+conix repair must never erase or rewrite commercial acceptance or paid status.
+
+2.3 Writer and forward algorithm
+
+One lock-holding PostgreSQL session performs every mutation. Writer methods use
+that same connection, not an unrelated pool. The Writer capability cannot be
+used after disconnect or transferred to another session. A second writer fails
+before mutation; commands and the worker share the same ownership discipline.
+No SQL transaction spans RPC work. Separate read-only connections are permitted.
+
+run_session() acquires ownership, reads the durable basis, verifies source and
+checkpoint compatibility, then repeatedly invokes advance_one().
+
+advance_one() does exactly one next block:
+  1. Read the current basis and bounded upstream evidence.
+  2. Check the existing checkpoint's canonical identity, including when idle.
+  3. Obtain the next header and the deployment's collection logs pinned to it.
+  4. Validate source, topic/ABI, block identity, parent continuity, event amounts,
+     duplicates and transaction/log ordering. Represent an empty block explicitly.
+  5. Recheck the selected branch anchor before publication.
+  6. In a short transaction, compare expected generation/revision/checkpoint,
+     insert the complete block and events, advance count/progress, and commit.
+
+At the tip, validate a no-advance observation; an empty response is not permission
+to overlook a same-height replacement. Failed or over-limit data never advances
+progress. A missing response proves unavailability, not necessarily a fork.
+
+An unanswered commit stops the session. On restart the same startup path reads
+committed state, verifies it and resumes at its next block. Never assume failure
+and blindly replay the prepared write. Interruptions cannot create a half-block.
+
+Local transactions cannot freeze a remote chain. State the RPC trust boundary:
+conix checks coherence and identities but does not prove log completeness against
+a consistently dishonest RPC source or independently validate consensus.
+
+2.4 Observer operations and read guards
+
+Implement all four methods in Tier 0:
+  latest_checkpoint(): last complete prefix and separately observed upstream head.
+  latest_position(customer, channel): asset and authoritative viewPosition at
+    that prefix's hash, with coherent observation identity/time.
+  voucher_collected_events(checkpoint, cursor, limit): deployment-wide ordered
+    pages through that prefix, explicit history_start and completion.
+  canonical_evidence(checkpoint, heights, include_finalized): required canonical
+    block identities and optional genuine source-reported finality evidence.
+
+Read stored checkpoint, coverage and requested rows from one consistent snapshot.
+Close that read transaction before waiting for RPC. Obtain necessary hash-pinned
+values and branch evidence, then recheck generation/history usability. Calls
+must fail explicitly when required evidence cannot be established. A normal
+append may leave an older complete observation usable; invalidation does not.
+
+Tie pages to durable source/generation/checkpoint and dense offsets. Reject
+foreign, ahead, invalidated or missing-history handles. complete means the
+requested prefix was fully supplied, not deployment-lifetime coverage or
+finality. No publicly selectable arbitrary historical-position query is added.
+
+Use connected header evidence, not heights alone, to establish ancestry of
+requested receipts/checkpoint and any head/finalized claim. Bound this work;
+if the needed connection cannot be established within the supported evidence
+window, return unavailable. Older evidence not in retained coverage must be
+obtained explicitly or declined, never fabricated. Unknown is not orphaned.
+A source without required finality support cannot satisfy a finality gate.
+
+A dead writer or failed attempt to persist a blocked marker cannot make a stored
+ready flag sufficient evidence. Reads still check the live evidence and durable
+basis they require; inability to do so returns unavailable. status is not a
+financial authorization or a guarantee against a future chain change.
+
+2.5 Manual repair, required in Tier 0
+
+repair_to(expected_basis, target) is the only repair mutation implementation.
+Its target is either an identified retained canonical ancestor or the configured
+origin/reset boundary. The caller proposes the target; the core validates it.
+
+Stop the ordinary writer and acquire exclusive repair ownership. Establish that
+the target belongs to this source and is usable on the selected branch. Recheck
+the expected basis before mutation. Atomically remove only the affected suffix,
+adjust count/checkpoint, change generation/revision and record the resulting
+state. A rebuild discards conix history from its configured origin; it does not
+select a different chain or silently broaden coverage. Resume with normal startup.
+
+Detected contradictions invalidate history/handles before successful observation
+use. Repair does not assert that every old receipt was orphaned; accounting
+compares actual source identities. A crash before or after repair commit is
+resolved by the ordinary durable-state inspection, as with forward publication.
+
+Tier 0 has no ancestor search or automatic repair invocation. The operator
+selects an explicit retained target, or invokes the complete rebuild command.
+Both paths must work before Tier 0 is declared complete.
+
+2.6 Exact failure boundaries
+
+RPC timeout, connection loss, rate limit or server failure during ingestion:
+  Leave the unfinished block unpublished; terminate the session. Operator
+  restarts after restoration. No rebuild solely for an outage.
+
+Database disconnect, including an unanswered COMMIT:
+  Invalidate the writer and terminate. Restart inspects durable progress.
+
+Process/container/host interruption:
+  Restart through the ordinary entry point; no cleanup is presumed to have run.
+
+Confirmed branch contradiction:
+  Block affected observations and stop. Operator invokes repair/rebuild.
+
+Wrong chain, incompatible ABI, malformed or inconsistent source data:
+  Reject without advancing. Repair configuration/source; rebuild only when
+  retained indexed history actually needs repair. Do not retry these forever.
+
+Missing historical block/log data or a per-block resource limit exceeded:
+  Stop at the last complete block. Restore data access or explicitly revise
+  the bound; never skip the block or truncate a response and claim completeness.
+
+Unavailable historical position state or requested finality evidence:
+  Fail the affected observation; ingestion may continue. Never downgrade policy.
+
+Invalid cursor after repair:
+  Consumer obtains a fresh checkpoint and pages again. This is not another
+  worker failure and is not evidence that all old accounting receipts vanished.
+
+Second writer or schema/source mismatch:
+  Refuse the newcomer/startup. Do not kill the legitimate owner or auto-reset.
+
+2.7 Explicit Tier 0 exclusions
+
+No retries/backoff, automatic session restart/reconnection, ancestor search,
+automatic repair, prefetch, cache or coalescing. No parallel scanning, range
+scanner or multi-block commits. No position-filtered API, HTTP service, generic
+subscriptions, dashboards, pruning or additional storage backends. No financial
+policy changes, transaction submission or indexer-owned accounting tables.
+
+3. Tier 0 implementation sequence and exit gates
+------------------------------------------------
+
+These steps are internal slices of ONE end-to-end milestone, not separately
+completed product tiers. Do not build extension machinery before the real
+consumer path runs. Add tests for behavior and invariants before implementations;
+record executed evidence, and leave unexecuted qualification explicitly pending.
+
+[ ] T0-A: Establish the installed end-to-end acceptance harness first.
+    Use dapp32's actual supported contract/fixture interface, real PostgreSQL
+    and the real pay-to-play workflows. Pin the selected inputs and define
+    controlled failure points. The initial test must fail for missing conix,
+    not quietly fall back to the existing memory observer.
+    Exit: one contained command names and runs the intended complete path.
+
+[ ] T0-B: Implement package/configuration, identities and journal ownership.
+    Deliver init/status, validated source binding, schema and dedicated writer.
+    Test unstarted versus block zero, two writers, schema/source mismatch,
+    exact integer storage and rejected inconsistent event identities.
+    Exit: owned persistence and restartable durable basis through the installed
+    package; no unrelated framework or ledger schema introduced.
+
+[ ] T0-C: Implement ordinary reads and one-block ingestion.
+    Reuse/admit the actual ABI, bounded transport and core validation. Test empty
+    blocks, multiple logs, partial collection, actual payees, wrong identities,
+    response bounds and failure before/after COMMIT. Use a controlled wire proxy
+    or equivalent causal fixture for an unanswered successful commit.
+    Exit: real logs and durable progress agree across restart, with no gaps.
+
+[ ] T0-D: Implement the complete guarded Observer and consumer adapter.
+    Wire pay-to-play's source construction to the installed conix implementation.
+    Preserve existing financial commands and policy ownership. Verify state and
+    pages identify the same usable prefix; no fallback to unpinned latest state.
+    Exit: the complete fund/accept/collect/index/pay/restart scenario passes.
+    The milestone remains incomplete if this sibling integration is only a stub.
+
+[ ] T0-E: Implement invalidation and manual repair using repair_to().
+    Cover retained-anchor repair and complete rebuild, including restart during
+    repair, invalidated pagination and block A -> B -> A. Exercise payee changes
+    within a block and canonical replacements affecting already consumed events.
+    Exit: reorg -> unavailable -> explicit repair -> normal scan -> real payment
+    reconciliation. Paid invoices remain paid; discrepancies remain explicit.
+
+[ ] T0-F: Close the Tier 0 failure and architecture suite.
+    Kill actual processes at controlled boundaries; restart PostgreSQL. Test
+    readers during publication/repair, unknown versus orphaned evidence, absent
+    finality, stale evidence, old-state/new-accounting incompatibility and
+    bounded work. Test diagnostic cause/context/effects, not exact prose.
+    Probe wrapping a real read, automating a real manual repair and supplying raw
+    data through real validation. Record the protected operations/modules.
+    Exit: installed end-to-end proof, failure matrix and real-delegation probes
+    pass; operator commands and documentation match the tested behavior.
+
+Do not declare production finality safety from local Anvil success. In particular,
+a collector's independent receipt/release RPC path needs its own evidence:
+conix does not automatically fix unrelated ancestry or release-policy defects.
+Record such integration limits at their owner rather than changing financial
+policy or claiming that this observer eliminates already-broadcast exposure.
+
+4. Tier 1: automate the same base program
+----------------------------------------
+
+Only start after Tier 0's complete gate. Add these three components:
+
+[ ] T1-A: Retrying read wrapper.
+    Invoke the concrete Tier 0 bounded read. On an explicitly classified
+    transient error, wait and invoke it again within attempts/deadline limits.
+    Preserve source/selectors and cancellation. Do not add another transport,
+    decoder, publisher or generic retry(Exception).
+
+[ ] T1-B: Session supervisor.
+    Run the concrete run_session(). After a recoverable failure, wait for full
+    termination and cleanup, then invoke a NEW ordinary session. The base
+    reacquires ownership and inspects progress. Discard old Writer/prepared work.
+    Permanent source/schema/protocol errors remain blocked. This does not fence
+    distributed replicas or introduce a second authoritative progress store.
+
+[ ] T1-C: Bounded automatic repair controller.
+    Handle the core's history failure or persisted blocked-reorg state. Search
+    retained/current headers within an explicit bound; propose an ancestor to
+    repair_to(); resume via run_session(). repair_to() revalidates rather than
+    trusting the controller's earlier selection. Outside the bound, remain
+    blocked for manual rebuild. No extension SQL or separate replay loop.
+
+[ ] T1-D: Unattended-recovery and selected-source qualification.
+    Restore RPC after faults, restart PostgreSQL, kill sessions around commit,
+    replace recent blocks and interrupt repair. Prove unattended return to the
+    correct history within the supported bounds. Qualify the intended live
+    source's logs, pinned calls, historical state and requested finality; keep
+    provider/chain-specific limitations explicit. Do not generalize automatically.
+
+Tier 1 adds retry/recovery diagnostics around core state. It changes when the
+same operations run, not their definition of success. Re-run the Tier 0 suite
+and assert concrete delegation. Confirm wrong-chain/ABI/schema failures do not
+become infinite retry loops and cancellation cannot start another session.
+
+Excluded: acquisition optimizations, automatic RPC failover, provider quorum,
+distributed ownership, new APIs, outboxes, financial confidence changes and
+multi-block publication. Manual commands remain available and functional.
+
+5. Tier 2: measured I/O assistance, not another scanner
+------------------------------------------------------
+
+No automatic commitment to this tier. First record a measurable bottleneck and
+an explicit success target. Implement only the selected assistance below.
+
+[ ] T2-A: Bounded raw-response prefetch.
+    Use existing core read facilities to acquire anticipated payloads. Buffer
+    exact request identities with explicit memory/concurrency bounds. The SAME
+    advance_one() acquires/decodes/validates each block and the SAME publisher
+    commits it individually. Live canonicality checks are not prefetch hits.
+    Drop invalid speculative work; it never establishes progress or readiness.
+
+[ ] T2-B: Eligible block-pinned payload cache.
+    Misses use the ordinary read. Hits still pass through ordinary decoding
+    and the observation guard. Keys include source, deployment, block hash and
+    all relevant arguments. Never cache a complete observation or validity claim.
+    This can avoid physical I/O, not the concrete semantic execution path.
+
+[ ] T2-C: Identical in-flight read coalescing, only if separately justified.
+    One real base read serves identical eligible requests. Keep each waiter's
+    deadline/cancellation and semantic checks. Do not let one cancelled waiter
+    cancel work needed by others or let an expired result become authoritative.
+
+[ ] T2-D: Measure and qualify the selected combination.
+    Demonstrate reduced RPC traffic/latency under representative workload and
+    run all earlier contracts. Cover reorg after prefetch, cache hit after
+    invalidation, lost COMMIT response with buffered blocks, and cancellation
+    during a shared read/recovery. Instrument real core delegation.
+
+Excluded: range-scanning replacement, multi-block transactions, new decoder,
+new HTTP implementation and position-filtered history. JSON-RPC batching is not
+implicitly included: a separate proposal must demonstrate preservation of the
+existing request/error handling and protected semantics before adding it.
+
+6. Outside all tiers
+---------------------
+
+No general EVM/plugin framework, arbitrary ABI handlers, declarative transforms,
+factory discovery, transaction traces, native-transfer index, derived balances,
+arithmetic rollback journals or historical cron. No second ledger, invoice
+allocator, signer, nonce manager or collection scheduler.
+
+No alternative database, message broker, mandatory HTTP/GraphQL server,
+distributed writer election, active-active operation, automatic source failover,
+pruning/archive tiers or public arbitrary historical-position queries.
+
+Position-filtered history needs a separate scoped coverage/cursor contract and
+consumer change. Multi-block publication needs an explicit shared-core change.
+Neither may be presented as a transparent extension of the agreed Tier 0.
+
+7. Implementation evidence and reference boundary
+--------------------------------------------------
+
+These notes record the user's design decisions and the repository discussion.
+They are not a production assurance, benchmark, completed checklist or promise
+of a code size. All future test reports must identify the exercised composition,
+installed package/image and relevant sibling revisions. Never count a source-
+only check or test double as real PostgreSQL/chain/integration qualification.
+
+Reference snapshot inspected for the consumer interface:
+  numpde/pay-to-play @ 2a1adb00b2eba9a18b49c92ca39a69ecf59bb110
+  src/local_observer/models.py: existing four-operation Observer and facts.
+
+Other starting points identified in the preceding repository review; reread at
+implementation time and follow newer owning decisions rather than old proposals:
+  src/local_observer/{rpc,pay_to_play,configuration}.py
+  src/management/{cycle_evidence,payment_worker,collection_worker}.py
+  src/ledger/{payment_cycles,purchase_admission,payment_risk}.py
+  notes/019_contract_state_projection.txt
+  notes/022_local_observer_implementation.txt
+  notes/029_accounting_and_collection_plan_20261028.txt
+  notes/032_implementation_decisions_20261028.txt
+  notes/033_deferred_delivery_gaps_20261029.txt
+
+The rindexer fork is a source of relevant failure scenarios and comparison
+behavior, not a required runtime dependency or justification for importing its
+general features. The earlier reviewed master was
+4b4fa52cc111cff0e5537366ba7311875d1223f4; no current-head claim is implied.
+
+Final gate
+-----------
+
+Tier 0 performs the complete job and explicit repair. Tier 1 selects when to
+repeat, restart or repair THAT SAME program. Tier 2 helps THAT SAME program
+obtain inputs efficiently. A tier is rejected if its success depends on a
+parallel authoritative implementation, even when all ordinary outputs match.
