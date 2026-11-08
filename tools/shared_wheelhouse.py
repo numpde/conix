@@ -129,6 +129,40 @@ def source_allowlist(root=ROOT):
     return entries
 
 
+def project_issuer_lock(source):
+    """Pure, lossless syntax projection for the released NMR metadata locator.
+
+    Conix already pins one exact wheel SHA per requirement on a single line.
+    NMR's released locator expects a separate --hash line. This is NOT a
+    dependency resolver or a second committed lock; the acquisition tool
+    binds its ephemeral pylock to this exact normalized source.
+    """
+    if type(source) is not str or not source or len(source) > 1024 * 1024:
+        raise PoolError("Cannot project an empty or oversized issuer requirements lock.")
+    records = []
+    seen = set()
+    expression = re.compile(
+        r"([A-Za-z0-9][A-Za-z0-9_.-]*)==([A-Za-z0-9][A-Za-z0-9.!+_-]*)"
+        r" --hash=sha256:([0-9a-f]{64})\Z"
+    )
+    for raw in source.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        found = expression.fullmatch(line)
+        if found is None:
+            raise PoolError("Cannot project issuer lock: exact version and SHA-256 required.")
+        name, version, digest = found.groups()
+        canonical = re.sub(r"[-_.]+", "-", name).lower()
+        if canonical in seen:
+            raise PoolError("Cannot project issuer lock: repeated package identity.")
+        seen.add(canonical)
+        records.append(f"{name}=={version} \\\n    --hash=sha256:{digest}\n")
+    if not records:
+        raise PoolError("Cannot project an empty issuer requirements lock.")
+    return "".join(records)
+
+
 def selection_manifest(raw):
     """Check the target-interpreter's hash-verified pip selection report."""
     if type(raw) is not bytes or not raw or len(raw) > 1024 * 1024:

@@ -15,7 +15,7 @@ import tempfile
 
 from shared_wheelhouse import (
     PoolError, admit_pool, has_tool, release_record, selection_manifest,
-    source_allowlist, worker_grants,
+    source_allowlist, worker_grants, project_issuer_lock,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -102,10 +102,25 @@ class SharedWheelhouse:
             pass
         with tempfile.TemporaryDirectory(prefix="conix-wheelhouse-projection-") as tmp:
             for name in ("runtime", "build"):
+                # Preserve the original pinned Conix lock. The NMR locator's
+                # multiline syntax is generated and used only for this
+                # source-lock-bound acquisition.
+                normalized = Path(tmp) / "normalized.lock"
+                normalized.write_text(
+                    project_issuer_lock((ROOT / "requirements" / (name + ".lock")).read_text()),
+                    encoding="utf-8",
+                )
+                normalized.chmod(0o600)
+                release_mount = (
+                    "--mount", f"type=bind,src={normalized},dst=/input/normalized.lock,readonly",
+                )
                 projected = self.run(
-                    str(self.release_path).replace(str(self.pool), "/wheelhouse", 1),
-                    "locate", "--lock", f"/input/{name}.lock", "--pool", "/wheelhouse",
+                    "/wheelhouse/" + self.pin["name"], "locate",
+                    "--lock", "/input/normalized.lock",
+                    "--index-url", "https://pypi.org/simple",
+                    "--pool", "/wheelhouse",
                     network=True, write=False, timeout=240, capture=True,
+                    extra_mounts=release_mount,
                 )
                 path = Path(tmp) / "pylock.toml"
                 path.write_text(projected, encoding="utf-8")
@@ -114,15 +129,16 @@ class SharedWheelhouse:
                     self.run(
                         "/wheelhouse/" + self.pin["name"],
                         "acquire", "--lock", "/input/pylock.toml",
-                        "--source-lock", f"/input/{name}.lock",
+                        "--source-lock", "/input/normalized.lock",
                         "--pool", "/wheelhouse",
                         network=True, write=True, timeout=390,
-                        extra_mounts=(
+                        extra_mounts=release_mount + (
                             "--mount", f"type=bind,src={path},dst=/input/pylock.toml,readonly",
                         ),
                     )
                 finally:
                     path.unlink(missing_ok=True)
+                    normalized.unlink(missing_ok=True)
         return self.check()
 
     def build(self, target):
