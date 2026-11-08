@@ -8,7 +8,7 @@ override SHELL := /bin/sh
 # expand $(shell ...) in their values while constructing the child environment.
 # Suppress that path; only the simple $(value)-captured copies are exported.
 unexport DOCKER_CONTEXT WHEELHOUSE_IMAGE CONIX_IMAGE CONIX_TEST_IMAGE
-unexport CONIX_CONFIG_FILE CONIX_DSN_FILE CONIX_INPUT_VOLUME
+unexport CONIX_CONFIG_FILE CONIX_DSN_FILE CONIX_OWNER_DSN_FILE CONIX_INPUT_VOLUME
 unexport CONIX_DEPLOYMENT CONIX_DATABASE_NETWORK CONIX_RPC_NETWORK
 
 override export CONIX_MAKE_DOCKER_CONTEXT := $(value DOCKER_CONTEXT)
@@ -17,6 +17,7 @@ override export CONIX_MAKE_CONIX_IMAGE := $(value CONIX_IMAGE)
 override export CONIX_MAKE_CONIX_TEST_IMAGE := $(value CONIX_TEST_IMAGE)
 override export CONIX_MAKE_CONIX_CONFIG_FILE := $(value CONIX_CONFIG_FILE)
 override export CONIX_MAKE_CONIX_DSN_FILE := $(value CONIX_DSN_FILE)
+override export CONIX_MAKE_CONIX_OWNER_DSN_FILE := $(value CONIX_OWNER_DSN_FILE)
 override export CONIX_MAKE_CONIX_INPUT_VOLUME := $(value CONIX_INPUT_VOLUME)
 override export CONIX_MAKE_CONIX_DEPLOYMENT := $(value CONIX_DEPLOYMENT)
 override export CONIX_MAKE_CONIX_DATABASE_NETWORK := $(value CONIX_DATABASE_NETWORK)
@@ -24,7 +25,7 @@ override export CONIX_MAKE_CONIX_RPC_NETWORK := $(value CONIX_RPC_NETWORK)
 
 .PHONY: help check/container check/inputs deps/images/prepare deps/wheelhouse/build \
 	image/build tests/image/build image/smoke tests/container \
-	inputs/stage inputs/proof inputs/remove runtime/start runtime/stop runtime/status
+	inputs/stage inputs/proof inputs/remove schema/init runtime/start runtime/stop runtime/status
 
 help:
 	@printf '%s\n' \
@@ -40,6 +41,9 @@ help:
 	  '  make inputs/stage|inputs/proof DOCKER_CONTEXT=<context> CONIX_IMAGE=sha256:<id>' \
 	  '        CONIX_CONFIG_FILE=/path/to/config CONIX_DSN_FILE=/path/to/credentials' \
 	  '  make inputs/remove DOCKER_CONTEXT=<context> CONIX_INPUT_VOLUME=<id>' \
+  '  make schema/init DOCKER_CONTEXT=<context> CONIX_IMAGE=sha256:<id>' \
+  '        CONIX_CONFIG_FILE=/path/to/config CONIX_OWNER_DSN_FILE=/path/to/owner-secret' \
+  '        CONIX_DATABASE_NETWORK=<name>' \
 	  '  make runtime/start|runtime/status|runtime/stop DOCKER_CONTEXT=<context>' \
 	  '        CONIX_DEPLOYMENT=<name> CONIX_IMAGE=sha256:<id> CONIX_INPUT_VOLUME=<id>' \
 	  '        CONIX_DATABASE_NETWORK=<name> CONIX_RPC_NETWORK=<name>'
@@ -81,3 +85,8 @@ inputs/remove:
 
 runtime/start runtime/status runtime/stop:
 	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
+
+# Owner credentials are staged in a disposable engine volume and never enter
+# the persistent runtime worker's configuration volume.
+schema/init:
+	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" schema/init

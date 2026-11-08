@@ -230,7 +230,7 @@ class Docker:
             raise OperationError("Staged input file is empty or exceeds its size limit.")
         return data
 
-    def stage_inputs(self, image, config_path, dsn_path, *, proof=False):
+    def stage_inputs(self, image, config_path, dsn_path, *, proof=False, announce=True):
         """Create and own a unique input volume, with no host bind mounts."""
         if not IMAGE_ID.fullmatch(image or ""):
             raise OperationError("CONIX_IMAGE must select a prepared immutable runtime image.")
@@ -274,7 +274,8 @@ class Docker:
             self.verify_inputs(image, volume)
             if not proof:
                 remove = False
-                print(volume)
+                if announce:
+                    print(volume)
         except Exception:
             remove = True
             raise
@@ -286,6 +287,8 @@ class Docker:
                     raise OperationError(
                         f"Cannot confirm cleanup of owned private volume {volume}; inspect selected Engine {self.base[-1]}."
                     ) from error
+
+        return None if proof else volume
 
     def verify_inputs(self, image, volume):
         """Prove access as the *actual* runtime uid without mapping host paths."""
@@ -318,6 +321,59 @@ class Docker:
         if len(values) != 1 or values[0].get("Labels", {}).get("io.conix.input-token") != (token or volume.removeprefix("conix-inputs-")):
             raise OperationError("Private input-volume label does not match its identity; refusing removal.")
         self.run("volume", "rm", volume, timeout=30)
+
+    def initialize_schema(self, image, config_path, owner_dsn_path, database):
+        """Confined, one-shot owner-only schema operation, no worker credentials.
+
+        Reuse the existing private input stager, but place owner credentials in
+        an ephemeral volume mounted only into the installation container.
+        The normal worker volume is never mounted here or modified.
+        """
+        if not IMAGE_ID.fullmatch(image or ""):
+            raise OperationError("Owner initialization requires a prepared immutable CONIX_IMAGE=sha256:<id>.")
+        if type(database) is not str or not CONTEXT_NAME.fullmatch(database):
+            raise OperationError("Choose one existing database network for schema initialization.")
+        self.require_rootless_engine()
+        self.require_image(image)
+        actual = self.run(
+            "network", "inspect", "--format", "{{.Name}}", database,
+            timeout=10, capture=True,
+        ).strip()
+        if actual != database:
+            raise OperationError("Selected owner-init database network is missing or has another identity.")
+
+        volume = self.stage_inputs(image, config_path, owner_dsn_path, announce=False)
+        failure = None
+        try:
+            self.run(
+                "run", "--rm", "--init", "--pull", "never",
+                "--network", database,
+                "--read-only", "--user", "65532:65532",
+                "--cap-drop", "ALL",
+                "--security-opt", "no-new-privileges:true",
+                "--pids-limit", "64", "--memory", "256m",
+                "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=16m",
+                "--mount", f"type=volume,source={volume},target=/run/conix-owner,readonly",
+                image, "init", "--config", "/run/conix-owner/config.toml",
+                "--owner-dsn-file", "/run/conix-owner/connection.dsn",
+                timeout=90,
+            )
+        except Exception as error:
+            failure = error
+        finally:
+            try:
+                self.remove_inputs(volume)
+            except Exception as error:
+                raise OperationError(
+                    f"Schema init input-volume cleanup is unconfirmed for {volume} "
+                    f"on selected Engine {self.base[-1]}; inspect exact volume ownership."
+                ) from error
+        if failure is not None:
+            raise OperationError(
+                "Conix schema init did not confirm completion; verify durable source "
+                "identity before retrying the explicit idempotent owner operation."
+            ) from failure
+        print("Conix schema installed/verified through a separate owner-only session.")
 
     def deployment(self, *, operation, name, image, volume, database, rpc):
         """Render/admit one instance, then use that exact project on this Engine."""
@@ -514,7 +570,7 @@ def main():
     parser.add_argument("action", choices=(
         "deps/images/prepare", "deps/wheelhouse/build", "image/build",
         "image/smoke", "tests/image/build", "tests/container",
-        "inputs/stage", "inputs/proof", "inputs/remove",
+        "inputs/stage", "inputs/proof", "inputs/remove", "schema/init",
         "runtime/start", "runtime/stop", "runtime/status",
     ))
     parser.add_argument("--test-image")
@@ -522,6 +578,7 @@ def main():
     parser.add_argument("--image")
     parser.add_argument("--config-file")
     parser.add_argument("--dsn-file")
+    parser.add_argument("--owner-dsn-file")
     parser.add_argument("--volume")
     parser.add_argument("--deployment")
     parser.add_argument("--database-network")
@@ -534,7 +591,7 @@ def main():
             raw = {key: os.environ.get("CONIX_MAKE_" + key, "") for key in (
                 "DOCKER_CONTEXT", "WHEELHOUSE_IMAGE", "CONIX_IMAGE",
                 "CONIX_TEST_IMAGE", "CONIX_CONFIG_FILE", "CONIX_DSN_FILE",
-                "CONIX_INPUT_VOLUME", "CONIX_DEPLOYMENT",
+                "CONIX_OWNER_DSN_FILE", "CONIX_INPUT_VOLUME", "CONIX_DEPLOYMENT",
                 "CONIX_DATABASE_NETWORK", "CONIX_RPC_NETWORK",
             )}
             args.context = raw["DOCKER_CONTEXT"]
@@ -543,6 +600,7 @@ def main():
             args.test_image = raw["CONIX_TEST_IMAGE"]
             args.config_file = raw["CONIX_CONFIG_FILE"]
             args.dsn_file = raw["CONIX_DSN_FILE"]
+            args.owner_dsn_file = raw["CONIX_OWNER_DSN_FILE"]
             args.volume = raw["CONIX_INPUT_VOLUME"]
             args.deployment = raw["CONIX_DEPLOYMENT"]
             args.database_network = raw["CONIX_DATABASE_NETWORK"]
@@ -566,6 +624,11 @@ def main():
                                     proof=args.action == "inputs/proof")
             elif args.action == "inputs/remove":
                 docker.remove_inputs(args.volume)
+            elif args.action == "schema/init":
+                docker.initialize_schema(
+                    args.image, args.config_file, args.owner_dsn_file,
+                    args.database_network,
+                )
             elif args.action.startswith("runtime/"):
                 docker.deployment(
                     operation=args.action.removeprefix("runtime/"),

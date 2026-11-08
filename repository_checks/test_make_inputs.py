@@ -22,6 +22,7 @@ PARAMETERS = {
     "inputs/stage": "CONIX_CONFIG_FILE",
     "inputs/proof": "CONIX_DSN_FILE",
     "inputs/remove": "CONIX_INPUT_VOLUME",
+    "schema/init": "CONIX_OWNER_DSN_FILE",
     "runtime/start": "CONIX_DEPLOYMENT",
     "runtime/stop": "CONIX_DATABASE_NETWORK",
     "runtime/status": "CONIX_RPC_NETWORK",
