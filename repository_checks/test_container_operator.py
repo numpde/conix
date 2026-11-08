@@ -27,6 +27,8 @@ with open(os.environ["CONIX_FAKE_LOG"], "a") as output:
 if args[:2] == ["context", "ls"]:
     print("science\tunix:///tmp/science-docker.sock")
     print("remote\ttcp://example.invalid:2375")
+elif "image" in args and "inspect" in args:
+    print("sha256:" + "a" * 64)
 elif "compose" in args and "config" in args:
     print(json.dumps({"services": {
         "tests": {"image": os.environ["CONIX_TEST_IMAGE"],
