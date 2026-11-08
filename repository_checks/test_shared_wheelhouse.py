@@ -10,6 +10,8 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
@@ -30,6 +32,66 @@ class SharedWheelhouseContracts(unittest.TestCase):
             link.symlink_to(cache, target_is_directory=True)
             with self.assertRaises(pool.PoolError):
                 pool.admit_pool(str(link))
+
+    def test_git_inventory_refuses_untracked_python_inputs(self):
+        with patch.object(
+            pool.subprocess, "run",
+            return_value=SimpleNamespace(stdout=b"src/conix/__init__.py\\0"),
+        ):
+            with self.assertRaises(pool.PoolError):
+                pool.source_allowlist(ROOT)
+
+    def test_selected_engine_determines_pool_worker_identity(self):
+        import wheelhouse_operations as operation
+
+        class Engine:
+            def __init__(self, rootless):
+                self.calls = []
+                self.rootless = rootless
+                self.base = ["docker", "--config", "/private/client",
+                             "--host", "unix:///tmp/selected-docker.sock"]
+                self.env = {}
+
+            def run(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+                if args[:2] == ("info", "--format"):
+                    return '["name=rootless"]' if self.rootless else '["name=seccomp"]'
+                if args and args[0] == "run":
+                    return json.dumps([{
+                        "directory": "wheelhouse",
+                        "filename": "demo-1.0-py3-none-any.whl",
+                        "sha256": "a" * 64,
+                    }])
+                raise AssertionError("Unexpected Docker method in offline wheel worker.")
+
+            def require_image(self, reference):
+                return "sha256:" + "b" * 64
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "wheels"
+            cache.mkdir(mode=0o700)
+            for rootless in (False, True):
+                with self.subTest(rootless=rootless):
+                    engine = Engine(rootless)
+                    with patch.object(operation, "has_tool", return_value=True):
+                        runner = operation.SharedWheelhouse(
+                            engine,
+                            {"python_base": "docker.io/library/python@sha256:" + "b" * 64},
+                            str(cache),
+                        )
+                        selected = runner.check()
+                    self.assertEqual(len(selected), 1)
+                    self.assertEqual(runner.user, "0:0" if rootless else
+                                     f"{os.geteuid()}:{os.getegid()}")
+                    cmd, kwargs = engine.calls[-1]
+                    self.assertEqual(cmd[:1], ("run",))
+                    self.assertEqual(cmd[cmd.index("--network") + 1], "none")
+                    self.assertEqual(cmd[cmd.index("--pull") + 1], "never")
+                    self.assertEqual(cmd[cmd.index("--user") + 1], runner.user)
+                    self.assertTrue(all("readonly" in value for value in cmd
+                                        if value.startswith("type=bind,")))
+                    self.assertFalse(kwargs.get("public_diagnostic"))
+                    self.assertTrue(kwargs.get("capture"))
 
     def test_released_tool_is_same_pinned_nmr_artifact(self):
         pin = pool.release_record()
