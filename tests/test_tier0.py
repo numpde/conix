@@ -81,6 +81,10 @@ class Chain:
     def __init__(self, settings, blocks, records=None):
         self.settings = settings
         self.blocks = {header.number: header for header in blocks}
+        # A real RPC source supplies the canonical predecessor of the first
+        # configured indexed block, even though conix does not retain it.
+        if 1 in self.blocks and 0 not in self.blocks:
+            self.blocks[0] = block(0, 0, bytes(32))
         self.contract = Contract(records or {})
         self.canonicals = []
         self.identity_checks = 0
