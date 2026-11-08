@@ -137,6 +137,27 @@ class Journal:
                 "SELECT set_config('lock_timeout', %s, false)",
                 (f"{min(milliseconds, 5000)}ms",),
             )
+            role = await (await connection.execute(
+                "SELECT r.rolname, r.rolsuper, r.rolcreatedb, r.rolcreaterole, "
+                "r.rolreplication, r.rolbypassrls, "
+                "pg_has_role(current_user, n.nspowner, 'member') AS owner_member, "
+                "has_schema_privilege(current_user, 'conix', 'CREATE') AS schema_create "
+                "FROM pg_roles r JOIN pg_namespace n ON n.nspname = 'conix' "
+                "WHERE r.rolname = current_user"
+            )).fetchone()
+            if (
+                role is None
+                or role["rolname"] != self.settings.runtime_role
+                or role["owner_member"] or role["schema_create"]
+                or any(role[name] for name in (
+                    "rolsuper", "rolcreatedb", "rolcreaterole",
+                    "rolreplication", "rolbypassrls"
+                ))
+            ):
+                raise ConfigurationError(
+                    "Conix requires its selected restricted runtime login, not a schema owner "
+                    "or an account with cluster/schema creation privileges."
+                )
             yield connection
 
     @asynccontextmanager

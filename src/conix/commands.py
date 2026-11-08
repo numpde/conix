@@ -15,6 +15,7 @@ from conix.errors import Blocked, BranchConflict, ConfigurationError, CorruptSto
 from conix.journal import Journal
 from conix.models import Block, HistoryUnavailable, ObservationProtocolError, ObservationUnavailable
 from conix.rpc import RpcError, RpcProtocolError, RpcUnavailable
+from conix.schema import initialize
 
 logger = logging.getLogger("conix")
 
@@ -43,6 +44,8 @@ def _parse(argv):
     for command in ("init", "run", "status", "repair", "rebuild"):
         entry = subcommands.add_parser(command)
         entry.add_argument("--config", required=True, type=Path)
+        if command == "init":
+            entry.add_argument("--owner-dsn-file", type=Path, required=True)
         if command == "repair":
             entry.add_argument("--to", type=_target, required=True)
         if command == "rebuild":
@@ -52,12 +55,15 @@ def _parse(argv):
 
 async def _execute(arguments):
     settings = load_settings(arguments.config)
-    journal = Journal(read_dsn(settings.database_dsn_file), settings)
     if arguments.command == "init":
-        async with journal.writer() as writer:
-            await writer.init()
-        print("Initialized or verified conix storage for the configured source.")
+        if arguments.owner_dsn_file == settings.database_dsn_file:
+            raise ConfigurationError(
+                "Owner and runtime credential paths must be different; no schema writes with the worker credential."
+            )
+        await initialize(read_dsn(arguments.owner_dsn_file), settings)
+        print("Verified owner-installed Conix schema and restricted runtime grants.")
         return
+    journal = Journal(read_dsn(settings.database_dsn_file), settings)
 
     if arguments.command == "status":
         basis = await journal.basis()
