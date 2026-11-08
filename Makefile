@@ -48,3 +48,14 @@ inputs/proof:
 inputs/remove:
 	@test -n "$(CONIX_INPUT_VOLUME)" || { echo "Supply exact CONIX_INPUT_VOLUME=conix-inputs-<token>." >&2; exit 2; }
 	@$(PYTHON) tools/container.py $(_CONTEXT) inputs/remove --volume "$(CONIX_INPUT_VOLUME)"
+
+
+.PHONY: runtime/start runtime/stop runtime/status
+# Each invocation pins its own selected Engine and reviews the rendered profile.
+# Source and database networks must already exist on that Engine.
+runtime/start runtime/stop runtime/status:
+	@test -n "$(CONIX_DEPLOYMENT)" -a -n "$(CONIX_IMAGE)" -a -n "$(CONIX_INPUT_VOLUME)" -a -n "$(CONIX_DATABASE_NETWORK)" -a -n "$(CONIX_RPC_NETWORK)" || { echo "Supply CONIX_DEPLOYMENT, CONIX_IMAGE, CONIX_INPUT_VOLUME, CONIX_DATABASE_NETWORK and CONIX_RPC_NETWORK explicitly." >&2; exit 2; }
+	@$(PYTHON) tools/container.py $(_CONTEXT) "$@" \
+	  --deployment "$(CONIX_DEPLOYMENT)" --image "$(CONIX_IMAGE)" \
+	  --volume "$(CONIX_INPUT_VOLUME)" --database-network "$(CONIX_DATABASE_NETWORK)" \
+	  --rpc-network "$(CONIX_RPC_NETWORK)"

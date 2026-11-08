@@ -295,6 +295,104 @@ class Docker:
             raise OperationError("Private input-volume label does not match its identity; refusing removal.")
         self.run("volume", "rm", volume, timeout=30)
 
+    def deployment(self, *, operation, name, image, volume, database, rpc):
+        """Render/admit one instance, then use that exact project on this Engine."""
+        for label, value in (
+            ("deployment", name), ("database network", database), ("RPC network", rpc),
+        ):
+            if type(value) is not str or not CONTEXT_NAME.fullmatch(value):
+                raise OperationError(f"Select one valid {label} name without paths or control characters.")
+        if database == rpc:
+            raise OperationError("Source RPC and database networks must be separately selected.")
+        if not IMAGE_ID.fullmatch(image or ""):
+            raise OperationError("Runtime requires an immutable CONIX_IMAGE=sha256:<id>.")
+        self.require_image(image)
+        # An input volume's identity and ownership label must agree before a
+        # command can reuse it. The label is not a credential or permission.
+        if not re.fullmatch(r"conix-inputs-[a-f0-9]{24}", volume or ""):
+            raise OperationError("Runtime requires a staged conix-inputs-<token> volume.")
+        rows = json.loads(self.run("volume", "inspect", volume, timeout=10, capture=True))
+        if (len(rows) != 1
+            or rows[0].get("Labels", {}).get("io.conix.input-token")
+                != volume.removeprefix("conix-inputs-")):
+            raise OperationError("Selected input volume does not match its stage label.")
+        for selected in (database, rpc):
+            actual = self.run(
+                "network", "inspect", "--format", "{{.Name}}", selected,
+                timeout=10, capture=True,
+            ).strip()
+            if actual != selected:
+                raise OperationError(f"Selected network {selected!r} was not found on this Engine.")
+        project = "conix-" + name
+        compose = [
+            "compose", "--env-file", "/dev/null", "--project-directory", str(ROOT),
+            "-p", project, "-f", str(ROOT / "compose/runtime.yml"),
+        ]
+        env = self.env.copy()
+        env.update(
+            CONIX_IMAGE=image,
+            CONIX_INPUT_VOLUME=volume,
+            CONIX_DATABASE_NETWORK=database,
+            CONIX_RPC_NETWORK=rpc,
+        )
+        try:
+            rendered = json.loads(self.run(
+                *compose, "config", "--format", "json", env=env,
+                timeout=20, capture=True,
+            ))
+            services = rendered["services"]
+            service = services["indexer"]
+            volumes = service.get("volumes", [])
+            networks = rendered["networks"]
+            if (
+                set(services) != {"indexer"}
+                or service.get("image") != image
+                or service.get("pull_policy") != "never"
+                or service.get("user") != "65532:65532"
+                or service.get("read_only") is not True
+                or service.get("privileged", False)
+                or service.get("ports") or service.get("network_mode")
+                or set(service.get("cap_drop", [])) != {"ALL"}
+                or len(volumes) != 1
+                or volumes[0].get("type") != "volume"
+                or volumes[0].get("source") not in ("inputs", volume)
+                or volumes[0].get("target") != "/run/conix"
+                or volumes[0].get("read_only") is not True
+                or len(networks) != 2
+                or networks["database"]["name"] != database
+                or networks["rpc"]["name"] != rpc
+            ):
+                raise OperationError("Rendered runtime deployment violates image, input or confinement policy.")
+        except (ValueError, KeyError, IndexError, TypeError) as error:
+            raise OperationError("Cannot validate the selected runtime deployment configuration.") from error
+
+        if operation == "status":
+            self.run(*compose, "ps", "--all", env=env, timeout=20)
+            return
+        if operation == "stop":
+            self.run(*compose, "stop", "--timeout", "90", "indexer", env=env, timeout=105)
+            self.run(*compose, "down", "--remove-orphans", env=env, timeout=60)
+            print(f"Stopped project {project}; external inputs and networks were retained.")
+            return
+        if operation != "start":
+            raise OperationError("Runtime operation must be start, stop or status.")
+        self.verify_inputs(image, volume)
+        self.run(*compose, "stop", "--timeout", "90", "indexer", env=env, timeout=105)
+        try:
+            self.run(*compose, "up", "--detach", "--no-build", "--pull",
+                     "never", "--wait", "--wait-timeout", "30",
+                     "indexer", env=env, timeout=60)
+        except OperationError:
+            raise OperationError(
+                f"Conix project {project} did not confirm startup. Inspect the "
+                "selected Engine and use runtime/status or runtime/stop with "
+                "the same exact settings; inputs were retained."
+            ) from None
+        print(
+            f"Started conix project {project}; a running container is not evidence "
+            "of chain freshness or payment readiness."
+        )
+
     def test(self, image, images):
         if not IMAGE_ID.fullmatch(image):
             raise OperationError("CONIX_TEST_IMAGE must be an immutable sha256 image ID.")
@@ -366,6 +464,7 @@ def main():
         "deps/images/prepare", "deps/wheelhouse/build", "image/build",
         "image/smoke", "tests/image/build", "tests/container",
         "inputs/stage", "inputs/proof", "inputs/remove",
+        "runtime/start", "runtime/stop", "runtime/status",
     ))
     parser.add_argument("--test-image")
     parser.add_argument("--wheelhouse-image")
@@ -373,6 +472,9 @@ def main():
     parser.add_argument("--config-file")
     parser.add_argument("--dsn-file")
     parser.add_argument("--volume")
+    parser.add_argument("--deployment")
+    parser.add_argument("--database-network")
+    parser.add_argument("--rpc-network")
     args = parser.parse_args()
     try:
         endpoint = select_endpoint(args.context, args.origin)
@@ -394,6 +496,13 @@ def main():
                                     proof=args.action == "inputs/proof")
             elif args.action == "inputs/remove":
                 docker.remove_inputs(args.volume)
+            elif args.action.startswith("runtime/"):
+                docker.deployment(
+                    operation=args.action.removeprefix("runtime/"),
+                    name=args.deployment, image=args.image,
+                    volume=args.volume, database=args.database_network,
+                    rpc=args.rpc_network,
+                )
             else:
                 target = "runtime" if args.action == "image/build" else "tests"
                 print(docker.build(target, images, args.wheelhouse_image))
