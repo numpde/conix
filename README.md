@@ -79,6 +79,12 @@ and database-resource lifetimes. No HTTP server or alternate scanner exists.
 Container preparation and verification
 --------------------------------------
 
+Production runtime/start verifies that the selected daemon reports rootless
+operation; a local Unix socket is not sufficient. Source/status/stop remain
+available for recovery even if the daemon's previous image or external inputs
+are absent. CI's disposable build and test engine is not thereby certified
+as an approved rootless deployment environment.
+
 The Docker engine is selected explicitly for each Make invocation. Use
 DOCKER_CONTEXT=<local-context> on the command line; without a terminal, an
 omitted choice is rejected. Docker's ambient DOCKER_HOST, DOCKER_CONTEXT and

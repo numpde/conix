@@ -140,6 +140,25 @@ class Docker:
             raise OperationError("Selected image is not a valid local image ID.")
         return identity
 
+    def require_rootless_engine(self):
+        """A local socket is not proof that the selected daemon is rootless."""
+        try:
+            options = json.loads(self.run(
+                "info", "--format", "{{json .SecurityOptions}}",
+                timeout=10, capture=True,
+            ))
+        except (ValueError, TypeError) as error:
+            raise OperationError(
+                "Cannot establish selected Docker Engine rootless status from daemon security options."
+            ) from error
+        if type(options) is not list or not all(type(value) is str for value in options):
+            raise OperationError("Selected Docker Engine returned malformed security options.")
+        if "name=rootless" not in options:
+            raise OperationError(
+                "Runtime start requires a verified rootless Docker Engine; "
+                "a local Unix socket alone does not qualify a rootful daemon."
+            )
+
     def prepare(self, images):
         """Networked, explicit image acquisition; never part of a test run."""
         for reference in (
@@ -315,6 +334,7 @@ class Docker:
         # precondition. Teardown must work after image, volume, network or
         # source files have disappeared from this Engine.
         if operation == "start":
+            self.require_rootless_engine()
             self.require_image(image)
         # An input volume's identity and ownership label must agree before a
         # command can reuse it. The label is not a credential or permission.
