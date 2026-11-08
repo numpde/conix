@@ -57,10 +57,12 @@ def environment(client_config=None):
     return result
 
 
-def command(argv, *, env, timeout=60, capture=False):
+def command(argv, *, env, timeout=60, capture=False, progress_to_stderr=False):
     try:
         result = subprocess.run(argv, cwd=ROOT, env=env, timeout=timeout,
-                                text=capture, capture_output=capture, check=False)
+                                text=capture, capture_output=capture,
+                                stdout=sys.stderr if progress_to_stderr else None,
+                                check=False)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise OperationError(f"Command failed to run: {argv[-1]} ({type(error).__name__}).") from error
     if result.returncode:
@@ -115,9 +117,10 @@ class Docker:
         self.base = ["docker", "--config", str(config_dir), "--host", endpoint]
         self.env = environment(config_dir)
 
-    def run(self, *args, timeout=60, capture=False, env=None):
+    def run(self, *args, timeout=60, capture=False, env=None, progress_to_stderr=False):
         return command(self.base + list(args), env=self.env if env is None else env,
-                       timeout=timeout, capture=capture)
+                       timeout=timeout, capture=capture,
+                       progress_to_stderr=progress_to_stderr)
 
     def prepare(self, images):
         """Networked, explicit image acquisition; never part of a test run."""
@@ -152,7 +155,7 @@ class Docker:
                 "--build-arg", "PYTHON_BASE_IMAGE=" + images["python_base"],
                 *kwargs, "--iidfile", str(iid),
                 "--tag", f"conix-tier0-{target}:local", context,
-                timeout=600,
+                timeout=600, progress_to_stderr=True,
             )
             result = iid.read_text(encoding="ascii").strip()
         if not IMAGE_ID.fullmatch(result):

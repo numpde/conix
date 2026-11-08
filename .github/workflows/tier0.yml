@@ -40,15 +40,13 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Check installed entry point
         run: conix --help
-      - name: Generate exact wheel-hash lock candidates for review
-        run: python tools/lock_wheels.py --emit-b64
-      - name: Build the production container image
-        run: docker build --target runtime -t conix-tier0:ci .
-      - name: Exercise the packaged container entry point
-        run: docker run --rm --read-only conix-tier0:ci --help
       - name: Qualify host-side Docker context and teardown contracts
         run: make check/container
-      - name: Build the test image separately and run it without rebuilding
+      - name: Acquire pinned images and hashed wheelhouse; build and test offline
         run: |
-          image="$(make -s tests/image/build DOCKER_CONTEXT=default)"
-          make tests/container DOCKER_CONTEXT=default CONIX_TEST_IMAGE="$image"
+          make deps/images/prepare DOCKER_CONTEXT=default
+          wheelhouse="$(make -s deps/wheelhouse/build DOCKER_CONTEXT=default)"
+          runtime="$(make -s image/build DOCKER_CONTEXT=default WHEELHOUSE_IMAGE="$wheelhouse")"
+          make image/smoke DOCKER_CONTEXT=default CONIX_IMAGE="$runtime"
+          test_image="$(make -s tests/image/build DOCKER_CONTEXT=default WHEELHOUSE_IMAGE="$wheelhouse")"
+          make tests/container DOCKER_CONTEXT=default CONIX_TEST_IMAGE="$test_image"

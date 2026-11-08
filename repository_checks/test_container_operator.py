@@ -31,7 +31,7 @@ elif "compose" in args and "config" in args:
     print(json.dumps({"services": {
         "tests": {"image": os.environ["CONIX_TEST_IMAGE"],
                   "read_only": True, "user": "65532:65532"},
-        "postgres": {"read_only": True}}}))
+        "postgres": {"read_only": True, "image": os.environ["CONIX_POSTGRES_IMAGE"]}}}))
 elif "compose" in args and "up" in args and os.getenv("CONIX_FAKE_UP_FAIL"):
     sys.exit(3)
 elif "compose" in args and "down" in args and os.getenv("CONIX_FAKE_DOWN_FAIL"):
