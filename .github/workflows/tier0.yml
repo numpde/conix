@@ -59,3 +59,9 @@ jobs:
           printf '%s\n' 'postgresql://fixture:disposable@postgres:5432/conix_test' > "$dsn"
           make inputs/proof DOCKER_CONTEXT=default CONIX_IMAGE="$runtime" \
             CONIX_CONFIG_FILE="$candidate" CONIX_DSN_FILE="$dsn"
+          # Render the actual production profile without creating resources.
+          CONIX_IMAGE="$runtime" \
+          CONIX_INPUT_VOLUME="conix-inputs-aaaaaaaaaaaaaaaaaaaaaaaa" \
+          CONIX_DATABASE_NETWORK="payment-db" CONIX_RPC_NETWORK="payment-rpc" \
+            docker compose --env-file /dev/null -p conix-ci -f compose/runtime.yml \
+              config --quiet
