@@ -93,7 +93,10 @@ class MakeInputSafety(unittest.TestCase):
                         self.assertEqual(record["vars"]["CONIX_MAKE_" + key], value)
                         expected = "tools/fixture.py" if target == "tests/fixture" else "tools/container.py"
                         self.assertEqual(record["argv"][0], expected)
-                        self.assertIn(target, record["argv"])
+                        if target == "tests/fixture":
+                            self.assertIn("--from-make", record["argv"])
+                        else:
+                            self.assertIn(target, record["argv"])
 
 
 if __name__ == "__main__":
