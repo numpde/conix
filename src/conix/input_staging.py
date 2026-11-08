@@ -59,7 +59,6 @@ def create_file(directory: int, filename: str, content: bytes):
     descriptor = os.open(filename, flags, 0o600, dir_fd=directory)
     try:
         os.fchmod(descriptor, 0o600)
-        os.fchown(descriptor, OWNER, OWNER)
         with os.fdopen(descriptor, "wb", closefd=False) as stream:
             stream.write(content)
             stream.flush()
@@ -84,17 +83,22 @@ def stage(payload: bytes, target: Path = TARGET):
             raise InputError("Mounted input destination is not a directory.")
         create_file(fd, CONFIG, config)
         create_file(fd, DSN, secret)
+        # Validate while the staging identity still owns both private files.
+        # A uid-0 process with only CAP_CHOWN cannot bypass DAC checks after
+        # ownership changes to the runtime uid.
+        from conix.configuration import load_settings, read_dsn
+        parsed = load_settings(target / CONFIG)
+        if parsed.database_dsn_file != target / DSN:
+            raise InputError("Staged settings point outside the private credential file.")
+        read_dsn(target / DSN)
+        os.chown(CONFIG, OWNER, OWNER, dir_fd=fd, follow_symlinks=False)
+        os.chown(DSN, OWNER, OWNER, dir_fd=fd, follow_symlinks=False)
         # Let only the runtime uid traverse the directory and read its files.
         os.fchown(fd, OWNER, OWNER)
         os.fchmod(fd, 0o700)
         os.fsync(fd)
     finally:
         os.close(fd)
-    from conix.configuration import load_settings, read_dsn
-    parsed = load_settings(target / CONFIG)
-    if parsed.database_dsn_file != target / DSN:
-        raise InputError("Staged settings point outside the private credential file.")
-    read_dsn(target / DSN)
 
 
 def main():
