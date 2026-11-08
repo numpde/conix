@@ -32,3 +32,19 @@ tests/container:
 
 check/container:
 	@$(PYTHON) -m unittest discover -s repository_checks -p 'test_container_*.py' -v
+
+
+.PHONY: inputs/stage inputs/proof inputs/remove
+# This stages fixed inputs to an engine-owned volume. No host 0600 bind-mount
+# access assumptions and no secret argv/env arguments.
+inputs/stage:
+	@test -n "$(CONIX_IMAGE)" -a -n "$(CONIX_CONFIG_FILE)" -a -n "$(CONIX_DSN_FILE)" || { echo "Supply CONIX_IMAGE, CONIX_CONFIG_FILE and CONIX_DSN_FILE explicitly." >&2; exit 2; }
+	@$(PYTHON) tools/container.py $(_CONTEXT) inputs/stage --image "$(CONIX_IMAGE)" --config-file "$(CONIX_CONFIG_FILE)" --dsn-file "$(CONIX_DSN_FILE)"
+
+inputs/proof:
+	@test -n "$(CONIX_IMAGE)" -a -n "$(CONIX_CONFIG_FILE)" -a -n "$(CONIX_DSN_FILE)" || { echo "Supply CONIX_IMAGE, CONIX_CONFIG_FILE and CONIX_DSN_FILE explicitly." >&2; exit 2; }
+	@$(PYTHON) tools/container.py $(_CONTEXT) inputs/proof --image "$(CONIX_IMAGE)" --config-file "$(CONIX_CONFIG_FILE)" --dsn-file "$(CONIX_DSN_FILE)"
+
+inputs/remove:
+	@test -n "$(CONIX_INPUT_VOLUME)" || { echo "Supply exact CONIX_INPUT_VOLUME=conix-inputs-<token>." >&2; exit 2; }
+	@$(PYTHON) tools/container.py $(_CONTEXT) inputs/remove --volume "$(CONIX_INPUT_VOLUME)"

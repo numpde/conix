@@ -8,6 +8,9 @@ import os
 from pathlib import Path
 import re
 import secrets
+import stat
+import struct
+import tomllib
 import subprocess
 import sys
 import tempfile
@@ -182,6 +185,116 @@ class Docker:
                  "--pids-limit", "64", "--memory", "256m",
                  "--user", "65532:65532", image, "--help", timeout=30)
 
+    def private_bytes(self, value, max_size, *, secret):
+        path = Path(value)
+        if not path.is_absolute():
+            raise OperationError("Staged input files must use absolute host paths.")
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+        fd = os.open(path, flags)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                raise OperationError("Staged input must be an operator-owned regular file.")
+            if secret and info.st_mode & 0o077:
+                raise OperationError("Database credential source must have no group/other permissions.")
+            if not secret and info.st_mode & 0o022:
+                raise OperationError("Conix settings source must not be group/other writable.")
+            data = os.read(fd, max_size + 1)
+        finally:
+            os.close(fd)
+        if not 0 < len(data) <= max_size:
+            raise OperationError("Staged input file is empty or exceeds its size limit.")
+        return data
+
+    def stage_inputs(self, image, config_path, dsn_path, *, proof=False):
+        """Create and own a unique input volume, with no host bind mounts."""
+        if not IMAGE_ID.fullmatch(image or ""):
+            raise OperationError("CONIX_IMAGE must select a prepared immutable runtime image.")
+        self.require_image(image)
+        config = self.private_bytes(config_path, 64 * 1024, secret=False)
+        dsn = self.private_bytes(dsn_path, 8192, secret=True)
+        try:
+            data = tomllib.loads(config.decode("utf-8"))
+            if data["database"]["dsn_file"] != "/run/conix/connection.dsn":
+                raise ValueError
+        except (UnicodeError, KeyError, TypeError, ValueError) as error:
+            raise OperationError(
+                "Stage settings with database.dsn_file=/run/conix/connection.dsn; no host path is mounted."
+            ) from error
+        envelope = b"CONIX-INPUTS-V1\n" + struct.pack("!II", len(config), len(dsn)) + config + dsn
+        token = secrets.token_hex(12)
+        volume = "conix-inputs-" + token
+        created = self.run(
+            "volume", "create", "--label", "io.conix.input-token=" + token,
+            "--name", volume, timeout=15, capture=True,
+        ).strip()
+        if created != volume:
+            raise OperationError("Created input volume identity differs from the selected name; inspect the Engine.")
+        remove = proof
+        try:
+            # Root only in this short-lived, networkless provisioner. It receives
+            # exactly CAP_CHOWN to hand 0600 files and 0700 directory to uid 65532.
+            # No secret appears in argv, environment, Docker labels, or image layers.
+            argv = self.base + [
+                "run", "--rm", "--interactive", "--network", "none",
+                "--read-only", "--user", "0:0", "--cap-drop", "ALL",
+                "--cap-add", "CHOWN", "--security-opt", "no-new-privileges:true",
+                "--pids-limit", "32", "--memory", "128m",
+                "--mount", f"type=volume,source={volume},target=/run/conix",
+                "--entrypoint", "python", image, "-m", "conix.input_staging",
+            ]
+            result = subprocess.run(argv, input=envelope, capture_output=True,
+                                    cwd=ROOT, env=self.env, timeout=40, check=False)
+            if result.returncode:
+                raise OperationError("Conix input staging rejected the private inputs or volume; no secret was logged.")
+            self.verify_inputs(image, volume)
+            if not proof:
+                remove = False
+                print(volume)
+        except Exception:
+            remove = True
+            raise
+        finally:
+            if remove:
+                try:
+                    self.remove_inputs(volume, token=token)
+                except Exception as error:
+                    raise OperationError(
+                        f"Cannot confirm cleanup of owned private volume {volume}; inspect selected Engine {self.base[-1]}."
+                    ) from error
+
+    def verify_inputs(self, image, volume):
+        """Prove access as the *actual* runtime uid without mapping host paths."""
+        check = (
+            "import os,stat;"
+            "from pathlib import Path;"
+            "from conix.configuration import load_settings,read_dsn;"
+            "d=Path('/run/conix');"
+            "assert os.getuid()==65532;"
+            "assert stat.S_IMODE(d.stat().st_mode)==0o700;"
+            "assert stat.S_IMODE((d/'connection.dsn').stat().st_mode)==0o600;"
+            "assert (d/'connection.dsn').stat().st_uid==65532;"
+            "assert load_settings(d/'config.toml').database_dsn_file==d/'connection.dsn';"
+            "assert read_dsn(d/'connection.dsn')"
+        )
+        self.run(
+            "run", "--rm", "--network", "none", "--read-only",
+            "--user", "65532:65532", "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true",
+            "--pids-limit", "32", "--memory", "128m",
+            "--mount", f"type=volume,source={volume},target=/run/conix,readonly",
+            "--entrypoint", "python", image, "-c", check,
+            timeout=30,
+        )
+
+    def remove_inputs(self, volume, *, token=None):
+        if not re.fullmatch(r"conix-inputs-[a-f0-9]{24}", volume or ""):
+            raise OperationError("Only conix-owned input-volume identities can be removed.")
+        values = json.loads(self.run("volume", "inspect", volume, timeout=10, capture=True))
+        if len(values) != 1 or values[0].get("Labels", {}).get("io.conix.input-token") != (token or volume.removeprefix("conix-inputs-")):
+            raise OperationError("Private input-volume label does not match its identity; refusing removal.")
+        self.run("volume", "rm", volume, timeout=30)
+
     def test(self, image, images):
         if not IMAGE_ID.fullmatch(image):
             raise OperationError("CONIX_TEST_IMAGE must be an immutable sha256 image ID.")
@@ -252,10 +365,14 @@ def main():
     parser.add_argument("action", choices=(
         "deps/images/prepare", "deps/wheelhouse/build", "image/build",
         "image/smoke", "tests/image/build", "tests/container",
+        "inputs/stage", "inputs/proof", "inputs/remove",
     ))
     parser.add_argument("--test-image")
     parser.add_argument("--wheelhouse-image")
     parser.add_argument("--image")
+    parser.add_argument("--config-file")
+    parser.add_argument("--dsn-file")
+    parser.add_argument("--volume")
     args = parser.parse_args()
     try:
         endpoint = select_endpoint(args.context, args.origin)
@@ -272,6 +389,11 @@ def main():
                 docker.test(args.test_image or "", images)
             elif args.action == "image/smoke":
                 docker.smoke(args.image)
+            elif args.action in ("inputs/stage", "inputs/proof"):
+                docker.stage_inputs(args.image, args.config_file, args.dsn_file,
+                                    proof=args.action == "inputs/proof")
+            elif args.action == "inputs/remove":
+                docker.remove_inputs(args.volume)
             else:
                 target = "runtime" if args.action == "image/build" else "tests"
                 print(docker.build(target, images, args.wheelhouse_image))
