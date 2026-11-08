@@ -76,7 +76,7 @@ class OfflineInputChecks(unittest.TestCase):
             (ROOT / "requirements/build.lock").read_text(),
         )
         images = json.loads((ROOT / "containers/images.json").read_text())
-        self.assertEqual(set(images), {"postgres", "python_base"})
+        self.assertEqual(set(images), {"postgres", "python_base", "foundry"})
         self.assertTrue(all(type(value) is str and IMAGE.fullmatch(value) for value in images.values()))
 
     def test_duplicate_missing_and_malformed_wheel_pins_are_rejected(self):

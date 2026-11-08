@@ -22,7 +22,7 @@ IMAGE_ID = re.compile(r"sha256:[a-f0-9]{64}\Z")
 
 def pinned_images():
     document = json.loads((ROOT / "containers/images.json").read_text(encoding="utf-8"))
-    if set(document) != {"python_base", "postgres"}:
+    if set(document) != {"python_base", "postgres", "foundry"}:
         raise OperationError("Reviewed image manifest must contain only python_base and postgres.")
     for role, name in document.items():
         if (type(name) is not str or "@sha256:" not in name
@@ -168,6 +168,10 @@ class Docker:
         ):
             self.run("pull", "--platform", "linux/amd64", reference, timeout=180)
 
+    def prepare_fixture_tool(self, images):
+        """Explicit acquisition of the optional, test-only Foundry image."""
+        self.run("pull", "--platform", "linux/amd64", images["foundry"], timeout=240)
+
     def build(self, target, images, wheelhouse_image=None):
         self.require_image(images["python_base"])
         if target == "wheelhouse":
@@ -185,6 +189,9 @@ class Docker:
             self.run("tag", wheelhouse_image, source, timeout=10)
             dockerfile, context, network = "Dockerfile", ".", "none"
             kwargs = ("--build-arg", "WHEELHOUSE_IMAGE=" + source)
+            if target == "fixture":
+                self.require_image(images["foundry"])
+                kwargs += ("--build-arg", "FOUNDRY_IMAGE=" + images["foundry"])
         with tempfile.TemporaryDirectory(prefix="conix-image-") as directory:
             iid = Path(directory) / "iid"
             self.run(
@@ -568,8 +575,8 @@ def main():
     parser.add_argument("--context", default="")
     parser.add_argument("--origin", default="undefined")
     parser.add_argument("action", choices=(
-        "deps/images/prepare", "deps/wheelhouse/build", "image/build",
-        "image/smoke", "tests/image/build", "tests/container",
+        "deps/images/prepare", "deps/fixture-image/prepare", "deps/wheelhouse/build", "image/build",
+        "image/smoke", "tests/image/build", "tests/fixture/image/build", "tests/container",
         "inputs/stage", "inputs/proof", "inputs/remove", "schema/init",
         "runtime/start", "runtime/stop", "runtime/status",
     ))
@@ -613,6 +620,8 @@ def main():
             images = pinned_images()
             if args.action == "deps/images/prepare":
                 docker.prepare(images)
+            elif args.action == "deps/fixture-image/prepare":
+                docker.prepare_fixture_tool(images)
             elif args.action == "deps/wheelhouse/build":
                 print(docker.build("wheelhouse", images))
             elif args.action == "tests/container":
@@ -637,7 +646,11 @@ def main():
                     rpc=args.rpc_network,
                 )
             else:
-                target = "runtime" if args.action == "image/build" else "tests"
+                target = {
+                    "image/build": "runtime",
+                    "tests/image/build": "tests",
+                    "tests/fixture/image/build": "fixture",
+                }[args.action]
                 print(docker.build(target, images, args.wheelhouse_image))
     except (OperationError, OSError) as error:
         raise SystemExit(f"Conix container operation refused or failed: {error}") from None

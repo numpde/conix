@@ -2,6 +2,7 @@
 # Runtime packaging is offline; the acquisition Dockerfile is separate.
 ARG PYTHON_BASE_IMAGE
 ARG WHEELHOUSE_IMAGE
+ARG FOUNDRY_IMAGE=ghcr.io/foundry-rs/foundry:v1.7.1@sha256:8347b728d5d393dac1c018691b36f506d23b9dcd78341d40ea0fcb11c3a19cdd
 FROM ${WHEELHOUSE_IMAGE} AS wheelhouse
 
 FROM ${PYTHON_BASE_IMAGE} AS package
@@ -33,3 +34,13 @@ ENTRYPOINT ["conix"]
 FROM runtime AS tests
 COPY tests /tests
 ENTRYPOINT ["python", "-m", "unittest", "discover", "-s", "/tests", "-v"]
+
+# Optional *test-only* Foundry signing tool; absent from runtime and ordinary tests.
+# The deployed PayToPlay contract supplies voucherDigest. Cast signs that
+# prehashed EIP-712 digest using only dapp32's public fixture key.
+FROM ${FOUNDRY_IMAGE} AS fixture_signer
+FROM runtime AS fixture
+COPY --from=fixture_signer /usr/local/bin/cast /usr/local/bin/cast
+COPY tests /tests
+RUN --network=none cast --version
+ENTRYPOINT ["python", "-I", "/tests/fixture_campaign.py"]
