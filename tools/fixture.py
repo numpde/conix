@@ -72,22 +72,27 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None):
         )
         try:
             child.communicate(input=payload, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            # The caller must still treat daemon effects as unknown. Child
-            # grandchildren that detached into their own sessions may survive.
+        except BaseException as error:
+            # Timeout, SIGINT and SIGTERM all require explicit retirement
+            # before upstream resources can be considered unborrowed.
+            # Detached daemon operations may still be unknown.
             try:
                 os.killpg(child.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
             try:
-                child.communicate(timeout=10)
+                child.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 try:
                     os.killpg(child.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-                child.communicate(timeout=5)
-            raise CampaignError("A fixture operation exceeded its budget; resulting daemon effects are unconfirmed.")
+                child.wait(timeout=5)
+            if isinstance(error, subprocess.TimeoutExpired):
+                raise CampaignError(
+                    "A fixture operation exceeded its budget; resulting daemon effects are unconfirmed."
+                ) from None
+            raise
     if child.returncode != 0:
         raise CampaignError("A fixture command failed; inspect its private diagnostic receipt and ownership before retrying.")
     if output.stat().st_size > 1048576:
@@ -336,7 +341,13 @@ class Campaign:
         )
 
 
+def _signal_interruption(_signum, _frame):
+    raise KeyboardInterrupt("Fixture operation interrupted; ownership must be reconciled.")
+
+
 def main():
+    # SIGTERM must unwind the same owned-resource cleanup as ordinary failure.
+    signal.signal(signal.SIGTERM, _signal_interruption)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--from-make", action="store_true")
     parser.add_argument("--origin", required=True)
