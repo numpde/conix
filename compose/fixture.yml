@@ -1,0 +1,116 @@
+# Disposable consumer stack. dapp32 alone owns the external Anvil network.
+# All services use prebuilt local images; no host ports, bind mounts, image pulls
+# or Docker socket. Private fixture accounts cross stdin only to the runner.
+services:
+  postgres:
+    image: ${CONIX_POSTGRES_IMAGE:?select the reviewed pinned PostgreSQL image}
+    pull_policy: never
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: conix-fixture-admin
+      POSTGRES_DB: conix_test
+    user: "999:999"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    cpus: 1
+    mem_limit: 512m
+    memswap_limit: 512m
+    volumes: [pgdata:/var/lib/postgresql/data]
+    tmpfs:
+      - /var/run/postgresql:rw,nosuid,nodev,noexec,uid=999,gid=999,mode=0700,size=16m
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777,size=16m
+    healthcheck:
+      test: [CMD, pg_isready, -h, "127.0.0.1", -U, postgres, -d, conix_test]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [database]
+
+  bootstrap:
+    image: ${CONIX_POSTGRES_IMAGE:?select the reviewed pinned PostgreSQL image}
+    pull_policy: never
+    entrypoint: ["/bin/sh", "-eu", "-c"]
+    command:
+      - |
+        psql -X -v ON_ERROR_STOP=1 -h postgres -U postgres -d conix_test <<'SQL'
+        REVOKE ALL ON DATABASE conix_test FROM PUBLIC;
+        REVOKE ALL ON SCHEMA public FROM PUBLIC;
+        CREATE ROLE conix_owner WITH LOGIN PASSWORD 'conix-fixture-owner'
+          NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+        CREATE ROLE conix_runtime WITH LOGIN PASSWORD 'conix-fixture-runtime'
+          NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+        GRANT CONNECT ON DATABASE conix_test TO conix_owner, conix_runtime;
+        CREATE SCHEMA conix AUTHORIZATION conix_owner;
+        CREATE SCHEMA ledger AUTHORIZATION postgres;
+        CREATE TABLE ledger.operator_private (secret text);
+        SQL
+    environment:
+      PGPASSWORD: conix-fixture-admin
+      HOME: /tmp
+    user: "999:999"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    cpus: 0.25
+    mem_limit: 128m
+    memswap_limit: 128m
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777,size=8m
+    networks: [database]
+
+  initialize:
+    image: ${CONIX_FIXTURE_IMAGE:?select the prebuilt installed fixture image}
+    pull_policy: never
+    entrypoint: [python, -I, /tests/fixture_campaign.py]
+    stdin_open: true
+    tty: false
+    environment:
+      CONIX_FIXTURE_ID: ${CONIX_FIXTURE_ID:?select the owned fixture ID}
+      CONIX_TEST_OWNER_DSN: postgresql://conix_owner:conix-fixture-owner@postgres:5432/conix_test
+    user: "65532:65532"
+    read_only: true
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    cpus: 0.5
+    mem_limit: 256m
+    memswap_limit: 256m
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777,size=16m
+    networks: [database]
+
+  consumer:
+    image: ${CONIX_FIXTURE_IMAGE:?select the prebuilt installed fixture image}
+    pull_policy: never
+    entrypoint: [python, -I, /tests/fixture_campaign.py]
+    stdin_open: true
+    tty: false
+    environment:
+      CONIX_FIXTURE_ID: ${CONIX_FIXTURE_ID:?select the owned fixture ID}
+      CONIX_TEST_DSN: postgresql://conix_runtime:conix-fixture-runtime@postgres:5432/conix_test
+      HOME: /tmp
+    user: "65532:65532"
+    read_only: true
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    cpus: 1
+    mem_limit: 512m
+    memswap_limit: 512m
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777,size=16m
+    networks: [database, rpc]
+
+networks:
+  database:
+    internal: true
+  rpc:
+    name: ${CONIX_RPC_NETWORK:?validated external dapp32 network is required}
+    external: true
+volumes:
+  pgdata: {}
