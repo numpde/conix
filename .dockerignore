@@ -1,9 +1,12 @@
-.git
-.github
-notes
-examples
-compose
-Makefile
-README.md
-*.pyc
-__pycache__
+# Closed input set for offline runtime/test packaging. All wheel acquisition
+# happens separately with containers/wheelhouse/Dockerfile.dockerignore.
+**
+!Dockerfile
+!pyproject.toml
+!requirements/
+!requirements/runtime.lock
+!requirements/build.lock
+!src/
+!src/**
+!tests/
+!tests/**
