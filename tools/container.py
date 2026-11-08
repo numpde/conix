@@ -358,6 +358,11 @@ class Docker:
                 or service.get("privileged", False)
                 or service.get("ports") or service.get("network_mode")
                 or set(service.get("cap_drop", [])) != {"ALL"}
+                or service.get("cap_add")
+                or set(service.get("security_opt", [])) != {"no-new-privileges:true"}
+                or set(service.get("networks", [])) != {"database", "rpc"}
+                or service.get("devices") or service.get("device_cgroup_rules")
+                or service.get("pid") or service.get("ipc") or service.get("uts")
                 or len(volumes) != 1
                 or volumes[0].get("type") != "volume"
                 or volumes[0].get("source") not in ("inputs", volume)
