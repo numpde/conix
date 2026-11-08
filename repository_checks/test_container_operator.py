@@ -28,6 +28,8 @@ if args[:2] == ["context", "ls"]:
     print("science\tunix:///tmp/science-docker.sock")
     print("remote\ttcp://example.invalid:2375")
 elif "image" in args and "inspect" in args:
+    if os.getenv("CONIX_FAKE_MISSING_RESOURCE"):
+        sys.exit(3)
     print("sha256:" + "a" * 64)
 elif "volume" in args and "inspect" in args:
     volume = args[-1]
@@ -132,7 +134,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertFalse(any("down" in item["args"] for item in calls))
         self.assertIn("network", completed.stderr)
 
-    def run_runtime_fake(self, *, bad_bind=False):
+    def run_runtime_fake(self, *, bad_bind=False, operation="start", missing_resources=False):
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)
             fake = directory / "docker"
@@ -146,10 +148,12 @@ class LocalDockerOperatorTests(unittest.TestCase):
             env["COMPOSE_FILE"] = "/tmp/foreign.yml"
             if bad_bind:
                 env["CONIX_FAKE_BAD_RUNTIME_BIND"] = "1"
+            if missing_resources:
+                env["CONIX_FAKE_MISSING_RESOURCE"] = "1"
             result = subprocess.run([
                 sys.executable, str(TOOL),
                 "--context", "science", "--origin", "command line",
-                "runtime/start", "--deployment", "pilot",
+                "runtime/" + operation, "--deployment", "pilot",
                 "--image", "sha256:" + "a" * 64,
                 "--volume", "conix-inputs-" + "b" * 24,
                 "--database-network", "db-conix", "--rpc-network", "rpc-conix",
@@ -168,6 +172,19 @@ class LocalDockerOperatorTests(unittest.TestCase):
         for item in calls:
             if "context" not in item["args"]:
                 self.assertIn("unix:///tmp/science-docker.sock", item["args"])
+
+    def test_runtime_stop_does_not_need_removed_external_resources(self):
+        result, calls = self.run_runtime_fake(operation="stop", missing_resources=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(any("stop" in item["args"] for item in calls))
+        self.assertTrue(any("down" in item["args"] for item in calls))
+        self.assertFalse(any("image" in item["args"] and "inspect" in item["args"] for item in calls))
+        self.assertFalse(any("volume" in item["args"] and "inspect" in item["args"] for item in calls))
+
+    def test_runtime_start_still_refuses_missing_image(self):
+        result, calls = self.run_runtime_fake(missing_resources=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any("up" in item["args"] for item in calls))
 
     def test_runtime_bind_mount_rejected_before_start(self):
         run, calls = self.run_runtime_fake(bad_bind=True)
