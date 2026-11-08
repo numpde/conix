@@ -215,6 +215,19 @@ class Campaign:
         self.descriptor = descriptor
         self.producer_owned = True
 
+    def check_new_sql_project(self):
+        """Refuse to adopt or destroy any pre-existing Compose project assets."""
+        for kind in ("container", "network", "volume"):
+            args = [kind, "ls", "--quiet", "--filter",
+                    "label=com.docker.compose.project=" + self.project]
+            if kind == "container":
+                args.insert(2, "--all")
+            if self.docker.run(*args, timeout=15, capture=True).strip():
+                raise CampaignError(
+                    "The generated Conix SQL project already has resources; "
+                    "inspect ownership before starting or removing anything."
+                )
+
     def sql(self):
         images = pinned_images()
         self.docker.require_image(self.fixture_image)
@@ -237,6 +250,7 @@ class Campaign:
             definition, fixture_image=self.fixture_image,
             postgres_image=images["postgres"], rpc_network=self.descriptor["dockerNetwork"],
         )
+        self.check_new_sql_project()
         self.sql_retired = False
         self.sql_started = True
         self.docker.run(*argv, "up", "--detach", "--no-build", "--pull", "never",

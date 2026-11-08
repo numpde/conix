@@ -137,6 +137,23 @@ class FixtureRunnerTests(unittest.TestCase):
             self.assertFalse(campaign.producer_owned)
             self.assertIsNone(campaign.descriptor)
 
+    def test_project_name_is_not_sufficient_cleanup_ownership(self):
+        with tempfile.TemporaryDirectory() as path:
+            campaign = runner.Campaign(
+                FakeDocker(), "science", Path(path), "sha256:" + "a" * 64, Path(path)
+            )
+            calls = []
+            def occupied(*args, **kwargs):
+                calls.append(args)
+                return "existing-id\n" if args[0] == "volume" else ""
+            with patch.object(campaign.docker, "run", side_effect=occupied):
+                with self.assertRaises(runner.CampaignError):
+                    campaign.check_new_sql_project()
+            self.assertTrue(any(call[0] == "container" for call in calls))
+            self.assertTrue(any(call[0] == "network" for call in calls))
+            self.assertTrue(any(call[0] == "volume" for call in calls))
+            self.assertFalse(any("down" in call for call in calls))
+
     def test_cleanup_order_respects_consumer_retirement(self):
         with tempfile.TemporaryDirectory() as path:
             docker = FakeDocker()
