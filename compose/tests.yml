@@ -40,11 +40,14 @@ services:
     command:
       - |
         psql -X -v ON_ERROR_STOP=1 -h postgres -U postgres -d conix_test <<'SQL'
-        REVOKE CREATE ON DATABASE conix_test FROM PUBLIC;
+        REVOKE ALL ON DATABASE conix_test FROM PUBLIC;
         REVOKE ALL ON SCHEMA public FROM PUBLIC;
+        CREATE ROLE conix_owner WITH LOGIN PASSWORD 'conix-disposable-owner'
+          NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
         CREATE ROLE conix_runtime WITH LOGIN PASSWORD 'conix-disposable-runtime'
           NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-        CREATE SCHEMA conix AUTHORIZATION conix_runtime;
+        GRANT CONNECT ON DATABASE conix_test TO conix_owner, conix_runtime;
+        CREATE SCHEMA conix AUTHORIZATION conix_owner;
         CREATE SCHEMA ledger AUTHORIZATION postgres;
         CREATE TABLE ledger.operator_private (secret text);
         SQL
@@ -53,6 +56,25 @@ services:
     pids_limit: 64
     mem_limit: 128m
     memswap_limit: 128m
+    cpus: 0.25
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777,size=8m
+    networks: [tests]
+
+  initialize:
+    image: \${CONIX_TEST_IMAGE:?select exact installed test image}
+    pull_policy: never
+    entrypoint: ["python", "/tests/prepare_schema.py"]
+    environment:
+      CONIX_TEST_OWNER_DSN: postgresql://conix_owner:conix-disposable-owner@postgres:5432/conix_test
+    user: "65532:65532"
+    read_only: true
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    memswap_limit: 256m
     cpus: 0.25
     tmpfs:
       - /tmp:rw,nosuid,nodev,noexec,mode=1777,size=8m

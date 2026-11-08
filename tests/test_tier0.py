@@ -199,17 +199,12 @@ class PostgreSQLContracts(unittest.IsolatedAsyncioTestCase):
         self.dsn = os.environ["CONIX_TEST_DSN"]
         self.config = settings()
         self.journal = Journal(self.dsn, self.config)
-        # The bootstrap owns schema creation. Runtime must not require database CREATE.
+        # The separately authenticated owner installed the initial source.
+        # Each runtime test resets through the same checked repair primitive
+        # that future recovery supervision must reuse, never via DDL/TRUNCATE.
         async with self.journal.writer() as writer:
-            await writer.init()
-        async with await AsyncConnection.connect(self.dsn, autocommit=True) as connection:
-            await connection.execute("TRUNCATE conix.collections, conix.blocks, conix.source_progress")
-        async with self.journal.writer() as writer:
-            await writer.init()
-
-    async def asyncTearDown(self):
-        async with await AsyncConnection.connect(self.dsn, autocommit=True) as connection:
-            await connection.execute("TRUNCATE conix.collections, conix.blocks, conix.source_progress")
+            chain = Chain(self.config, (block(1, 1, bytes(32)),))
+            await writer.repair_to(await writer.basis(), None, chain)
 
     async def test_single_block_real_publication_and_observation(self):
         first = block(1, 1, bytes(32))
