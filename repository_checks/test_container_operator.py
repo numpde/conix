@@ -70,6 +70,29 @@ elif "compose" in args and "down" in args and os.getenv("CONIX_FAKE_DOWN_FAIL"):
 
 
 class LocalDockerOperatorTests(unittest.TestCase):
+    def test_recording_docker_refuses_unknown_operations(self):
+        # A fake that exits zero for an unrecognized command can certify a
+        # dangerous new side effect as safe simply because it did not inspect it.
+        with tempfile.TemporaryDirectory() as directory:
+            fake = Path(directory) / "docker"
+            fake.write_text(FAKE, encoding="utf-8")
+            fake.chmod(0o755)
+            env = os.environ.copy()
+            env["CONIX_FAKE_LOG"] = str(Path(directory) / "trace.jsonl")
+            for arguments in (
+                ("system", "prune", "--all"),
+                ("image", "rm", "unreviewed"),
+                ("compose", "rm", "--force"),
+                ("container", "exec", "unknown", "sh"),
+            ):
+                with self.subTest(arguments=arguments):
+                    completed = subprocess.run(
+                        [sys.executable, str(fake), *arguments],
+                        env=env, capture_output=True, text=True, timeout=5,
+                    )
+                    self.assertNotEqual(completed.returncode, 0,
+                        "Unknown Docker command was silently accepted by the fake.")
+
     def test_endpoint_only_accepts_local_unix_socket(self):
         for value in ("unix:///run/docker.sock", "unix:///tmp/other.sock"):
             self.assertTrue(operator.local_socket(value))
