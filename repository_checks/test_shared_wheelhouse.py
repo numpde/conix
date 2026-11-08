@@ -36,7 +36,7 @@ class SharedWheelhouseContracts(unittest.TestCase):
     def test_git_inventory_refuses_untracked_python_inputs(self):
         with patch.object(
             pool.subprocess, "run",
-            return_value=SimpleNamespace(stdout=b"src/conix/__init__.py\\0"),
+            return_value=SimpleNamespace(stdout=b"src/conix/__init__.py\0"),
         ):
             with self.assertRaises(pool.PoolError):
                 pool.source_allowlist(ROOT)

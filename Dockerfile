@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
-# Runtime packaging is offline; the acquisition Dockerfile is separate.
+# Runtime packaging is offline; shared-pool acquisition is a separate operation.
 ARG PYTHON_BASE_IMAGE
 ARG FOUNDRY_IMAGE=ghcr.io/foundry-rs/foundry:v1.7.1@sha256:8347b728d5d393dac1c018691b36f506d23b9dcd78341d40ea0fcb11c3a19cdd
 
