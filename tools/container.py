@@ -446,13 +446,16 @@ class Docker:
                                           env=env, timeout=20, capture=True))
             services = rendered["services"]
             networks = rendered["networks"]
-            if (set(services) != {"tests", "postgres"}
+            if (set(services) != {"tests", "postgres", "bootstrap"}
                 or services["tests"].get("image") != image
                 or services["tests"].get("read_only") is not True
                 or services["tests"].get("user") != "65532:65532"
                 or services["postgres"].get("image") != images["postgres"]
                 or services["postgres"].get("user") != "999:999"
                 or services["postgres"].get("read_only") is not True
+                or services["bootstrap"].get("image") != images["postgres"]
+                or services["bootstrap"].get("user") != "999:999"
+                or services["bootstrap"].get("read_only") is not True
                 or any(s.get("ports") or s.get("privileged") or s.get("network_mode") for s in services.values())
                 or any(any(v.get("type") == "bind" for v in s.get("volumes", [])) for s in services.values())
                 or len(networks) != 1
@@ -462,9 +465,16 @@ class Docker:
             raise OperationError("Cannot validate rendered test deployment.") from error
         failure = None
         try:
-            self.run(*compose, "up", "--no-build", "--pull", "never",
-                     "--abort-on-container-exit", "--exit-code-from", "tests",
-                     env=env, timeout=240)
+            # A successful, terminating bootstrap is deliberate; do not use
+            # --abort-on-container-exit, which would stop tests as soon as
+            # this one-shot migration completes.
+            self.run(*compose, "up", "--detach", "--no-build", "--pull", "never",
+                     "--wait", "--wait-timeout", "60", "postgres",
+                     env=env, timeout=90)
+            self.run(*compose, "run", "--rm", "--no-deps", "--no-build", "--pull",
+                     "never", "bootstrap", env=env, timeout=60)
+            self.run(*compose, "run", "--rm", "--no-deps", "--no-build", "--pull",
+                     "never", "tests", env=env, timeout=240)
         except Exception as error:
             failure = error
             # Capture bounded diagnostics before teardown, not after the
@@ -473,7 +483,7 @@ class Docker:
             try:
                 self.run(*compose, "ps", "--all", env=env, timeout=15)
                 self.run(*compose, "logs", "--no-color", "--tail", "35",
-                         "postgres", "tests", env=env, timeout=15)
+                         "postgres", "bootstrap", "tests", env=env, timeout=15)
             except OperationError:
                 pass
         finally:
