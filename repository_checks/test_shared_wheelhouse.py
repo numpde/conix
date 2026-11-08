@@ -57,6 +57,27 @@ class SharedWheelhouseContracts(unittest.TestCase):
         self.assertTrue(all(item["sha256"] == hashlib.sha256(Path(item["path"]).read_bytes()).hexdigest()
                             for item in sources))
 
+    def test_normalized_source_lock_preserves_exact_one_line_hash_authority(self):
+        source = (
+            "# retained comment\n"
+            "alpha==1.2.3 --hash=sha256:" + "a" * 64 + "\n"
+            "beta==2.0.0 --hash=sha256:" + "b" * 64 + "\n"
+        )
+        normalized = pool.project_issuer_lock(source)
+        self.assertEqual(normalized, (
+            "alpha==1.2.3 \\\n    --hash=sha256:" + "a" * 64 + "\n"
+            "beta==2.0.0 \\\n    --hash=sha256:" + "b" * 64 + "\n"
+        ))
+        for bad in (
+            "alpha>=1.2.3 --hash=sha256:" + "a" * 64,
+            "alpha==1.2.3 --hash=sha256:bad",
+            "alpha==1.2.3 --hash=sha256:" + "a" * 64 + " --extra",
+            "alpha==1.2.3 --hash=sha256:" + "a" * 64 + "\n"
+            "alpha==1.2.3 --hash=sha256:" + "a" * 64,
+        ):
+            with self.subTest(bad=bad), self.assertRaises(pool.PoolError):
+                pool.project_issuer_lock(bad)
+
     def test_selected_manifest_requires_exact_unique_wheels(self):
         sha = "a" * 64
         name = "example-1.0-py3-none-any.whl"
