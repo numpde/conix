@@ -52,7 +52,7 @@ class Settings:
             value = getattr(self, name)
             if type(value) is not int or not 1 <= value <= maximum:
                 raise ValueError(f"Limits {name} must be a positive integer no greater than {maximum}.")
-        if type(self.database_dsn_file) is not Path or not self.database_dsn_file.is_absolute():
+        if not isinstance(self.database_dsn_file, Path) or not self.database_dsn_file.is_absolute():
             raise ValueError("Database dsn_file must be an absolute path.")
         url = httpx.URL(self.rpc_url)
         if url.scheme not in ("http", "https") or not url.host or url.userinfo or url.fragment:
