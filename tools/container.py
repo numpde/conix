@@ -306,23 +306,28 @@ class Docker:
             raise OperationError("Source RPC and database networks must be separately selected.")
         if not IMAGE_ID.fullmatch(image or ""):
             raise OperationError("Runtime requires an immutable CONIX_IMAGE=sha256:<id>.")
-        self.require_image(image)
+        # Resource existence is a start precondition, not a stop/status
+        # precondition. Teardown must work after image, volume, network or
+        # source files have disappeared from this Engine.
+        if operation == "start":
+            self.require_image(image)
         # An input volume's identity and ownership label must agree before a
         # command can reuse it. The label is not a credential or permission.
         if not re.fullmatch(r"conix-inputs-[a-f0-9]{24}", volume or ""):
             raise OperationError("Runtime requires a staged conix-inputs-<token> volume.")
-        rows = json.loads(self.run("volume", "inspect", volume, timeout=10, capture=True))
-        if (len(rows) != 1
-            or rows[0].get("Labels", {}).get("io.conix.input-token")
-                != volume.removeprefix("conix-inputs-")):
-            raise OperationError("Selected input volume does not match its stage label.")
-        for selected in (database, rpc):
-            actual = self.run(
-                "network", "inspect", "--format", "{{.Name}}", selected,
-                timeout=10, capture=True,
-            ).strip()
-            if actual != selected:
-                raise OperationError(f"Selected network {selected!r} was not found on this Engine.")
+        if operation == "start":
+            rows = json.loads(self.run("volume", "inspect", volume, timeout=10, capture=True))
+            if (len(rows) != 1
+                or rows[0].get("Labels", {}).get("io.conix.input-token")
+                    != volume.removeprefix("conix-inputs-")):
+                raise OperationError("Selected input volume does not match its stage label.")
+            for selected in (database, rpc):
+                actual = self.run(
+                    "network", "inspect", "--format", "{{.Name}}", selected,
+                    timeout=10, capture=True,
+                ).strip()
+                if actual != selected:
+                    raise OperationError(f"Selected network {selected!r} was not found on this Engine.")
         project = "conix-" + name
         compose = [
             "compose", "--env-file", "/dev/null", "--project-directory", str(ROOT),
