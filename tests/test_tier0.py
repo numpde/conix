@@ -7,15 +7,19 @@ host dependency). Source-only tests also run without PostgreSQL.
 import asyncio
 import os
 import tempfile
+import time
 import unittest
+from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from eth_utils import to_checksum_address
 from psycopg import AsyncConnection
 
 from conix.commands import _target
 from conix.configuration import Settings, load_settings
-from conix.engine import advance_one
+from conix.engine import advance_one, run_session
 from conix.errors import BranchConflict, ConfigurationError, WriterBusy
 from conix.journal import Journal
 from conix.models import (
@@ -139,6 +143,55 @@ class BasicContractTests(unittest.TestCase):
                 load_settings(path)
 
 
+class OperationDeadlineContracts(unittest.IsolatedAsyncioTestCase):
+    async def test_one_block_operation_has_an_internal_deadline(self):
+        configured = replace(settings(), operation_timeout_seconds=0.05)
+        retired = asyncio.Event()
+
+        class WaitingSource:
+            settings = configured
+            async def assert_source(self):
+                pass
+            async def current_head(self):
+                await asyncio.Event().wait()
+
+        class Writer:
+            async def basis(self):
+                return SimpleNamespace(blocked_reason=None, checkpoint=None)
+
+        class OwnedJournal:
+            @asynccontextmanager
+            async def writer(self):
+                try:
+                    yield Writer()
+                finally:
+                    retired.set()
+
+        started = time.monotonic()
+        with self.assertRaises(TimeoutError):
+            await asyncio.wait_for(
+                run_session(OwnedJournal(), WaitingSource(), asyncio.Event()),
+                timeout=0.6,
+            )
+        self.assertLess(time.monotonic() - started, 0.35)
+        self.assertTrue(retired.is_set())
+
+    async def test_guarded_observation_deadline_returns_unavailable(self):
+        configured = replace(settings(), operation_timeout_seconds=0.05)
+
+        class WaitingJournal:
+            settings = configured
+            async def basis(self):
+                await asyncio.Event().wait()
+
+        class Source:
+            settings = configured
+
+        observer = Observer(WaitingJournal(), Source())
+        with self.assertRaises(ObservationUnavailable):
+            await asyncio.wait_for(observer.latest_checkpoint(), timeout=0.6)
+
+
 @unittest.skipUnless(os.getenv("CONIX_TEST_DSN"), "Set CONIX_TEST_DSN for isolated PostgreSQL integration")
 class PostgreSQLContracts(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -202,6 +255,13 @@ class PostgreSQLContracts(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(tuple(await cursor.fetchone()), (False,) * 5)
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 await connection.execute("SELECT * FROM ledger.operator_private")
+
+    async def test_each_sql_connection_has_statement_and_lock_deadlines(self):
+        async with self.journal._connection() as connection:
+            statement = await (await connection.execute("SHOW statement_timeout")).fetchone()
+            locking = await (await connection.execute("SHOW lock_timeout")).fetchone()
+        self.assertNotEqual(statement[0], "0")
+        self.assertNotEqual(locking[0], "0")
 
     async def test_one_writer_on_same_session_as_all_mutations(self):
         async with self.journal.writer() as first:
