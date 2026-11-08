@@ -231,6 +231,20 @@ class Docker:
         self.run(*grants, "--entrypoint", "cast", image, "--version", timeout=20)
         self.run(*grants, "--entrypoint", "python", image,
                  "-I", "/tests/fixture_campaign.py", "--help", timeout=20)
+        # Qualify the precise digest-signing interface used by the contained
+        # campaign, without touching a wallet service or a live RPC endpoint.
+        check = (
+            "import subprocess;"
+            "digest='0x'+'ab'*32;"
+            "key='0x'+'00'*31+'01';"
+            "p=subprocess.run(['cast','wallet','sign','--no-hash',digest,"
+            "'--private-key',key],capture_output=True,text=True,timeout=10);"
+            "signature=p.stdout.strip();"
+            "assert p.returncode==0 and len(signature)==132 and signature[:2]=='0x';"
+            "assert bytes.fromhex(signature[2:])[-1] in (27,28)"
+        )
+        self.run(*grants, "--entrypoint", "python", image,
+                 "-I", "-c", check, timeout=20)
 
     def private_bytes(self, value, max_size, *, secret):
         path = Path(value)
