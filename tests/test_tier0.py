@@ -143,16 +143,19 @@ class BasicContractTests(unittest.TestCase):
 class PostgreSQLContracts(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.dsn = os.environ["CONIX_TEST_DSN"]
-        async with await AsyncConnection.connect(self.dsn, autocommit=True) as connection:
-            await connection.execute("DROP SCHEMA IF EXISTS conix CASCADE")
         self.config = settings()
         self.journal = Journal(self.dsn, self.config)
+        # The bootstrap owns schema creation. Runtime must not require database CREATE.
+        async with self.journal.writer() as writer:
+            await writer.init()
+        async with await AsyncConnection.connect(self.dsn, autocommit=True) as connection:
+            await connection.execute("TRUNCATE conix.collections, conix.blocks, conix.source_progress")
         async with self.journal.writer() as writer:
             await writer.init()
 
     async def asyncTearDown(self):
         async with await AsyncConnection.connect(self.dsn, autocommit=True) as connection:
-            await connection.execute("DROP SCHEMA IF EXISTS conix CASCADE")
+            await connection.execute("TRUNCATE conix.collections, conix.blocks, conix.source_progress")
 
     async def test_single_block_real_publication_and_observation(self):
         first = block(1, 1, bytes(32))

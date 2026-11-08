@@ -1,11 +1,12 @@
-# Disposable test project: no host binds, host ports or Docker Engine socket.
+# Disposable SQL campaign. The bootstrap superuser never runs product tests.
+# Role creation and schema preparation happen in a separate one-shot container.
 services:
   postgres:
     image: ${CONIX_POSTGRES_IMAGE:?reviewed pinned PostgreSQL image is required}
     pull_policy: never
     environment:
-      POSTGRES_USER: conix
-      POSTGRES_PASSWORD: conix-disposable-container-tests
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: conix-disposable-admin
       POSTGRES_DB: conix_test
     user: "999:999"
     read_only: true
@@ -21,19 +22,47 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: [CMD, pg_isready, -h, "127.0.0.1", -U, conix, -d, conix_test]
+      test: [CMD, pg_isready, -h, "127.0.0.1", -U, postgres, -d, conix_test]
       interval: 2s
       timeout: 3s
       retries: 20
     networks: [tests]
+
+  bootstrap:
+    image: ${CONIX_POSTGRES_IMAGE:?reviewed pinned PostgreSQL image is required}
+    pull_policy: never
+    user: "999:999"
+    read_only: true
+    environment:
+      PGPASSWORD: conix-disposable-admin
+      HOME: /tmp
+    entrypoint: ["/bin/sh", "-eu", "-c"]
+    command:
+      - |
+        psql -X -v ON_ERROR_STOP=1 -h postgres -U postgres -d conix_test <<'SQL'
+        REVOKE CREATE ON DATABASE conix_test FROM PUBLIC;
+        REVOKE ALL ON SCHEMA public FROM PUBLIC;
+        CREATE ROLE conix_runtime WITH LOGIN PASSWORD 'conix-disposable-runtime'
+          NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+        CREATE SCHEMA conix AUTHORIZATION conix_runtime;
+        CREATE SCHEMA ledger AUTHORIZATION postgres;
+        CREATE TABLE ledger.operator_private (secret text);
+        SQL
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 128m
+    memswap_limit: 128m
+    cpus: 0.25
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777,size=8m
+    networks: [tests]
+
   tests:
     image: ${CONIX_TEST_IMAGE:?select exact installed test image}
     pull_policy: never
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
-      CONIX_TEST_DSN: postgresql://conix:conix-disposable-container-tests@postgres:5432/conix_test
+      CONIX_TEST_DSN: postgresql://conix_runtime:conix-disposable-runtime@postgres:5432/conix_test
     user: "65532:65532"
     read_only: true
     init: true
@@ -46,8 +75,10 @@ services:
     memswap_limit: 512m
     cpus: 0.5
     networks: [tests]
+
 networks:
   tests:
     internal: true
+
 volumes:
   pgdata: {}
