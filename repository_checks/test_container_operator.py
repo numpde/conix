@@ -272,6 +272,73 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertTrue(any("info" in entry["args"] for entry in calls))
         self.assertFalse(any("up" in entry["args"] or "stop" in entry["args"] for entry in calls))
 
+    def test_owner_init_uses_only_temporary_private_input_and_database_network(self):
+        with tempfile.TemporaryDirectory() as directory:
+            docker = operator.Docker("unix:///tmp/science-docker.sock", Path(directory))
+            volume = "conix-inputs-" + "c" * 24
+            calls = []
+
+            def call(*args, **kwargs):
+                calls.append(args)
+                if args[:2] == ("network", "inspect"):
+                    return "db-conix\n"
+                return None
+
+            with patch.object(docker, "require_rootless_engine"), patch.object(
+                docker, "require_image"
+            ), patch.object(docker, "stage_inputs", return_value=volume) as stage, patch.object(
+                docker, "remove_inputs"
+            ) as cleanup, patch.object(docker, "run", side_effect=call):
+                docker.initialize_schema(
+                    "sha256:" + "a" * 64,
+                    "/home/operator/config.toml",
+                    "/home/operator/owner.dsn",
+                    "db-conix",
+                )
+                stage.assert_called_once_with(
+                    "sha256:" + "a" * 64,
+                    "/home/operator/config.toml",
+                    "/home/operator/owner.dsn",
+                    announce=False,
+                )
+                cleanup.assert_called_once_with(volume)
+            command = next(args for args in calls if args and args[0] == "run")
+            self.assertIn("--read-only", command)
+            self.assertIn("--cap-drop", command)
+            self.assertIn("no-new-privileges:true", command)
+            self.assertEqual(command[command.index("--network") + 1], "db-conix")
+            self.assertEqual(command[command.index("--user") + 1], "65532:65532")
+            self.assertIn("init", command)
+            self.assertIn("/run/conix-owner/connection.dsn", command)
+            self.assertNotIn("/home/operator/owner.dsn", command)
+            self.assertFalse(any("pull" in args or "build" in args for args in calls))
+
+    def test_owner_init_failure_still_retires_temporary_secret_volume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            docker = operator.Docker("unix:///tmp/science-docker.sock", Path(directory))
+            volume = "conix-inputs-" + "c" * 24
+
+            def call(*args, **kwargs):
+                if args[:2] == ("network", "inspect"):
+                    return "db-conix\n"
+                if args and args[0] == "run":
+                    raise operator.OperationError("Owner init outcome unknown.")
+                return None
+
+            with patch.object(docker, "require_rootless_engine"), patch.object(
+                docker, "require_image"
+            ), patch.object(docker, "stage_inputs", return_value=volume), patch.object(
+                docker, "remove_inputs"
+            ) as cleanup, patch.object(docker, "run", side_effect=call):
+                with self.assertRaises(operator.OperationError):
+                    docker.initialize_schema(
+                        "sha256:" + "a" * 64,
+                        "/home/operator/config.toml",
+                        "/home/operator/owner.dsn",
+                        "db-conix",
+                    )
+                cleanup.assert_called_once_with(volume)
+
     def test_runtime_start_still_refuses_missing_image(self):
         result, calls = self.run_runtime_fake(missing_resources=True)
         self.assertNotEqual(result.returncode, 0)
