@@ -56,6 +56,6 @@ jobs:
           dsn="$(mktemp)"
           trap 'rm -f -- "$candidate" "$dsn"' EXIT
           cp examples/conix.toml "$candidate"
-          printf '%s\\n' 'postgresql://fixture:disposable@postgres:5432/conix_test' > "$dsn"
-          make inputs/proof DOCKER_CONTEXT=default CONIX_IMAGE="$runtime" \\
+          printf '%s\n' 'postgresql://fixture:disposable@postgres:5432/conix_test' > "$dsn"
+          make inputs/proof DOCKER_CONTEXT=default CONIX_IMAGE="$runtime" \
             CONIX_CONFIG_FILE="$candidate" CONIX_DSN_FILE="$dsn"
