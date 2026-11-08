@@ -78,7 +78,7 @@ def command(argv, *, env, timeout=60, capture=False, progress_to_stderr=False):
 def select_endpoint(name, origin):
     if os.geteuid() == 0:
         raise OperationError(
-            "Conix container operations refuse host UID 0. Use the selected "
+            "Conix container operations refuse host root (UID 0). Use the selected "
             "Docker Engine's unprivileged operator account, not sudo."
         )
     listing = command(
