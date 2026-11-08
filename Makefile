@@ -22,7 +22,7 @@ override export CONIX_MAKE_CONIX_DEPLOYMENT := $(value CONIX_DEPLOYMENT)
 override export CONIX_MAKE_CONIX_DATABASE_NETWORK := $(value CONIX_DATABASE_NETWORK)
 override export CONIX_MAKE_CONIX_RPC_NETWORK := $(value CONIX_RPC_NETWORK)
 
-.PHONY: help check/container deps/images/prepare deps/wheelhouse/build \
+.PHONY: help check/container check/inputs deps/images/prepare deps/wheelhouse/build \
 	image/build tests/image/build image/smoke tests/container \
 	inputs/stage inputs/proof inputs/remove runtime/start runtime/stop runtime/status
 
@@ -30,6 +30,7 @@ help:
 	@printf '%s\n' \
 	  'Conix container commands (no implicit downloads, builds or Docker operations):' \
 	  '  make check/container                                     Read-only host repository checks' \
+  '  make check/inputs                                        Offline locks/build-context admission' \
 	  '  make deps/images/prepare DOCKER_CONTEXT=<local-context>   Explicit networked image acquisition' \
 	  '  make deps/wheelhouse/build DOCKER_CONTEXT=<context>       Networked locked wheel acquisition' \
 	  '  make image/build DOCKER_CONTEXT=<context> WHEELHOUSE_IMAGE=sha256:<id>' \
@@ -45,6 +46,9 @@ help:
 
 check/container:
 	@python3 -m unittest discover -s repository_checks -p 'test_*.py' -v
+
+check/inputs:
+	@python3 -m unittest discover -s repository_checks -p 'test_input_policy.py' -v
 
 # Only preparation lanes may acquire images or wheels. Python validates all
 # raw inputs after Make starts it; no user-controlled value enters shell code.
