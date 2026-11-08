@@ -1,0 +1,268 @@
+Executable core with mandatory delegation
+========================================
+
+Date: 2026-11-08
+Status: governing design guidelines; not a claim of implemented behavior.
+Companion: 001_implementation_plan.txt.
+
+1. Governing requirement
+------------------------
+
+Tier 0 is a complete, functioning, concrete program. Every higher tier must
+continue to execute that same implementation for the authoritative work.
+The objective is approximately 99% source stability as features are added,
+with zero feature-driven edits to the protected operations described below.
+This is a design target, not permission to preserve bugs or game a line count.
+
+Insufficient:
+  Tier 0 defines interfaces and a reference implementation; higher tiers
+  replace its components with better implementations of the same interfaces.
+
+Required:
+  Tier 0 implements the ordinary work. Higher tiers arrange, repeat, recover
+  or assist that work by delegating to the existing concrete implementation.
+
+Do not leave forwarding stubs in Tier 0 while moving the real algorithm into
+extensions. Do not call the core ceremonially, discard its result and perform
+the actual work through another path. Equivalent outputs do not establish
+implementation reuse.
+
+A descriptive name is "decorator-based extension through concrete delegation,
+with external supervision". The controlling rule is the core-execution
+invariant below, not allegiance to a named pattern or inheritance mechanism.
+
+2. Core-execution invariant
+---------------------------
+
+An authoritative operation validates usable evidence, changes durable indexed
+history or progress, or returns a validated checkpoint-bound observation.
+Every successful such operation must use its concrete Tier 0 implementation.
+
+Normal ingestion:
+  run_session()
+    -> advance_one()
+       -> acquire the next block's data
+       -> decode and validate source, identity, continuity and completeness
+       -> confirm branch compatibility
+       -> publish_block() atomically
+
+Observation:
+  core observation operation
+    -> select/check the checkpoint and history coverage
+    -> obtain and decode the requested values
+    -> check required canonicality and generation compatibility
+    -> return the validated observation
+
+Repair:
+  repair_to()
+    -> validate the target and expected durable basis
+    -> invalidate affected read handles
+    -> update indexed history and progress atomically
+
+These names describe responsibilities; they do not authorize empty abstractions.
+The validators, transaction code and observation guards behind them also have
+one owner. Extensions cannot independently construct a trusted publication or
+bypass a guard by returning an already assembled observation.
+
+3. Permitted extension mechanisms
+---------------------------------
+
+Surround an operation:
+  Add work before or after it without taking over its responsibilities.
+
+Repeat an operation:
+  Retry a classified failed read or start a new session after the previous
+  session has fully terminated. Preserve deadlines and cancellation.
+
+Automate invocation:
+  Select a recovery anchor and invoke the same checked repair operation that
+  Tier 0 exposes to an operator. Selection is new; repair is not reimplemented.
+
+Prepare inputs:
+  Prefetch raw responses that the ordinary core subsequently decodes,
+  validates and processes. Prepared data is not proof of current validity.
+
+Avoid redundant physical I/O:
+  At an explicitly permitted boundary, reuse eligible raw block-pinned data
+  or coalesce identical reads. Required semantic processing still executes.
+
+An extension may refuse to proceed. It must not claim authoritative success
+for work that the core did not perform. The narrow I/O exception does not
+permit substituting a cached validity conclusion for current checks.
+
+4. Forbidden mechanisms
+------------------------
+
+No alternative scanner, publisher, validator, observer or repair algorithm.
+No optimized-versus-original dispatch inside protected core operations.
+No monkey-patching, core overrides or dependence on mixin method order for
+essential validation or transaction behavior. No second HTTP client/decoder
+hidden inside a retry wrapper. No generic catch-and-retry of all exceptions.
+
+No direct extension writes to indexing tables, checkpoints or blocked states.
+No raw writable database connection or unrestricted mutable context passed
+to extensions. Use the narrow checked core operations and their lifetimes.
+These are restrictions on trusted code, not an untrusted-plugin sandbox.
+
+No speculative plugin framework, arbitrary before/after hook catalogue,
+auto-discovery or string-based dispatch registry. Introduce only boundaries
+justified by concrete features in the companion plan.
+
+Protocols may describe delegation boundaries. Merely implementing a protocol
+is not permission to replace the existing concrete implementation.
+
+5. Behavioral compatibility
+----------------------------
+
+Higher-tier orchestration may differ; the meaning of core operations may not.
+
+Tier 0:
+  session runs -> fails -> command exits
+
+Tier 1:
+  the same session runs -> the same failure occurs -> supervisor waits or
+  repairs -> a new instance of the same session runs
+
+The supervisor changes the response to a failure. It does not turn invalid
+evidence into success or resume a failed transaction under another identity.
+
+For successful processing through an identified checkpoint, preserve event
+identity, complete coverage, observation checks and publication semantics.
+Latency, network-request count and the number of failed attempts may differ.
+
+For this plan, one block per publication transaction is protected behavior.
+Prefetching ten blocks still invokes advance_one() and publish_block() ten
+times. A multi-block transaction is a shared-core design change, not an
+extension that preserves this base behavior.
+
+6. Concrete delegation rules
+-----------------------------
+
+RPC retry:
+  Reinvoke the ordinary bounded read after an allowed transient error.
+  Preserve the requested source and selector, operation deadline and
+  cancellation. Wrong-source, malformed-data and branch errors propagate.
+  Never retry a database publication as though it were a read.
+
+Session recovery:
+  Retire the failed session, discard its writer and prepared work, then enter
+  the normal startup path. Reacquire ownership and inspect durable progress.
+  An unanswered commit is resolved from storage; do not blindly resubmit it.
+  Losing the writer connection permanently invalidates that writer object.
+
+Automatic reorg recovery:
+  Let Tier 0 detect/reject the contradiction. Add bounded ancestor selection,
+  invoke repair_to(), then restart the ordinary session. A persisted blocked
+  state must also be recoverable after a process restart. Do not rely only
+  on an exception caught by the process that originally detected the fork.
+
+Prefetch:
+  Acquire anticipated raw data through existing read facilities. Buffer it
+  under exact request identities and explicit bounds. It cannot advance
+  progress, suppress empty blocks or bypass fresh branch validation.
+
+Cache:
+  Cache only explicitly eligible raw values, keyed by source, deployment,
+  block hash and every relevant call argument. Cache misses use the base read.
+  Hits still run normal decoding and guards. Do not cache whole observations,
+  observation times, readiness, current canonicality or finality conclusions.
+  A payload from an orphaned block is not usable merely because it is cached.
+
+Coalescing:
+  One actual base read may serve identical eligible requests. Each caller
+  retains its deadline and semantic checks. Cancelling one waiter must not
+  cancel work still required by another. No coalescing of merely similar calls.
+
+7. Ownership and composition
+----------------------------
+
+Core code must not import extensions or ask which tier is active. Composition
+owns extension selection and lifetimes; extensions depend on concrete core
+operations. Tier 0 remains independently installable/runnable and tested.
+
+Tier 0 composition:
+  base session + base reads + base observer + manually invoked base repair
+
+Tier 1 composition:
+  supervision around that session + retries around those reads + automatic
+  invocation of that repair
+
+Tier 2 composition:
+  Tier 1 + bounded I/O assistance beneath the same semantic operations
+
+No EnhancedIndexer replaces Indexer. Prefer ordinary composition and explicit
+delegation. Local inheritance is acceptable only if it cannot obscure or
+bypass the protected execution path. Keep all database mutations in the core
+journal and all validated observations behind the core observation guard.
+
+The core owns chain facts and rebuildable history. Accounting owns invoices,
+acceptances, payment decisions and reconciliation. The collector owns signing,
+nonces, reservations and broadcast. Extensions do not move those boundaries.
+
+8. Completeness, readability and stability
+------------------------------------------
+
+Tier 0 includes ordinary work, required validation, explicit failure outcomes,
+restart correctness and functioning manual repair. Tier 1 must not compensate
+for a base that cannot resume correctly or repair its own indexed data.
+
+Keep the normal algorithm visible. Do not shorten it artificially by moving
+all meaningful work into callbacks; do not burden it with unused flexibility.
+Manual repair and restart are present because operators need them in Tier 0,
+not merely because an eventual extension might need an interface.
+
+Before freezing Tier 0, test that wrappers can repeat a real read, invoke the
+real repair and supply raw inputs without bypassing the real validator. Use
+small probes, not premature production extensions. Record the protected module
+and operation list when the implementation exists; do not invent a frozen SHA
+or pretend that these notes are executable qualification.
+
+Later feature changes should touch extension, composition and extension-test
+code. Review every protected-core edit explicitly. Fix genuine correctness
+bugs in the shared owner. If an optimization needs different core semantics,
+state the conflict and revise the shared design openly rather than hiding a
+replacement behind an interface.
+
+9. Extension proof obligations
+-------------------------------
+
+Before implementing an extension, state:
+  Delegation: which exact concrete core operations it invokes.
+  Added work: what it contributes around those operations.
+  Skipped work: what it avoids and why it is only permitted redundant I/O.
+  Authority: which state it may change and through which checked operation.
+  Preservation: which core behavior remains unchanged.
+  Failures: which errors it handles and which propagate.
+  Evidence: which tests establish real delegation and absence of bypasses.
+
+Run the same behavioral contract suite against every composition. In addition,
+use instrumentation that delegates to the real operation to establish that it
+actually executes. Output equivalence alone is insufficient; mock replacements
+are not evidence of reuse. Do not assert every helper call or exact message text.
+Assert significant delegation, failure category/context and durable effects.
+
+Exercise base invariants through extensions: invalid prefetched logs, a cached
+payload after invalidation, stale prepared work after reconnect, and a changed
+basis during automatic repair. Test combinations, not just each wrapper alone.
+Keep source-dependency checks narrow; do not substitute grep checks for runtime
+proof. A wrapper that reports success without the required core work must fail
+an architectural witness test even if a happy-path output looks plausible.
+
+10. New capabilities versus transparent extensions
+--------------------------------------------------
+
+A position-filtered history API changes scope, coverage and pagination. It is
+not a drop-in version of deployment-wide history. It needs a separate explicit
+contract and consumer integration, and is outside the current tiers.
+
+Multi-block publication similarly changes transaction/visibility semantics.
+It is not included. A future proposal may change the common implementation,
+but cannot claim to preserve Tier 0 unchanged while bypassing its publication.
+
+Acceptance criterion
+---------------------
+
+Removing extensions leaves a complete functioning Tier 0 program. Adding them
+causes that same concrete program to perform the authoritative work, with
+additional orchestration or I/O assistance, not an alternative program hidden
+behind compatible interfaces.
