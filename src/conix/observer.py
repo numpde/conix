@@ -98,25 +98,27 @@ class Observer:
         if not await self.chain.canonical(checkpoint.block):
             raise ObservationUnavailable("Checkpoint is no longer canonical.")
 
-        # Preserve source-backed evidence even for receipts preceding the indexer's
-        # configured history start; a gap too large to prove is unavailable.
-        first_requested = min(block_numbers, default=checkpoint.block.number)
+        # A complete published prefix already establishes intermediate links.
+        # Query only relevant retained identities, not every intervening block.
         start = self.journal.settings.start_block
-        if first_requested < start and start - first_requested > self.journal.settings.max_evidence_blocks:
-            raise ObservationUnavailable("Earlier receipt ancestry exceeds the evidence work bound.")
-        retained_first = max(start, first_requested)
-        retained = await self.journal.stored_headers(retained_first, checkpoint.block.number)
-        recorded = {block.number: block for block in retained}
-        earlier: list[Block] = []
+        requested = set(block_numbers)
+        requested.add(checkpoint.block.number)
+        retained_numbers = tuple(sorted(number for number in requested if number >= start))
+        retained = await self.journal.headers_at(checkpoint, retained_numbers)
+        recorded = dict(zip(retained_numbers, retained))
+        first_requested = min(block_numbers, default=checkpoint.block.number)
         if first_requested < start:
-            for number in range(first_requested, start):
-                earlier.append(await self.chain.header(number))
-            preceding = earlier[-1]
-            if preceding.hash != retained[0].parent_hash:
+            if start - first_requested > self.journal.settings.max_evidence_blocks:
+                raise ObservationUnavailable("Earlier receipt ancestry exceeds the evidence work bound.")
+            earlier = tuple(
+                [await self.chain.header(number) for number in range(first_requested, start)]
+            )
+            opening = (await self.journal.headers_at(checkpoint, (start,)))[0]
+            if earlier[-1].hash != opening.parent_hash or any(
+                right.parent_hash != left.hash for left, right in zip(earlier, earlier[1:])
+            ):
                 raise ObservationUnavailable("Earlier canonical headers do not join retained history.")
-            if any(right.parent_hash != left.hash for left, right in zip(earlier, earlier[1:])):
-                raise ObservationUnavailable("Earlier canonical headers have broken ancestry.")
-        recorded.update((block.number, block) for block in earlier)
+            recorded.update((block.number, block) for block in earlier)
 
         # Check requested canonical identities independently against RPC.
         for number in (*block_numbers, checkpoint.block.number):
@@ -130,10 +132,18 @@ class Observer:
                 await self.chain.connect(checkpoint.block, finalized)
             else:
                 recorded_finalized = recorded.get(finalized.number)
-                if recorded_finalized is None:
-                    raise ObservationUnavailable(
-                        "Finalized block lies outside the supported retained/earlier ancestry window."
-                    )
+                if recorded_finalized is None and finalized.number >= start:
+                    recorded_finalized = (await self.journal.headers_at(checkpoint, (finalized.number,)))[0]
+                if recorded_finalized is None and finalized.number < start:
+                    if start - finalized.number > self.journal.settings.max_evidence_blocks:
+                        raise ObservationUnavailable("Finality ancestry preceding coverage exceeds the evidence bound.")
+                    earlier = tuple([await self.chain.header(number) for number in range(finalized.number, start)])
+                    opening = (await self.journal.headers_at(checkpoint, (start,)))[0]
+                    if earlier[-1].hash != opening.parent_hash or any(
+                        right.parent_hash != left.hash for left, right in zip(earlier, earlier[1:])
+                    ):
+                        raise ObservationUnavailable("Finalized ancestry does not join retained history.")
+                    recorded_finalized = earlier[0]
                 if recorded_finalized != finalized:
                     raise ObservationUnavailable("Finalized block disagrees with the checkpoint's canonical ancestry.")
         if not await self.chain.canonical(checkpoint.block):

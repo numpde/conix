@@ -275,6 +275,46 @@ class Journal:
                 next_offset == checkpoint.collection_count,
             )
 
+    async def headers_at(self, checkpoint: Checkpoint, numbers: tuple[int, ...]) -> tuple[Block, ...]:
+        """Read selected retained headers from one snapshot of a completed chain prefix.
+
+        The writer has already validated and published every intermediate parent
+        link. A reader need not load millions of unchanged intermediate rows.
+        """
+        if (
+            type(checkpoint) is not Checkpoint
+            or checkpoint.deployment != self.settings.deployment
+            or type(numbers) is not tuple
+            or len(numbers) > self.settings.max_evidence_blocks
+            or any(
+                type(number) is not int
+                or number < self.settings.start_block
+                or number > checkpoint.block.number
+                for number in numbers
+            )
+            or len(set(numbers)) != len(numbers)
+        ):
+            raise HistoryUnavailable("Selected headers must be distinct, retained and bounded.")
+        async with self._snapshot() as connection:
+            state = await _state(connection, self.settings)
+            if (
+                state.blocked_reason
+                or state.generation != checkpoint.generation
+                or state.checkpoint is None
+                or state.checkpoint.number < checkpoint.block.number
+            ):
+                raise HistoryUnavailable("Requested chain generation/checkpoint is no longer usable.")
+            rows = await (await connection.execute(
+                "SELECT * FROM conix.blocks WHERE number = ANY(%s::bigint[])",
+                (list(numbers),),
+            )).fetchall()
+            blocks = {int(row["number"]): _block(row) for row in rows}
+            if len(blocks) != len(numbers):
+                raise CorruptStore("Retained complete prefix is missing a requested block.")
+            if blocks.get(checkpoint.block.number, checkpoint.block) != checkpoint.block:
+                raise HistoryUnavailable("Completed checkpoint block was replaced.")
+            return tuple(blocks[number] for number in numbers)
+
     async def stored_headers(self, first: int, last: int) -> tuple[Block, ...]:
         """Retrieve exact retained canonical ancestry, without upstream RPC."""
         if type(first) is not int or type(last) is not int or first > last:
