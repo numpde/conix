@@ -94,8 +94,10 @@ def stage(payload: bytes, target: Path = TARGET):
         os.chown(CONFIG, OWNER, OWNER, dir_fd=fd, follow_symlinks=False)
         os.chown(DSN, OWNER, OWNER, dir_fd=fd, follow_symlinks=False)
         # Let only the runtime uid traverse the directory and read its files.
-        os.fchown(fd, OWNER, OWNER)
+        # CAP_CHOWN does not imply CAP_FOWNER. Change mode while we still own
+        # the directory, then transfer ownership to the runtime identity.
         os.fchmod(fd, 0o700)
+        os.fchown(fd, OWNER, OWNER)
         os.fsync(fd)
     finally:
         os.close(fd)
