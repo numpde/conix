@@ -39,7 +39,7 @@ KEY = to_checksum_address(bytes.fromhex("44" * 20))
 def settings():
     return Settings(
         Deployment(31337, ADDR), 1, "http://127.0.0.1:8545",
-        Path("/tmp/conix-test-dsn-file"), 0.05, 2, 1024 * 1024,
+        Path("/tmp/conix-test-dsn-file"), "conix_runtime", 0.05, 2, 1024 * 1024,
         2, 25, 128, 5,
     )
 
@@ -131,7 +131,7 @@ class BasicContractTests(unittest.TestCase):
             path.write_text(
                 "[source]\nchain_id=31337\ncontract_address='" + ADDR + "'\n"
                 "start_block=1\nrpc_url='http://127.0.0.1:8545'\n"
-                "[database]\ndsn_file='/tmp/conix-test-dsn-file'\n"
+                "[database]\ndsn_file='/tmp/conix-test-dsn-file'\nruntime_role='conix_runtime'\n"
                 "[limits]\npoll_seconds=1.0\nrpc_timeout_seconds=2.0\n"
                 "operation_timeout_seconds=5.0\nmax_response_bytes=1000\n"
                 "max_connections=2\nmax_page_size=20\nmax_evidence_blocks=40\n",
@@ -353,7 +353,7 @@ class PostgreSQLContracts(unittest.IsolatedAsyncioTestCase):
     async def test_retained_source_identity_is_not_reassigned(self):
         altered = Settings(
             Deployment(31338, ADDR), 1, self.config.rpc_url,
-            self.config.database_dsn_file, 0.05, 2, 1024 * 1024, 2, 25, 128, 5,
+            self.config.database_dsn_file, "conix_runtime", 0.05, 2, 1024 * 1024, 2, 25, 128, 5,
         )
         with self.assertRaises(ConfigurationError):
             await Journal(self.dsn, altered).basis()

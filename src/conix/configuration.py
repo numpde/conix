@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 import os
+import re
 import stat
 import tomllib
 
@@ -21,6 +22,7 @@ class Settings:
     start_block: int
     rpc_url: str
     database_dsn_file: Path
+    runtime_role: str
     poll_seconds: float
     rpc_timeout_seconds: float
     max_response_bytes: int
@@ -54,6 +56,8 @@ class Settings:
                 raise ValueError(f"Limits {name} must be a positive integer no greater than {maximum}.")
         if not isinstance(self.database_dsn_file, Path) or not self.database_dsn_file.is_absolute():
             raise ValueError("Database dsn_file must be an absolute path.")
+        if type(self.runtime_role) is not str or re.fullmatch(r"[a-z][a-z0-9_]{0,62}", self.runtime_role) is None:
+            raise ValueError("Database runtime_role must explicitly name a simple PostgreSQL login role.")
         url = httpx.URL(self.rpc_url)
         if url.scheme not in ("http", "https") or not url.host or url.userinfo or url.fragment:
             raise ValueError("RPC URL must be HTTP(S), with no embedded credentials or fragment.")
@@ -72,8 +76,8 @@ def load_settings(path: Path) -> Settings:
         raise ValueError("Each configuration table must be a TOML object.")
     if set(source) != {"chain_id", "contract_address", "start_block", "rpc_url"}:
         raise ValueError("Source must specify chain_id, contract_address, start_block, rpc_url.")
-    if set(database) != {"dsn_file"} or type(database["dsn_file"]) is not str:
-        raise ValueError("Database must specify dsn_file.")
+    if set(database) != {"dsn_file", "runtime_role"} or type(database["dsn_file"]) is not str:
+        raise ValueError("Database must specify dsn_file and runtime_role.")
     expected_limits = {
         "poll_seconds", "rpc_timeout_seconds", "max_response_bytes",
         "max_connections", "max_page_size", "max_evidence_blocks",
@@ -88,6 +92,7 @@ def load_settings(path: Path) -> Settings:
         start_block=source["start_block"],
         rpc_url=source["rpc_url"],
         database_dsn_file=Path(database["dsn_file"]),
+        runtime_role=database["runtime_role"],
         **limits,
     )
 
