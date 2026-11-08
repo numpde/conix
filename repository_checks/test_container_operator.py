@@ -41,8 +41,16 @@ elif "compose" in args and "config" in args:
         named_volume = os.environ["CONIX_INPUT_VOLUME"]
         item = {"image": os.environ["CONIX_IMAGE"], "user": "65532:65532",
                 "read_only": True, "pull_policy": "never", "cap_drop": ["ALL"],
+                "security_opt": ["no-new-privileges:true"],
+                "networks": {"database": None, "rpc": None},
                 "volumes": [{"source": named_volume, "type": "volume",
                              "target": "/run/conix", "read_only": True}]}
+        if os.getenv("CONIX_FAKE_BAD_RUNTIME_CAP"):
+            item["cap_add"] = ["SYS_ADMIN"]
+        if os.getenv("CONIX_FAKE_BAD_RUNTIME_PRIVILEGES"):
+            item["security_opt"] = []
+        if os.getenv("CONIX_FAKE_BAD_RUNTIME_NETWORK"):
+            item["networks"] = {"database": None}
         if os.getenv("CONIX_FAKE_BAD_RUNTIME_BIND"):
             item["volumes"].append({"type": "bind", "source": "/tmp", "target": "/tmp"})
         print(json.dumps({"services": {"indexer": item}, "networks": {
@@ -134,7 +142,8 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertFalse(any("down" in item["args"] for item in calls))
         self.assertIn("network", completed.stderr)
 
-    def run_runtime_fake(self, *, bad_bind=False, operation="start", missing_resources=False):
+    def run_runtime_fake(self, *, bad_bind=False, operation="start", missing_resources=False,
+                         bad_cap=False, bad_privileges=False, bad_runtime_network=False):
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)
             fake = directory / "docker"
@@ -148,6 +157,12 @@ class LocalDockerOperatorTests(unittest.TestCase):
             env["COMPOSE_FILE"] = "/tmp/foreign.yml"
             if bad_bind:
                 env["CONIX_FAKE_BAD_RUNTIME_BIND"] = "1"
+            if bad_cap:
+                env["CONIX_FAKE_BAD_RUNTIME_CAP"] = "1"
+            if bad_privileges:
+                env["CONIX_FAKE_BAD_RUNTIME_PRIVILEGES"] = "1"
+            if bad_runtime_network:
+                env["CONIX_FAKE_BAD_RUNTIME_NETWORK"] = "1"
             if missing_resources:
                 env["CONIX_FAKE_MISSING_RESOURCE"] = "1"
             result = subprocess.run([
@@ -191,6 +206,24 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertNotEqual(run.returncode, 0)
         self.assertFalse(any("stop" in item["args"] or "up" in item["args"] for item in calls))
         self.assertIn("confinement", run.stderr)
+
+    def test_rendered_runtime_cannot_reintroduce_capabilities(self):
+        result, calls = self.run_runtime_fake(bad_cap=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("confinement", result.stderr)
+        self.assertFalse(any("up" in entry["args"] or "stop" in entry["args"] for entry in calls))
+
+    def test_rendered_runtime_requires_no_new_privileges(self):
+        result, calls = self.run_runtime_fake(bad_privileges=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("confinement", result.stderr)
+        self.assertFalse(any("up" in entry["args"] or "stop" in entry["args"] for entry in calls))
+
+    def test_rendered_runtime_must_join_both_selected_networks(self):
+        result, calls = self.run_runtime_fake(bad_runtime_network=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("confinement", result.stderr)
+        self.assertFalse(any("up" in entry["args"] or "stop" in entry["args"] for entry in calls))
 
     def test_uncertain_teardown_is_reported_as_failure(self):
         completed, calls = self.run_fake(fail_down=True)
