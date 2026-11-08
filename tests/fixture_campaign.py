@@ -294,13 +294,22 @@ async def _restart(journal, chain, observer, _descriptor, prior):
     state = await observer.latest_checkpoint()
     _confirm(state, prior)
     # A separate disposable container invokes the real run_session against
-    # the SAME PostgreSQL volume; no data re-enrollment or re-enumeration.
+    # the SAME PostgreSQL volume. Mine one new *empty* block so the concrete
+    # advance_one() path must run after process restart, not merely return an
+    # already complete checkpoint.
+    await chain.rpc.call("evm_mine", [])
     head = await chain.current_head()
+    if head.number <= state.block.number:
+        raise AssertionError("Restart fixture did not mine a new source block.")
     await _follow(journal, chain, head.number)
     after = await observer.latest_checkpoint()
-    _confirm(after, prior)
-    if len(await _events(observer, after)) != 2:
-        raise AssertionError("Restart duplicated or lost a completed on-chain collection.")
+    if (
+        after.block != head
+        or after.generation != state.generation
+        or after.collection_count != state.collection_count
+        or len(await _events(observer, after)) != 2
+    ):
+        raise AssertionError("Restart did not scan the new empty block without duplicate financial events.")
     return _summary("restart", after, prior["snapshot"])
 
 
