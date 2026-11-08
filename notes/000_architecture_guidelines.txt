@@ -266,3 +266,52 @@ Removing extensions leaves a complete functioning Tier 0 program. Adding them
 causes that same concrete program to perform the authoritative work, with
 additional orchestration or I/O assistance, not an alternative program hidden
 behind compatible interfaces.
+
+
+Addendum (2026-11-09): ownership isolation is part of the stable core
+--------------------------------------------------------------------
+
+Decision: the indexing journal must never have schema-owner authority.
+Database bootstrap creates separate non-superuser conix_owner and
+conix_runtime logins and assigns the conix schema to conix_owner. The
+one-shot schema installer is an external preparation capability; the running
+journal, observer, manual repair and future supervisors all authenticate as
+the explicitly configured conix_runtime account.
+
+This is a refinement of the original "one journal owns every mutation" rule:
+the journal remains the sole owner of DATA mutations and publication
+semantics. The schema installer owns DDL, initial source enrollment and
+permission grants, and it runs BEFORE the ordinary Tier-0 session. It cannot
+provide another scanner, publisher, observer or repair path. It uses the
+same durable source identity and exclusive writer advisory lock as the base,
+so schema administration cannot race an active writer.
+
+Why Tier 0 rather than Tier 1? A later split would require changing the
+runtime privileges and initialization path after the core was frozen.
+Establishing it now leaves Tier 1 reorganization recovery and Tier 2 I/O
+assistance calling exactly the same runtime-owned journal methods.
+
+Future schema versions: the owner-only installation/migration boundary may
+gain explicit checked migrations. A higher-tier extension must not obtain
+DDL authority, bypass this migration boundary, or mutate the schema from
+inside the ordinary scanner. Schema revisions must be independently reviewed
+and tested; no automatic migration at worker startup. Existing schema/source
+history is retained unless an explicitly authorized migration requires
+otherwise.
+
+Runtime privileges at the initial boundary (subject to database admission):
+  conix schema: USAGE, not CREATE.
+  source_progress: SELECT and UPDATE, not INSERT, DELETE or TRUNCATE.
+  blocks: SELECT, INSERT, DELETE; checked repair deletes its orphaned suffix.
+  collections: SELECT and INSERT; suffix removal follows blocks' FK cascade.
+  No table ownership, DDL, cross-ledger access or cluster privileges.
+
+The schema owner is not a PostgreSQL superuser and must not be able to
+become the runtime via implicit default selection. Owner credentials are
+supplied ONLY to the explicit init operation and must never be mounted in
+the normal worker. Conix can verify selected login and schema privilege
+properties, but server administrators still control database authentication,
+HBA rules, role membership and the trust boundary for the host/daemon.
+
+These additions refine sections 2, 4, 7 and 8 above; the historical guidance
+is deliberately retained and is not retroactively claimed as implemented.

@@ -460,3 +460,52 @@ Tier 0 performs the complete job and explicit repair. Tier 1 selects when to
 repeat, restart or repair THAT SAME program. Tier 2 helps THAT SAME program
 obtain inputs efficiently. A tier is rejected if its success depends on a
 parallel authoritative implementation, even when all ordinary outputs match.
+
+
+Amendment (2026-11-09): two PostgreSQL authorities without a second engine
+-------------------------------------------------------------------------
+
+This amends Tier-0 steps T0-B and T0-F, preserving the original proposed
+sequence and its historical pending checkboxes. The earlier implementation
+put DDL and enrollment in Writer.init(), requiring ordinary runtime table
+ownership; that is an avoidable privilege and future-tier compatibility cost.
+
+Revised, concrete boundary:
+  (a) Cluster bootstrap (outside conix) creates a restricted conix_owner
+      login, a distinct conix_runtime login, explicitly granted database
+      access, and conix schema owned by conix_owner.
+  (b) conix init --config FILE --owner-dsn-file FILE executes only as the
+      schema owner. It validates owner/runtime identities and source, locks
+      out a concurrent worker, creates/verifies tables and indexes, inserts
+      the initial source row if absent, and grants exact runtime privileges.
+      It refuses a different source or foreign table ownership, and preserves
+      existing checkpoint and generation on a repeat invocation.
+  (c) Conix run, status, observation, manual repair and future Tier 1 / Tier 2
+      compositions use only the database.dsn_file runtime credentials. The
+      configuration names database.runtime_role explicitly. Every new
+      journal connection rejects a superuser, a schema owner, a role able
+      to create schemas, or a login other than the selected runtime role.
+  (d) The SQL journal still owns the same checked one-block publication,
+      invalidation, pagination and repair. No alternative authoritative path
+      or extra DDL callback was added.
+  (e) A disposable PostgreSQL campaign exercises actual bootstrap, owner
+      installation, and the real package as runtime in distinct containers.
+      Negative tests reject runtime DDL, TRUNCATE, deletion of source
+      enrollment, and reads outside conix; positive tests verify publication,
+      observations, repair and restart using the same concrete journal.
+
+Runtime grants stay narrow (see 000 addendum). Manual repair uses the same
+conix_runtime DML authority as normal indexing; a third repair role, elevated
+SECURITY DEFINER procedures, and permission changes per higher tier are
+not justified for this rebuildable history in Tier 0.
+
+The owner credentials require their OWN separate, operator-controlled
+one-shot access path. Never place them in the persistent Conix runtime input
+volume or CI's ordinary test service. If runtime and schema owner are deployed
+on different hosts, install can run through the same package against the
+explicitly selected database without starting the worker.
+
+Outstanding independently qualified concerns: selected production HBA/database
+admission; actual rootless UID/network mapping; live Anvil and pay-to-play
+financial integration; failover and full reorganization scenarios. The
+disposable CI role split does not certify the target deployment's grants.
