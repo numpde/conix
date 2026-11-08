@@ -27,6 +27,11 @@ with open(os.environ["CONIX_FAKE_LOG"], "a") as output:
 if args[:2] == ["context", "ls"]:
     print("science\tunix:///tmp/science-docker.sock")
     print("remote\ttcp://example.invalid:2375")
+elif "info" in args and "--format" in args:
+    options = ["name=seccomp,profile=builtin"]
+    if not os.getenv("CONIX_FAKE_ROOTFUL_ENGINE"):
+        options.append("name=rootless")
+    print(json.dumps(options))
 elif "image" in args and "inspect" in args:
     if os.getenv("CONIX_FAKE_MISSING_RESOURCE"):
         sys.exit(3)
@@ -202,7 +207,8 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertIn("network", completed.stderr)
 
     def run_runtime_fake(self, *, bad_bind=False, operation="start", missing_resources=False,
-                         bad_cap=False, bad_privileges=False, bad_runtime_network=False):
+                         bad_cap=False, bad_privileges=False, bad_runtime_network=False,
+                         rootful=False):
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)
             fake = directory / "docker"
@@ -222,6 +228,8 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 env["CONIX_FAKE_BAD_RUNTIME_PRIVILEGES"] = "1"
             if bad_runtime_network:
                 env["CONIX_FAKE_BAD_RUNTIME_NETWORK"] = "1"
+            if rootful:
+                env["CONIX_FAKE_ROOTFUL_ENGINE"] = "1"
             if missing_resources:
                 env["CONIX_FAKE_MISSING_RESOURCE"] = "1"
             result = subprocess.run([
@@ -254,6 +262,13 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertTrue(any("down" in item["args"] for item in calls))
         self.assertFalse(any("image" in item["args"] and "inspect" in item["args"] for item in calls))
         self.assertFalse(any("volume" in item["args"] and "inspect" in item["args"] for item in calls))
+
+    def test_runtime_start_rejects_rootful_engine_without_side_effects(self):
+        result, calls = self.run_runtime_fake(rootful=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("rootless", result.stderr)
+        self.assertTrue(any("info" in entry["args"] for entry in calls))
+        self.assertFalse(any("up" in entry["args"] or "stop" in entry["args"] for entry in calls))
 
     def test_runtime_start_still_refuses_missing_image(self):
         result, calls = self.run_runtime_fake(missing_resources=True)
