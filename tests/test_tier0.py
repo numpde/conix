@@ -22,6 +22,7 @@ from conix.configuration import Settings, load_settings
 from conix.engine import advance_one, run_session
 from conix.errors import BranchConflict, ConfigurationError, WriterBusy
 from conix.journal import Journal
+from conix.schema import initialize
 from conix.models import (
     Block, Checkpoint, Collection, CollectionCursor, Deployment,
     HistoryUnavailable, Phase, Position, ObservationUnavailable,
@@ -240,6 +241,44 @@ class PostgreSQLContracts(unittest.IsolatedAsyncioTestCase):
             result = await advance_one(writer, fake)
             self.assertFalse(result.changed)
         self.assertEqual((await self.journal.basis()).collection_count, 1)
+
+    async def test_runtime_cannot_change_owner_schema_or_reinitialize(self):
+        import psycopg
+
+        async with await AsyncConnection.connect(self.dsn, autocommit=True) as connection:
+            ownership = await (await connection.execute(
+                "SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname='conix'"
+            )).fetchone()
+            self.assertEqual(ownership[0], "conix_owner")
+            table_owners = await (await connection.execute(
+                "SELECT pg_get_userbyid(relowner) AS owner FROM pg_class "
+                "WHERE relnamespace='conix'::regnamespace AND relkind='r' ORDER BY relname"
+            )).fetchall()
+            self.assertEqual(tuple(row[0] for row in table_owners), ("conix_owner",) * 3)
+            for statement in (
+                "CREATE TABLE conix.unapproved (id int)",
+                "ALTER TABLE conix.blocks ADD COLUMN unapproved text",
+                "DROP TABLE conix.blocks",
+                "TRUNCATE conix.blocks",
+                "DELETE FROM conix.source_progress",
+            ):
+                with self.subTest(statement=statement), self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                    await connection.execute(statement)
+        with self.assertRaises((ValueError, PermissionError)):
+            await initialize(self.dsn, self.config)
+
+    async def test_owner_owned_records_keep_normal_publication_and_repair(self):
+        first = block(1, 7, bytes(32))
+        next_block = block(2, 8, first.hash)
+        source = Chain(self.config, (first, next_block), {1: (event(first),)})
+        async with self.journal.writer() as writer:
+            await advance_one(writer, source)
+            await advance_one(writer, source)
+            state = await writer.basis()
+            await writer.repair_to(state, first, source)
+            self.assertEqual((await writer.basis()).collection_count, 1)
+            await advance_one(writer, source)
+        self.assertEqual((await self.journal.basis()).checkpoint, next_block)
 
     async def test_runtime_database_role_has_no_cluster_or_ledger_authority(self):
         # The disposable campaign provisions a separate bootstrap owner and a
