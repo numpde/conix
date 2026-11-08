@@ -194,7 +194,7 @@ class Docker:
         if not IMAGE_ID.fullmatch(image or ""):
             raise OperationError("CONIX_IMAGE must select an immutable local image ID.")
         self.require_image(image)
-        self.run("run", "--rm", "--network", "none", "--read-only",
+        self.run("run", "--rm", "--pull", "never", "--network", "none", "--read-only",
                  "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
                  "--pids-limit", "64", "--memory", "256m",
                  "--user", "65532:65532", image, "--help", timeout=30)
@@ -205,7 +205,7 @@ class Docker:
             raise OperationError("CONIX_FIXTURE_IMAGE must select an immutable prebuilt image.")
         self.require_image(image)
         grants = (
-            "run", "--rm", "--network", "none", "--read-only",
+            "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
             "--user", "65532:65532", "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges:true",
             "--pids-limit", "64", "--memory", "256m",
@@ -279,7 +279,7 @@ class Docker:
             # exactly CAP_CHOWN to hand 0600 files and 0700 directory to uid 65532.
             # No secret appears in argv, environment, Docker labels, or image layers.
             argv = self.base + [
-                "run", "--rm", "--interactive", "--network", "none",
+                "run", "--rm", "--interactive", "--pull", "never", "--network", "none",
                 "--read-only", "--user", "0:0", "--cap-drop", "ALL",
                 "--cap-add", "CHOWN", "--security-opt", "no-new-privileges:true",
                 "--pids-limit", "32", "--memory", "128m",
@@ -324,7 +324,7 @@ class Docker:
             "assert read_dsn(d/'connection.dsn')"
         )
         self.run(
-            "run", "--rm", "--network", "none", "--read-only",
+            "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
             "--user", "65532:65532", "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges:true",
             "--pids-limit", "32", "--memory", "128m",
