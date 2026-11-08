@@ -44,5 +44,9 @@ jobs:
         run: docker build --target runtime -t conix-tier0:ci .
       - name: Exercise the packaged container entry point
         run: docker run --rm --read-only conix-tier0:ci --help
-      - name: Run the isolated installed-package container campaign
-        run: make tests/container
+      - name: Qualify host-side Docker context and teardown contracts
+        run: make check/container
+      - name: Build the test image separately and run it without rebuilding
+        run: |
+          image="$(make -s tests/image/build DOCKER_CONTEXT=default)"
+          make tests/container DOCKER_CONTEXT=default CONIX_TEST_IMAGE="$image"
