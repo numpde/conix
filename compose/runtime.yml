@@ -1,0 +1,42 @@
+# Deployment scope: one concrete Tier-0 worker. PostgreSQL and RPC sources
+# are independently owned; this Compose file grants only their network access.
+# Operator-owned static inputs are staged into an engine volume before startup.
+services:
+  indexer:
+    image: ${CONIX_IMAGE:?select verified immutable runtime image ID}
+    pull_policy: never
+    init: true
+    command: ["run", "--config", "/run/conix/config.toml"]
+    restart: "no"
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    cpus: 1
+    mem_limit: 512m
+    memswap_limit: 512m
+    stop_grace_period: 90s
+    volumes:
+      - type: volume
+        source: inputs
+        target: /run/conix
+        read_only: true
+        volume: {nocopy: true}
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=16m
+    networks: [database, rpc]
+    logging:
+      driver: local
+      options: {max-size: "10m", max-file: "3"}
+volumes:
+  inputs:
+    name: ${CONIX_INPUT_VOLUME:?stage a private input volume first}
+    external: true
+networks:
+  database:
+    name: ${CONIX_DATABASE_NETWORK:?select the existing database network}
+    external: true
+  rpc:
+    name: ${CONIX_RPC_NETWORK:?select the existing RPC network}
+    external: true
