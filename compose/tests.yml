@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:16.6-bookworm
+    environment:
+      POSTGRES_USER: conix
+      POSTGRES_PASSWORD: conix-disposable-container-tests
+      POSTGRES_DB: conix_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U conix -d conix_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [tests]
+
+  tests:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: tests
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      CONIX_TEST_DSN: postgresql://conix:conix-disposable-container-tests@postgres:5432/conix_test
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    user: "65532:65532"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [tests]
+
+networks:
+  tests:
+    internal: true

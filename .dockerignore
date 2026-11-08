@@ -1,0 +1,9 @@
+.git
+.github
+notes
+examples
+compose
+Makefile
+README.md
+*.pyc
+__pycache__
