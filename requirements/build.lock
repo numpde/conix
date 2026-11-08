@@ -1,6 +1,4 @@
 # Target: CPython 3.12 / Linux x86_64, binary wheels only.
 # Regenerate explicitly with: python tools/lock_wheels.py --write
 # Acquisition may use the network. Runtime image build MUST use no-index.
-packaging==26.3 --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
 setuptools==82.0.1 --hash=sha256:a59e362652f08dcd477c78bb6e7bd9d80a7995bc73ce773050228a348ce2e5bb
-wheel==0.46.1 --hash=sha256:f796f65d72750ccde090663e466d0ca37cd72b62870f7520b96d34cdc07d86d8

@@ -16,7 +16,8 @@ import tomllib
 
 
 ROOT = Path(__file__).resolve().parent.parent
-BUILD = ("setuptools==82.0.1", "wheel==0.46.1")
+# Modern setuptools includes the wheel build command; no extra wheel package.
+BUILD = ("setuptools==82.0.1",)
 
 
 def selected_target():

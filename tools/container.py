@@ -122,6 +122,16 @@ class Docker:
                        timeout=timeout, capture=capture,
                        progress_to_stderr=progress_to_stderr)
 
+    def require_image(self, reference):
+        """Check exact local image identity without printing JSON into Make output."""
+        identity = self.run(
+            "image", "inspect", "--format", "{{.Id}}", reference,
+            timeout=10, capture=True,
+        ).strip()
+        if not IMAGE_ID.fullmatch(identity):
+            raise OperationError("Selected image is not a valid local image ID.")
+        return identity
+
     def prepare(self, images):
         """Networked, explicit image acquisition; never part of a test run."""
         for reference in (
@@ -132,14 +142,15 @@ class Docker:
             self.run("pull", "--platform", "linux/amd64", reference, timeout=180)
 
     def build(self, target, images, wheelhouse_image=None):
-        self.run("image", "inspect", images["python_base"], timeout=10)
+        self.require_image(images["python_base"])
         if target == "wheelhouse":
             dockerfile, context, network = "containers/wheelhouse/Dockerfile", ".", "default"
             kwargs = ()
         else:
             if not IMAGE_ID.fullmatch(wheelhouse_image or ""):
                 raise OperationError("WHEELHOUSE_IMAGE must name a prepared immutable local image ID.")
-            self.run("image", "inspect", wheelhouse_image, timeout=10)
+            if self.require_image(wheelhouse_image) != wheelhouse_image:
+                raise OperationError("Selected wheelhouse image identity changed.")
             # Dockerfile FROM consumes a local content-labelled tag, not the
             # operator's mutable 'latest'. Verify this source by ID first;
             # pip additionally verifies every selected wheel against the lock.
@@ -165,7 +176,7 @@ class Docker:
     def smoke(self, image):
         if not IMAGE_ID.fullmatch(image or ""):
             raise OperationError("CONIX_IMAGE must select an immutable local image ID.")
-        self.run("image", "inspect", image, timeout=10)
+        self.require_image(image)
         self.run("run", "--rm", "--network", "none", "--read-only",
                  "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
                  "--pids-limit", "64", "--memory", "256m",
@@ -175,7 +186,7 @@ class Docker:
         if not IMAGE_ID.fullmatch(image):
             raise OperationError("CONIX_TEST_IMAGE must be an immutable sha256 image ID.")
         self.run("image", "inspect", image, timeout=10)
-        self.run("image", "inspect", images["postgres"], timeout=10)
+        self.require_image(images["postgres"])
         project = "conix-tier0-" + secrets.token_hex(6)
         compose = [
             "compose", "--env-file", "/dev/null", "--project-directory", str(ROOT),
