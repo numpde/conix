@@ -1,7 +1,7 @@
 # Disposable test project: no host binds, host ports or Docker Engine socket.
 services:
   postgres:
-    image: postgres:16.6-bookworm
+    image: ${CONIX_POSTGRES_IMAGE:?reviewed pinned PostgreSQL image is required}
     pull_policy: never
     environment:
       POSTGRES_USER: conix

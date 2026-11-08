@@ -17,6 +17,18 @@ ROOT = Path(__file__).resolve().parent.parent
 CONTEXT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 IMAGE_ID = re.compile(r"sha256:[a-f0-9]{64}\Z")
 
+def pinned_images():
+    document = json.loads((ROOT / "containers/images.json").read_text(encoding="utf-8"))
+    if set(document) != {"python_base", "postgres"}:
+        raise OperationError("Reviewed image manifest must contain only python_base and postgres.")
+    for role, name in document.items():
+        if (type(name) is not str or "@sha256:" not in name
+                or not IMAGE_ID.fullmatch("sha256:" + name.rsplit("@sha256:", 1)[-1])):
+            raise OperationError(f"Reviewed {role} base image must have a complete sha256 pin.")
+    return document
+
+
+
 
 class OperationError(Exception):
     pass
@@ -107,20 +119,60 @@ class Docker:
         return command(self.base + list(args), env=self.env if env is None else env,
                        timeout=timeout, capture=capture)
 
-    def build(self, target):
+    def prepare(self, images):
+        """Networked, explicit image acquisition; never part of a test run."""
+        for reference in (
+            images["python_base"],
+            images["postgres"],
+            "docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e",
+        ):
+            self.run("pull", "--platform", "linux/amd64", reference, timeout=180)
+
+    def build(self, target, images, wheelhouse_image=None):
+        self.run("image", "inspect", images["python_base"], timeout=10)
+        if target == "wheelhouse":
+            dockerfile, context, network = "containers/wheelhouse/Dockerfile", ".", "default"
+            kwargs = ()
+        else:
+            if not IMAGE_ID.fullmatch(wheelhouse_image or ""):
+                raise OperationError("WHEELHOUSE_IMAGE must name a prepared immutable local image ID.")
+            self.run("image", "inspect", wheelhouse_image, timeout=10)
+            # Dockerfile FROM consumes a local content-labelled tag, not the
+            # operator's mutable 'latest'. Verify this source by ID first;
+            # pip additionally verifies every selected wheel against the lock.
+            source = "conix-wheelhouse:sha-" + wheelhouse_image[7:27]
+            self.run("tag", wheelhouse_image, source, timeout=10)
+            dockerfile, context, network = "Dockerfile", ".", "none"
+            kwargs = ("--build-arg", "WHEELHOUSE_IMAGE=" + source)
         with tempfile.TemporaryDirectory(prefix="conix-image-") as directory:
             iid = Path(directory) / "iid"
-            self.run("build", "--target", target, "--iidfile", str(iid),
-                     "--tag", f"conix-tier0-{target}:local", ".", timeout=600)
+            self.run(
+                "build", "--pull=false", "--platform", "linux/amd64",
+                "--network", network, "--file", dockerfile,
+                "--build-arg", "PYTHON_BASE_IMAGE=" + images["python_base"],
+                *kwargs, "--iidfile", str(iid),
+                "--tag", f"conix-tier0-{target}:local", context,
+                timeout=600,
+            )
             result = iid.read_text(encoding="ascii").strip()
         if not IMAGE_ID.fullmatch(result):
             raise OperationError("The image build did not provide an immutable image ID.")
         return result
 
-    def test(self, image):
+    def smoke(self, image):
+        if not IMAGE_ID.fullmatch(image or ""):
+            raise OperationError("CONIX_IMAGE must select an immutable local image ID.")
+        self.run("image", "inspect", image, timeout=10)
+        self.run("run", "--rm", "--network", "none", "--read-only",
+                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
+                 "--pids-limit", "64", "--memory", "256m",
+                 "--user", "65532:65532", image, "--help", timeout=30)
+
+    def test(self, image, images):
         if not IMAGE_ID.fullmatch(image):
             raise OperationError("CONIX_TEST_IMAGE must be an immutable sha256 image ID.")
         self.run("image", "inspect", image, timeout=10)
+        self.run("image", "inspect", images["postgres"], timeout=10)
         project = "conix-tier0-" + secrets.token_hex(6)
         compose = [
             "compose", "--env-file", "/dev/null", "--project-directory", str(ROOT),
@@ -128,6 +180,7 @@ class Docker:
         ]
         env = self.env.copy()
         env["CONIX_TEST_IMAGE"] = image
+        env["CONIX_POSTGRES_IMAGE"] = images["postgres"]
         try:
             rendered = json.loads(self.run(*compose, "config", "--format", "json",
                                           env=env, timeout=20, capture=True))
@@ -135,6 +188,8 @@ class Docker:
             if (services["tests"].get("image") != image
                 or services["tests"].get("read_only") is not True
                 or services["tests"].get("user") != "65532:65532"
+                or services["postgres"].get("image") != images["postgres"]
+                or services["postgres"].get("read_only") is not True
                 or any(s.get("ports") for s in services.values())):
                 raise OperationError("Rendered test services violate the selected image or confinement.")
         except (KeyError, ValueError) as error:
@@ -174,8 +229,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--context", default="")
     parser.add_argument("--origin", default="undefined")
-    parser.add_argument("action", choices=("image/build", "tests/image/build", "tests/container"))
+    parser.add_argument("action", choices=(
+        "deps/images/prepare", "deps/wheelhouse/build", "image/build",
+        "image/smoke", "tests/image/build", "tests/container",
+    ))
     parser.add_argument("--test-image")
+    parser.add_argument("--wheelhouse-image")
+    parser.add_argument("--image")
     args = parser.parse_args()
     try:
         endpoint = select_endpoint(args.context, args.origin)
@@ -183,10 +243,18 @@ def main():
             config = Path(directory)
             (config / "config.json").write_text('{"auths":{},"proxies":{}}\n', encoding="utf-8")
             docker = Docker(endpoint, config)
-            if args.action == "tests/container":
-                docker.test(args.test_image or "")
+            images = pinned_images()
+            if args.action == "deps/images/prepare":
+                docker.prepare(images)
+            elif args.action == "deps/wheelhouse/build":
+                print(docker.build("wheelhouse", images))
+            elif args.action == "tests/container":
+                docker.test(args.test_image or "", images)
+            elif args.action == "image/smoke":
+                docker.smoke(args.image)
             else:
-                print(docker.build("runtime" if args.action == "image/build" else "tests"))
+                target = "runtime" if args.action == "image/build" else "tests"
+                print(docker.build(target, images, args.wheelhouse_image))
     except (OperationError, OSError) as error:
         raise SystemExit(f"Conix container operation refused or failed: {error}") from None
 

@@ -1,18 +1,33 @@
-# Docker context must be chosen for each operation, not inherited from
-# arbitrary DOCKER_HOST/DOCKER_CONTEXT/COMPOSE_* environment variables.
+# The Docker operator selects one local Engine per operation; no ambient
+# Docker/Compose endpoint, credentials or project files influence that choice.
 PYTHON ?= python3
 _CONTEXT = --context "$(DOCKER_CONTEXT)" --origin "$(origin DOCKER_CONTEXT)"
 
-.PHONY: image/build tests/image/build tests/container check/container
+.PHONY: deps/images/prepare deps/wheelhouse/build image/build image/smoke tests/image/build tests/container check/container
+
+# Only these preparation lanes can request network acquisition.
+deps/images/prepare:
+	@$(PYTHON) tools/container.py $(_CONTEXT) deps/images/prepare
+
+deps/wheelhouse/build:
+	@$(PYTHON) tools/container.py $(_CONTEXT) deps/wheelhouse/build
+
+# Exact wheelhouse ID is required; packaging and every pip RUN are offline.
 image/build:
-	@$(PYTHON) tools/container.py $(_CONTEXT) image/build
+	@test -n "$(WHEELHOUSE_IMAGE)" || { echo "Supply WHEELHOUSE_IMAGE=sha256:<id> from deps/wheelhouse/build." >&2; exit 2; }
+	@$(PYTHON) tools/container.py $(_CONTEXT) image/build --wheelhouse-image "$(WHEELHOUSE_IMAGE)"
 
 tests/image/build:
-	@$(PYTHON) tools/container.py $(_CONTEXT) tests/image/build
+	@test -n "$(WHEELHOUSE_IMAGE)" || { echo "Supply WHEELHOUSE_IMAGE=sha256:<id> from deps/wheelhouse/build." >&2; exit 2; }
+	@$(PYTHON) tools/container.py $(_CONTEXT) tests/image/build --wheelhouse-image "$(WHEELHOUSE_IMAGE)"
 
-# No build/pull during a test. The caller supplies the prepared exact image ID.
+image/smoke:
+	@test -n "$(CONIX_IMAGE)" || { echo "Supply CONIX_IMAGE=sha256:<id> from image/build." >&2; exit 2; }
+	@$(PYTHON) tools/container.py $(_CONTEXT) image/smoke --image "$(CONIX_IMAGE)"
+
+# Tests use an already built immutable test image and local pinned PostgreSQL.
 tests/container:
-	@test -n "$(CONIX_TEST_IMAGE)" || { echo "Set CONIX_TEST_IMAGE=sha256:<image-id> from tests/image/build." >&2; exit 2; }
+	@test -n "$(CONIX_TEST_IMAGE)" || { echo "Supply CONIX_TEST_IMAGE=sha256:<id> from tests/image/build." >&2; exit 2; }
 	@$(PYTHON) tools/container.py $(_CONTEXT) tests/container --test-image "$(CONIX_TEST_IMAGE)"
 
 check/container:
