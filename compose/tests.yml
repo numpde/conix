@@ -62,7 +62,7 @@ services:
     networks: [tests]
 
   initialize:
-    image: \${CONIX_TEST_IMAGE:?select exact installed test image}
+    image: ${CONIX_TEST_IMAGE:?select exact installed test image}
     pull_policy: never
     entrypoint: ["python", "/tests/prepare_schema.py"]
     environment:
