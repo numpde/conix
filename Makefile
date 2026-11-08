@@ -27,7 +27,7 @@ override export CONIX_MAKE_CONIX_RPC_NETWORK := $(value CONIX_RPC_NETWORK)
 
 .PHONY: help check/container check/inputs deps/images/prepare deps/fixture-image/prepare deps/wheelhouse/check deps/wheelhouse/acquire \
 	image/build tests/image/build tests/fixture/image/build tests/fixture/image/smoke image/smoke tests/container tests/fixture \
-	inputs/stage inputs/proof inputs/remove schema/init runtime/start runtime/stop runtime/status
+	inputs/stage inputs/proof inputs/remove schema/init runtime/start runtime/stop runtime/status runtime/render
 
 help:
 	@printf '%s\n' \
@@ -51,7 +51,7 @@ help:
   '  make schema/init DOCKER_CONTEXT=<context> CONIX_IMAGE=sha256:<id>' \
   '        CONIX_CONFIG_FILE=/path/to/config CONIX_OWNER_DSN_FILE=/path/to/owner-secret' \
   '        CONIX_DATABASE_NETWORK=<name>' \
-	  '  make runtime/start|runtime/status|runtime/stop DOCKER_CONTEXT=<context>' \
+	  '  make runtime/start|runtime/status|runtime/stop|runtime/render DOCKER_CONTEXT=<context>' \
 	  '        CONIX_DEPLOYMENT=<name> CONIX_IMAGE=sha256:<id> CONIX_INPUT_VOLUME=<id>' \
 	  '        CONIX_DATABASE_NETWORK=<name> CONIX_RPC_NETWORK=<name>'
 
@@ -90,7 +90,7 @@ inputs/proof:
 inputs/remove:
 	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" inputs/remove
 
-runtime/start runtime/status runtime/stop:
+runtime/start runtime/status runtime/stop runtime/render:
 	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
 
 # Owner credentials are staged in a disposable engine volume and never enter

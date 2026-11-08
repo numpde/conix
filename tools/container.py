@@ -460,6 +460,9 @@ class Docker:
         except (ValueError, KeyError, IndexError, TypeError) as error:
             raise OperationError("Cannot validate the selected runtime deployment configuration.") from error
 
+        if operation == "render":
+            print(f"Verified constrained runtime Compose graph for {project} on selected Engine.")
+            return
         if operation == "status":
             self.run(*compose, "ps", "--all", env=env, timeout=20)
             return
@@ -469,7 +472,7 @@ class Docker:
             print(f"Stopped project {project}; external inputs and networks were retained.")
             return
         if operation != "start":
-            raise OperationError("Runtime operation must be start, stop or status.")
+            raise OperationError("Runtime operation must be start, stop, status or render.")
         self.verify_inputs(image, volume)
         self.run(*compose, "stop", "--timeout", "90", "indexer", env=env, timeout=105)
         try:
@@ -574,7 +577,7 @@ def main():
         "deps/images/prepare", "deps/fixture-image/prepare", "deps/wheelhouse/check", "deps/wheelhouse/acquire", "image/build",
         "image/smoke", "tests/image/build", "tests/fixture/image/build", "tests/fixture/image/smoke", "tests/container",
         "inputs/stage", "inputs/proof", "inputs/remove", "schema/init",
-        "runtime/start", "runtime/stop", "runtime/status",
+        "runtime/start", "runtime/stop", "runtime/status", "runtime/render",
     ))
     parser.add_argument("--test-image")
     parser.add_argument("--wheelhouse")

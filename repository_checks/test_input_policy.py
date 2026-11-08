@@ -110,15 +110,20 @@ class OfflineInputChecks(unittest.TestCase):
         self.assertEqual(set(rules[1:]), expected)
         self.assertEqual(len(rules) - 1, len(expected), "Duplicate build-context rules.")
 
-        acquisition = [
-            line.strip() for line in (ROOT / "containers/wheelhouse/Dockerfile.dockerignore").read_text().splitlines()
-            if line.strip() and not line.lstrip().startswith("#")
-        ]
-        self.assertEqual(acquisition[0], "**")
-        self.assertEqual(set(acquisition[1:]), {
-            "!requirements/", "!requirements/runtime.lock", "!requirements/build.lock",
-        })
-        self.assertEqual(len(acquisition), 4)
+        # No per-repository dependency image or host wheel staging authority:
+        # the released wheelhouse-tool streams only selected verified artifacts
+        # to an offline BuildKit context, and installer mounts are ephemeral.
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        self.assertNotIn("WHEELHOUSE_IMAGE", dockerfile)
+        self.assertNotIn("FROM ${WHEELHOUSE_IMAGE}", dockerfile)
+        self.assertEqual(dockerfile.count("source=wheelhouse,target=/wheels,readonly"), 2)
+        self.assertIn("--no-index", dockerfile)
+        self.assertIn("--require-hashes", dockerfile)
+        from_file = (ROOT / "requirements/wheelhouse-tool-release.json").read_text()
+        pin = json.loads(from_file)
+        self.assertEqual(pin["version"], "0.5.14")
+        self.assertEqual(pin["sha256"],
+                         "9d8cd59c0aeffd61ce462fa81f2951a24fb8a8749a1332d5f87842b4c095d656")
 
 
 if __name__ == "__main__":

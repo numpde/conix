@@ -21,14 +21,19 @@ jobs:
       - name: Acquire pinned images and hashed wheelhouse; build and test offline
         run: |
           make deps/images/prepare DOCKER_CONTEXT=default
-          wheelhouse="$(make -s deps/wheelhouse/build DOCKER_CONTEXT=default)"
-          runtime="$(make -s image/build DOCKER_CONTEXT=default WHEELHOUSE_IMAGE="$wheelhouse")"
+          # A fresh, operator-owned pool; the published tool and wheels are
+          # shared flat files. Every selector/build uses the same Docker context.
+          pool="$RUNNER_TEMP/conix-shared-wheelhouse"
+          mkdir -m 700 "$pool"
+          make deps/wheelhouse/acquire DOCKER_CONTEXT=default WHEELHOUSE="$pool"
+          # A second warm check MUST use no network, no downloads.
+          make deps/wheelhouse/check DOCKER_CONTEXT=default WHEELHOUSE="$pool"
+          runtime="$(make -s image/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
           make image/smoke DOCKER_CONTEXT=default CONIX_IMAGE="$runtime"
-          test_image="$(make -s tests/image/build DOCKER_CONTEXT=default WHEELHOUSE_IMAGE="$wheelhouse")"
+          test_image="$(make -s tests/image/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
           make tests/container DOCKER_CONTEXT=default CONIX_TEST_IMAGE="$test_image"
-          # The signer exists only in this optional, separately built test image.
           make deps/fixture-image/prepare DOCKER_CONTEXT=default
-          fixture_image="$(make -s tests/fixture/image/build DOCKER_CONTEXT=default WHEELHOUSE_IMAGE="$wheelhouse")"
+          fixture_image="$(make -s tests/fixture/image/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
           make tests/fixture/image/smoke DOCKER_CONTEXT=default CONIX_FIXTURE_IMAGE="$fixture_image"
           # Stage the real distribution's fixed inputs in a private engine volume.
           # A second, unprivileged, read-only container proves readability.
@@ -40,8 +45,7 @@ jobs:
           make inputs/proof DOCKER_CONTEXT=default CONIX_IMAGE="$runtime" \
             CONIX_CONFIG_FILE="$candidate" CONIX_DSN_FILE="$dsn"
           # Render the actual production profile without creating resources.
-          CONIX_IMAGE="$runtime" \
-          CONIX_INPUT_VOLUME="conix-inputs-aaaaaaaaaaaaaaaaaaaaaaaa" \
-          CONIX_DATABASE_NETWORK="payment-db" CONIX_RPC_NETWORK="payment-rpc" \
-            docker compose --env-file /dev/null -p conix-ci -f compose/runtime.yml \
-              config --quiet
+          make runtime/render DOCKER_CONTEXT=default \
+            CONIX_DEPLOYMENT=ci CONIX_IMAGE="$runtime" \
+            CONIX_INPUT_VOLUME="conix-inputs-aaaaaaaaaaaaaaaaaaaaaaaa" \
+            CONIX_DATABASE_NETWORK="payment-db" CONIX_RPC_NETWORK="payment-rpc"

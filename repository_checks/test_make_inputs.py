@@ -16,7 +16,11 @@ ROOT = Path(__file__).resolve().parent.parent
 
 PARAMETERS = {
     "deps/images/prepare": "DOCKER_CONTEXT",
-    "image/build": "WHEELHOUSE_IMAGE",
+    "deps/wheelhouse/check": "WHEELHOUSE",
+    "deps/wheelhouse/acquire": "WHEELHOUSE",
+    "image/build": "WHEELHOUSE",
+    "tests/image/build": "WHEELHOUSE",
+    "tests/fixture/image/build": "WHEELHOUSE",
     "image/smoke": "CONIX_IMAGE",
     "tests/container": "CONIX_TEST_IMAGE",
     "tests/fixture/image/smoke": "CONIX_FIXTURE_IMAGE",
