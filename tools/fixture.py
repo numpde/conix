@@ -19,7 +19,7 @@ import sys
 import tempfile
 
 from container import (
-    Docker, IMAGE_ID, OperationError, ROOT, pinned_images, select_endpoint,
+    CONTEXT_NAME, Docker, IMAGE_ID, OperationError, ROOT, pinned_images, select_endpoint,
 )
 
 sys.path.insert(0, str(ROOT / "tests"))
@@ -46,6 +46,36 @@ def sibling_checkout(value):
         if not item.is_file() or item.is_symlink():
             raise CampaignError("Sibling checkout is missing a regular dapp32 fixture contract file.")
     return path.resolve(strict=True)
+
+
+def pin_sibling_context(docker, name):
+    """Bind dapp32's name-based selection to the already admitted Unix socket.
+
+    The dapp32 producer resolves DOCKER_CONTEXT with its own client. Use an
+    operation-owned Docker config containing ONLY the selected local context,
+    preventing external context mutation from switching Engines mid-campaign.
+    Docker context create/inspect are client-only operations, no daemon calls.
+    """
+    if type(name) is not str or not CONTEXT_NAME.fullmatch(name):
+        raise CampaignError("The sibling fixture requires one explicit valid Docker context name.")
+    commands = (
+        ("context", "create", name, "--docker", "host=" + docker.endpoint),
+        ("context", "inspect", name, "--format", "{{.Endpoints.docker.Host}}"),
+    )
+    for command in commands:
+        try:
+            result = subprocess.run(
+                ["docker", "--config", str(docker.config_dir), *command],
+                env=docker.env, cwd=ROOT, stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=15, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            raise CampaignError("Could not prepare the pinned sibling Docker client context.") from None
+        if result.returncode:
+            raise CampaignError("Pinned sibling Docker context creation or verification failed.")
+        if command[1] == "inspect" and result.stdout.strip() != docker.endpoint:
+            raise CampaignError("Sibling Docker context resolves to a different Unix socket.")
+    return None
 
 
 def _clean_env():
@@ -205,7 +235,8 @@ class Campaign:
              "FIXTURE_ID=" + self.fixture_id],
             output=self._file("producer-" + action + ".out"),
             error_file=self._file("producer-" + action + ".err"),
-            env=_clean_env(), timeout=480 if action == "up" else 150,
+            env={**_clean_env(), "DOCKER_CONFIG": str(self.docker.config_dir)},
+            timeout=480 if action == "up" else 150,
         )
 
     def acquire(self):
@@ -379,6 +410,7 @@ def main():
             docker = Docker(endpoint, config)
             docker.require_rootless_engine()
             docker.require_image(args.fixture_image)
+            pin_sibling_context(docker, args.context)
             scratch = Path(tempfile.mkdtemp(prefix="conix-fixture-", dir="/tmp"))
             os.chmod(scratch, 0o700)
             campaign = Campaign(docker, args.context, sibling, args.fixture_image, scratch)

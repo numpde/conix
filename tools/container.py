@@ -140,6 +140,8 @@ def select_endpoint(name, origin):
 
 class Docker:
     def __init__(self, endpoint, config_dir):
+        self.endpoint = endpoint
+        self.config_dir = config_dir
         self.base = ["docker", "--config", str(config_dir), "--host", endpoint]
         self.env = environment(config_dir)
 
