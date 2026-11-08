@@ -68,7 +68,7 @@ elif "compose" in args and "config" in args:
             "postgres": {"read_only": True, "user": "999:999", "image": os.environ["CONIX_POSTGRES_IMAGE"]},
             "bootstrap": {"read_only": True, "user": "999:999", "image": os.environ["CONIX_POSTGRES_IMAGE"]}},
             "networks": {"tests": {"internal": not bool(os.getenv("CONIX_FAKE_BAD_NETWORK"))}}}))
-elif "run" in args and args[args.index("run") + 1:]:
+elif "run" in args and "compose" not in args and args[args.index("run") + 1:]:
     # Runtime deployment checks execute only a non-root, read-only, one-shot
     # installed-Python input inspection. This is a known operation, not a
     # blanket acceptance of arbitrary docker run commands.
