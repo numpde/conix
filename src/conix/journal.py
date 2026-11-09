@@ -75,6 +75,7 @@ async def _state(connection: AsyncConnection, settings: Settings) -> Basis:
         raise ConfigurationError(
             "Stored conix schema/source identity differs from configuration; select the original source or migrate explicitly."
         )
+
     checkpoint = None
     if progress["completed_height"] is not None:
         block_row = await (await connection.execute(
@@ -86,10 +87,12 @@ async def _state(connection: AsyncConnection, settings: Settings) -> Basis:
         checkpoint = _block(block_row)
     elif int(progress["collection_count"]) != 0:
         raise CorruptStore("Unstarted source has a nonzero collection count.")
+
     head = None
     if progress["head_height"] is not None:
         head = Block(int(progress["head_height"]), bytes(progress["head_hash"]),
                      bytes(progress["head_parent_hash"]), int(progress["head_timestamp"]))
+
     return Basis(
         progress["generation"], int(progress["revision"]), checkpoint,
         int(progress["collection_count"]), progress["blocked_reason"],
@@ -104,6 +107,7 @@ async def _check_basis(connection: AsyncConnection, settings: Settings, expected
         expected.generation, expected.revision, expected.checkpoint, expected.collection_count
     ):
         raise StateChanged("The source publication basis changed; discard prepared work and reread progress.")
+
     return current
 
 
@@ -146,6 +150,7 @@ class Journal:
                 "SELECT set_config('lock_timeout', %s, false)",
                 (f"{min(timeout_ms, 5000)}ms",),
             )
+
             role = await (await connection.execute(
                 "SELECT r.rolname, r.rolsuper, r.rolcreatedb, r.rolcreaterole, "
                 "r.rolreplication, r.rolbypassrls, "
@@ -167,6 +172,7 @@ class Journal:
                     "Conix requires its selected restricted runtime login, not a schema owner "
                     "or an account with cluster/schema creation privileges."
                 )
+
             yield connection
 
     @asynccontextmanager
@@ -410,6 +416,7 @@ class Writer:
                 "INSERT INTO conix.blocks(number,hash,parent_hash,timestamp) VALUES (%s,%s,%s,%s)",
                 (block.number, block.hash, block.parent_hash, block.timestamp),
             )
+
             # Offsets are derived from committed count, never an independent
             # PostgreSQL sequence that could skip values on rollback.
             for (index, event) in enumerate(collections):
@@ -423,6 +430,7 @@ class Writer:
                      _address(event.customer), event.channel_id, _address(event.payee),
                      event.amount, event.voucher_paid, event.invoice_hash),
                 )
+
             await self._connection.execute(
                 "UPDATE conix.source_progress SET completed_height=%s, completed_hash=%s, "
                 "collection_count=%s, head_height=%s, head_hash=%s, head_parent_hash=%s, "
@@ -476,6 +484,7 @@ class Writer:
             else:
                 await self._connection.execute("DELETE FROM conix.blocks")
                 count, height, block_hash = 0, None, None
+
             await self._connection.execute(
                 "UPDATE conix.source_progress SET generation=%s, revision=revision+1, "
                 "completed_height=%s, completed_hash=%s, collection_count=%s, blocked_reason=NULL, "

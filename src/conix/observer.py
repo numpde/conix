@@ -138,9 +138,8 @@ class Observer:
         if not await self.chain.canonical(checkpoint.block):
             raise ObservationUnavailable("Checkpoint is no longer canonical.")
 
-        # The journal published every intermediate parent link. Load only
-        # requested retained headers; older external history needs fresh RPC.
-        # Query only relevant retained identities, not every intervening block.
+        # Intermediate links are already checked at publication. Retained
+        # history needs only the headers selected by this evidence request.
         start = self.journal.settings.start_block
         requested = set(block_numbers)
         requested.add(checkpoint.block.number)
@@ -152,14 +151,13 @@ class Observer:
             if start - first_requested > self.journal.settings.max_evidence_blocks:
                 raise ObservationUnavailable("Earlier receipt ancestry exceeds the evidence work bound.")
 
-            earlier = tuple(
-                [await self.chain.header(number) for number in range(first_requested, start)]
-            )
+            earlier = tuple([await self.chain.header(number) for number in range(first_requested, start)])
             opening = (await self.journal.headers_at(checkpoint, (start,)))[0]
             if earlier[-1].hash != opening.parent_hash or any(
                 right.parent_hash != left.hash for (left, right) in zip(earlier, earlier[1:])
             ):
                 raise ObservationUnavailable("Earlier canonical headers do not join retained history.")
+
             recorded.update((block.number, block) for block in earlier)
 
         # Retention proves local continuity, not that the upstream branch
@@ -189,6 +187,7 @@ class Observer:
                     ):
                         raise ObservationUnavailable("Finalized ancestry does not join retained history.")
                     recorded_finalized = earlier[0]
+
                 if recorded_finalized != finalized:
                     raise ObservationUnavailable("Finalized block disagrees with the checkpoint's canonical ancestry.")
 

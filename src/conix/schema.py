@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS conix.collections (
 CREATE INDEX IF NOT EXISTS collections_block_position ON conix.collections(block_number, log_index);
 """
 
-# This is the exact runtime grant boundary, not a general schema default.
+# These are the only DML grants available to the runtime login.
 _TABLES = {
     "source_progress": "SELECT, UPDATE",
     "blocks": "SELECT, INSERT, DELETE",
@@ -85,12 +85,8 @@ async def initialize(owner_dsn: str, settings: Settings):
         owner_dsn, autocommit=True, row_factory=dict_row, connect_timeout=10
     ) as connection:
         timeout_ms = max(1, int(settings.operation_timeout_seconds * 1000))
-        await connection.execute(
-            "SELECT set_config('statement_timeout', %s, false)", (f"{timeout_ms}ms",)
-        )
-        await connection.execute(
-            "SELECT set_config('lock_timeout', %s, false)", (f"{min(timeout_ms, 5000)}ms",)
-        )
+        await connection.execute("SELECT set_config('statement_timeout', %s, false)", (f"{timeout_ms}ms",))
+        await connection.execute("SELECT set_config('lock_timeout', %s, false)", (f"{min(timeout_ms, 5000)}ms",))
         role = await (await connection.execute(
             "SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
             "rolreplication, rolbypassrls FROM pg_roles WHERE rolname = current_user"
@@ -170,6 +166,7 @@ async def initialize(owner_dsn: str, settings: Settings):
                     )
 
                 await _state(connection, settings)
+
                 # Owner controls all privileges; runtime is deliberately given
                 # no schema CREATE, table TRUNCATE or source-row INSERT/DELETE.
                 target = sql.Identifier(settings.runtime_role)

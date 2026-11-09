@@ -50,8 +50,7 @@ COLLECTION_SIGNATURE = "VoucherCollected(address,uint256,address,uint256,uint256
 
 def _abi(types, raw, label):
     """Reject malformed or trailing ABI bytes rather than project a partial reply."""
-    # A decoder may accept noncanonical padding or trailing bytes; round-trip
-    # encoding is part of the contract's exact-byte interpretation.
+    # Re-encoding rejects noncanonical padding and trailing bytes.
     try:
         values = decode(types, raw, strict=True)
         if encode(types, values) != raw:
@@ -90,8 +89,8 @@ class PayToPlay:
         if not is_checksum_address(customer):
             raise ValueError("Customer address must be a checksummed EVM address.")
 
-        # Both contract reads refer to the same block hash. Actor zero avoids
-        # substituting a UI caller's permissions for accounting facts.
+        # Actor zero excludes UI-specific permissions from accounting facts.
+        # Both contract views are pinned to this block hash.
         asset_raw = await self._call(keccak(text="asset()")[:4], block)
         asset = to_checksum_address(_abi(("address",), asset_raw, "asset")[0])
         calldata = keccak(text=POSITION_SIGNATURE)[:4] + encode(
