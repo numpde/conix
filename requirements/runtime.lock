@@ -1,5 +1,5 @@
 # Target: CPython 3.12 / Linux x86_64, binary wheels only.
-# Regenerate explicitly with: python tools/lock_wheels.py --write
+# Regenerate explicitly with: python3 -m tools.wheelhouse.locks --write
 # Acquisition may use the network. Runtime image build MUST use no-index.
 annotated-types==0.8.0 --hash=sha256:f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0
 anyio==4.16.0 --hash=sha256:c66ae634e0b8228396b801741beb3294326d4b6102f7bba4041c0dfb58c29026

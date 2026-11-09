@@ -117,6 +117,26 @@ An importable conix.observer.Observer supplies the four existing observation
 methods over a Journal and Chain. The caller explicitly owns chain/network
 and database-resource lifetimes. No HTTP server or alternate scanner exists.
 
+Tooling layout
+--------------
+
+The operator tools are grouped by the resource they own, with importable
+module entry points rather than flat Python scripts:
+
+    tools/containers/operator.py       selected Docker Engine, inputs, images and runtime
+    tools/fixtures/pay_to_play.py      dapp32 JSON fixture lifecycle and tests
+    tools/wheelhouse/locks.py          explicit dependency-lock regeneration
+    tools/wheelhouse/acquire_tool.py   pinned released NMR tool bootstrap
+    tools/wheelhouse/policy.py         shared-pool, source and artifact admission
+    tools/wheelhouse/selector.py       contained, networkless target-Python selection
+    tools/wheelhouse/operations.py     pool acquisition and streamed offline builds
+
+Make routes operations through these packages; normal operators should use
+the public Make targets rather than invoke their internals directly.
+For explicit lock regeneration only, use:
+
+    python3 -m tools.wheelhouse.locks --write
+
 Container preparation and verification
 --------------------------------------
 
@@ -247,7 +267,7 @@ Python, PostgreSQL, Foundry and Dockerfile frontend images; repeated pulls
 reuse Docker's cached layers. These are separate from warm wheel selection
 and ordinary offline builds. A missing wheel or base image fails without
 silent alternatives. Upgrade locks and base digests through reviewed changes.
-Python wheel lock regeneration using 'python tools/lock_wheels.py --write'
+Python wheel lock regeneration using 'python3 -m tools.wheelhouse.locks --write'
 is a separate operator action; the image installation path never invokes
 host pip.
 

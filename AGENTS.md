@@ -90,3 +90,15 @@ Do not assume rootless UID mapping or network interface binding from Docker
 context names; the security proof must be per selected Engine. Cross-repo
 dapp32 fixture creation requires an explicit named context, not a silent
 interactive re-selection by a second Make process.
+
+Tool ownership
+--------------
+tools/containers/operator.py is the sole general Docker operator: explicit
+engine selection, image and input-volume lifecycle, and runtime services.
+tools/fixtures/pay_to_play.py owns only the dapp32 JSON fixture campaign,
+using the selected Docker operator without changing the sibling checkout.
+tools/wheelhouse/ contains issuer lock regeneration, released NMR tool
+bootstrap, shared pool/source policy, contained target selector, and offline
+image-build orchestration. Invoke operators with python -m via Make; avoid new
+top-level tools/*.py scripts or reintroducing manual Python path mutation.
+No operator module is packaged into the installed Conix runtime distribution.

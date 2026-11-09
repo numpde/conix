@@ -1,5 +1,5 @@
 # Closed input set for offline runtime/test packaging. All wheel acquisition
-# happens separately with containers/wheelhouse/Dockerfile.dockerignore.
+# uses the shared verified wheelhouse and an explicit streamed BuildKit context.
 **
 !Dockerfile
 !pyproject.toml
