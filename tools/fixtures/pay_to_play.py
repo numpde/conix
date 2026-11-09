@@ -324,9 +324,11 @@ class PayToPlayTest:
         self.check_new_sql_project()
         self.sql_retired = False
         self.sql_started = True
+        _progress("Disposable PostgreSQL: starting")
         self.docker.run(*argv, "up", "--detach", "--no-build", "--pull", "never",
                         "--wait", "--wait-timeout", "60", "postgres",
                         env=self.env, timeout=90)
+        _progress("Disposable PostgreSQL: ready")
         self._phase("bootstrap", "bootstrap", state=None, need_receipt=False)
         self._phase("initialize", "initialize", state=None, need_receipt=False)
 
@@ -343,13 +345,20 @@ class PayToPlayTest:
                 output=self._file("conix-" + phase + ".out"),
                 error_file=self._file("conix-" + phase + ".err"),
                 env=self.env, timeout=180 if phase in ("collected", "reorg") else 75,
-                payload=body,
+                payload=body, label=f"Conix phase/{phase}",
             )
             self.consumer_retired = True
-        except CampaignError:
-            # A timed-out CLI may leave a daemon-side one-shot reader behind.
-            # Do not automatically retire its upstream RPC fixture.
-            raise
+        except CampaignError as error:
+            # Admit only a bounded phase failure from the installed script,
+            # not arbitrary Docker stderr, Cast output or fixture secrets.
+            reason = parse_phase_failure(
+                self._file("conix-" + phase + ".err").read_bytes()[-16384:],
+                phase=phase,
+            )
+            if reason is not None:
+                raise CampaignError(f"Conix phase/{phase} failed: {reason}.") from error
+            # On timeout, a daemon-side one-shot process may still be running.
+            raise CampaignError(f"Conix phase/{phase} failed: {error}") from error
         if not need_receipt:
             return None
         current = receipt(result)
@@ -422,6 +431,8 @@ class Campaign:
             error_file=self._file("producer-" + action + ".err"),
             env={**_clean_env(), "DOCKER_CONFIG": str(self.docker.config_dir)},
             timeout=480 if action == "up" else 150,
+            label=("dapp32 fixture/up (includes build)" if action == "up"
+                   else f"dapp32 fixture/{action}"),
         )
 
     def acquire(self):
@@ -429,6 +440,7 @@ class Campaign:
         self.creation_attempted = True
         raw = self._dapp32("up")
         descriptor = decode(raw, fixture_id=self.fixture_id)
+        _progress("dapp32 fixture: verifying Anvil network and deployment")
         verify_network(self.docker, descriptor)
         same = decode(self._dapp32("info"), fixture_id=self.fixture_id)
         if same != descriptor:
