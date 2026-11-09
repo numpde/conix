@@ -158,8 +158,8 @@ def receipt(raw: bytes):
 # The campaign prints this verified record only after it has attempted cleanup.
 _FAILURE_PREFIX = b"CONIX_PHASE_FAILURE "
 _PHASES = frozenset({"initialize", "baseline", "collected", "restart", "reorg"})
-_PUBLIC_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.,:;()/'-]{0,239}\\Z")
-_CATEGORY = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}\\Z")
+_PUBLIC_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.,:;()/'-]{0,239}\Z")
+_CATEGORY = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}\Z")
 _PRIVATE_MARKERS = ("privatekey", "postgresql:", "password", "secret", "://")
 
 
