@@ -608,3 +608,53 @@ field-identity collision, value-filter mismatch, missing event,
 partial publication or inconsistent recovery disqualifies the release.
 If a type cannot be demonstrated safe across all required boundaries,
 fail its configuration admission and explicitly leave it unsupported.
+
+Executable regression baseline — 2026-11-09
+-------------------------------------------
+
+Implemented as Python unittest modules in the current PayToPlay-specific
+Tier-0 image (all must be included in source capture, not merely tracked):
+
+  tests/test_abi_type_safety.py
+    Manual 256-bit scalar word oracles for every int/uint width; bytes1..32,
+    bool/address, dynamic bytes/strings, nested arrays/tuples, reproducible
+    random samples, invalid ABI encodings and actual current collection decoder.
+
+  tests/test_position_type_safety.py
+    Real current ABI viewPosition projection with uint64/uint256 extremes,
+    dynamic string[] result, strict call arguments, exact checkpoint hash,
+    wrong identity and malformed return refusal.
+
+  tests/test_rpc_type_safety.py
+    Real RpcClient through a streamed mock HTTP transport; exact quantities,
+    byte data, JSON integer precision, duplicate keys, malformed envelopes,
+    nonfinite numbers, bounded responses and nonsecret error reporting.
+
+  tests/test_journal_type_safety.py
+    Real PostgreSQL, enrolled restricted runtime identity, exact uint256 and
+    bytes32 SQL/reader round trips, equality binds, pagination, fresh reader,
+    rejected malformed bytes without partial commit, and reorg/repair.
+
+  tests/abi_golden_vectors.py and tests/test_abi_golden_vectors.py
+    Literal-wire independent oracles for ERC-20/721 Transfer with identical
+    topic0 but different indexed layouts, signed topics, fixed bytes plus
+    dynamic strings, and hashed indexed string values. Their own validity
+    tests run now; these vectors DO NOT qualify a generic Conix decoder.
+
+Test-packaging guardrail: tools/wheelhouse/policy.py now captures the complete
+Git-tracked Python inventory under tests/ as well as src/conix. New tracked
+tests cannot be omitted from the installed image by a stale manual list;
+untracked and non-Python test inputs still fail exact source admission.
+repository_checks/test_shared_wheelhouse.py enforces this boundary.
+
+DO NOT represent the current passing suites as generic-event qualification.
+The generic catalog, storage, equality filtering, event cursor and reader
+do not yet exist. The required tests of those actual operations, property
+fuzzing with independent oracles, full ABI matrix through the database,
+multi-contract chain tests, mutation/fault campaigns and live PayToPlay
+accounting integration remain release blockers. The existing real Anvil
+PayToPlay fixture proves its current narrower collection workflow only.
+
+When implementation starts, add those missing executable contracts and
+ensure they run in the installed test image by default. Do not make them
+optional or claim completion from a collection of reference-only fixtures.
