@@ -154,6 +154,17 @@ class SharedWheelhouseContracts(unittest.TestCase):
             with self.subTest(changed=changed), self.assertRaises(pool.PoolError):
                 pool.selection_manifest(json.dumps(changed).encode())
 
+    def test_stream_failure_explanation_is_bounded_and_nonsecret(self):
+        from tools.wheelhouse.operations import _public_stream_diagnostic
+        with tempfile.TemporaryDirectory() as directory:
+            trace = Path(directory) / "stream.err"
+            trace.write_text("wheel selection rejected: missing pinned wheel\n")
+            self.assertIn("missing pinned wheel", _public_stream_diagnostic(trace))
+            trace.write_text("postgresql://user:password@host/secret\n")
+            self.assertIsNone(_public_stream_diagnostic(trace))
+            trace.write_text("privateKey=0x" + "ab" * 32 + "\n")
+            self.assertIsNone(_public_stream_diagnostic(trace))
+
     def test_warm_failure_does_not_authorize_network_without_missing_code(self):
         from unittest.mock import patch
         from tools.wheelhouse import operations as operation
