@@ -5,7 +5,6 @@ Host-side orchestration only. Runtime code never receives the Docker socket.
 import argparse
 import json
 import os
-from pathlib import Path
 import re
 import secrets
 import stat
@@ -14,6 +13,7 @@ import tomllib
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from tools.wheelhouse.policy import PoolError
@@ -23,19 +23,22 @@ CONTEXT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 IMAGE_ID = re.compile(r"sha256:[a-f0-9]{64}\Z")
 
 def pinned_images():
-    """Read reviewed digest pins; this operation never pulls an image."""
-    document = json.loads((ROOT / "containers/images.json").read_text(encoding="utf-8"))
-    if set(document) != {"python_base", "postgres", "foundry", "dockerfile_frontend"}:
+    """Validate the reviewed image pins without contacting Docker."""
+    images = json.loads((ROOT / "containers/images.json").read_text(encoding="utf-8"))
+    if set(images) != {"python_base", "postgres", "foundry", "dockerfile_frontend"}:
         raise OperationError("Reviewed manifest must contain python_base, postgres, foundry and dockerfile_frontend.")
-    for (role, name) in document.items():
-        if (type(name) is not str or "@sha256:" not in name
-                or not IMAGE_ID.fullmatch("sha256:" + name.rsplit("@sha256:", 1)[-1])):
+
+    for (role, image) in images.items():
+        if type(image) is not str or "@sha256:" not in image or not IMAGE_ID.fullmatch(
+            "sha256:" + image.rsplit("@sha256:", 1)[-1]
+        ):
             raise OperationError(f"Reviewed {role} base image must have a complete sha256 pin.")
-    return document
+
+    return images
 
 
 class OperationError(Exception):
-    """Safe operator failure with a separate subprocess exit status."""
+    """Operator-safe error with an optional subprocess exit code."""
 
     def __init__(self, detail, *, exit_code=None):
         super().__init__(detail)
@@ -43,60 +46,71 @@ class OperationError(Exception):
 
 
 def local_socket(endpoint):
-    """Admit a local Unix-socket endpoint, not a remote Docker authority."""
+    """Allow local Unix sockets, never remote Docker endpoints."""
     try:
         uri = urlsplit(endpoint)
-        return (uri.scheme == "unix" and not uri.netloc and not uri.query
-                and not uri.fragment and uri.path.startswith("/")
-                and uri.path != "/" and len(endpoint) <= 4096
-                and not any(ord(ch) < 32 for ch in endpoint))
+        return (
+            uri.scheme == "unix" and not uri.netloc and not uri.query and not uri.fragment
+            and uri.path.startswith("/") and uri.path != "/" and len(endpoint) <= 4096
+            and not any(ord(character) < 32 for character in endpoint)
+        )
     except ValueError:
         return False
 
 
 def environment(client_config=None):
-    """Ignore ambient Docker, Compose and proxy overrides when selecting authority."""
-    result = {k: v for (k, v) in os.environ.items()
-              if not k.startswith(("DOCKER_", "COMPOSE_", "BUILDX_", "BUILDKIT_"))
-              and k not in ("CONTAINER_HOST", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
-                            "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy")}
-    result["COMPOSE_DISABLE_ENV_FILE"] = "1"
-    result["DOCKER_BUILDKIT"] = "1"
+    """Drop ambient Docker, Compose and proxy selectors before invoking a subprocess."""
+    excluded = ("DOCKER_", "COMPOSE_", "BUILDX_", "BUILDKIT_")
+    excluded_names = (
+        "CONTAINER_HOST", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+        "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+    )
+    selected = {
+        name: value for (name, value) in os.environ.items()
+        if not name.startswith(excluded) and name not in excluded_names
+    }
+    selected["COMPOSE_DISABLE_ENV_FILE"] = "1"
+    selected["DOCKER_BUILDKIT"] = "1"
+
     if client_config is not None:
-        result["DOCKER_CONFIG"] = str(client_config)
-    return result
+        selected["DOCKER_CONFIG"] = str(client_config)
+
+    return selected
 
 
 def _staging_failure(stderr):
-    """Read only the indexer image's fixed nonsecret InputError diagnosis."""
+    """Admit only the fixed, nonsecret validation message from the staging image."""
     prefix = "Conix input staging failed (InputError): "
     try:
         lines = stderr[-4096:].decode("utf-8").splitlines()
     except (UnicodeError, AttributeError):
         return None
+
     for line in reversed(lines):
-        if line.startswith(prefix):
-            reason = line[len(prefix):]
-            if (
-                1 <= len(reason) <= 240
-                and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.,:/()-]*", reason)
-                and not any(mark in reason.lower() for mark in (
-                    "password", "private", "secret", "://",
-                ))
-                and re.search(r"(?:0x)?[0-9a-fA-F]{64}", reason) is None
-            ):
-                return reason
+        if not line.startswith(prefix):
+            continue
+
+        reason = line[len(prefix):]
+        if (
+            1 <= len(reason) <= 240
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.,:/()-]*", reason)
+            and not any(marker in reason.lower() for marker in ("password", "private", "secret", "://"))
+            and re.search(r"(?:0x)?[0-9a-fA-F]{64}", reason) is None
+        ):
+            return reason
+
     return None
 
 
 def _docker_operation(argv):
-    """Name the invoked Docker action using only known verbs, not private args."""
+    """Describe the failed Docker verb without printing private arguments."""
     if "compose" in argv:
-        rest = argv[argv.index("compose") + 1:]
-        action = next((value for value in rest if value in (
+        tail = argv[argv.index("compose") + 1:]
+        action = next((value for value in tail if value in (
             "config", "up", "down", "run", "ps", "stop", "logs",
         )), "operation")
         return f"Docker Compose {action}"
+
     for group in ("image", "volume", "network", "context", "container"):
         if group in argv:
             index = argv.index(group)
@@ -104,75 +118,84 @@ def _docker_operation(argv):
                 "inspect", "create", "rm", "ls", "tag",
             ) else "operation"
             return f"Docker {group} {action}"
+
     for action in ("run", "pull", "build", "info"):
         if action in argv:
             return f"Docker {action}"
+
     return "Docker operation"
 
 
 def command(argv, *, env, timeout=60, capture=False, progress_to_stderr=False, public_diagnostic=False):
-    """Execute bounded Docker commands; never echo private captured text."""
+    """Run a bounded Docker command; capture private output without echoing it."""
+    captured = capture or public_diagnostic
     try:
-        completed = subprocess.run(argv, cwd=ROOT, env=env, timeout=timeout,
-                                text=capture or public_diagnostic,
-                                capture_output=capture or public_diagnostic,
-                                stdout=None if capture or public_diagnostic else
-                                    (sys.stderr if progress_to_stderr else None),
-                                check=False)
+        completed = subprocess.run(
+            argv, cwd=ROOT, env=env, timeout=timeout, check=False,
+            text=captured, capture_output=captured,
+            stdout=None if captured else (sys.stderr if progress_to_stderr else None),
+        )
     except (OSError, subprocess.TimeoutExpired) as error:
         raise OperationError(f"{_docker_operation(argv)} failed to run ({type(error).__name__}).") from error
+
     if completed.returncode:
-        # Only nonsecret acquisition workers may opt in to bounded stdout/
-        # stderr diagnostics. Never echo a runtime credential or a fixture
-        # descriptor from generic Docker/Compose operations.
+        # The network-enabled wheel acquisition worker is the only source
+        # allowed to contribute bounded subprocess stderr to a diagnostic.
         if public_diagnostic:
-            detail = (completed.stderr or "")[-1200:]
-            detail = detail.replace("\r", " ").replace("\x00", " ")
+            detail = (completed.stderr or "")[-1200:].replace("\r", " ").replace("\x00", " ").strip()
             raise OperationError(
                 f"Contained public wheel acquisition failed (exit {completed.returncode}): "
-                + (detail.strip() or "no worker diagnostic returned."),
+                + (detail or "no worker diagnostic returned."),
                 exit_code=completed.returncode,
             )
+
         raise OperationError(f"{_docker_operation(argv)} failed (exit {completed.returncode}).",
                              exit_code=completed.returncode)
+
     if capture and len(completed.stdout) > 65536:
         raise OperationError("Docker returned an oversized response.")
+
     return completed.stdout if capture else None
 
 
 def select_endpoint(name, origin):
-    """Resolve one local Engine, prompting only when selection is interactive."""
+    """Select one local Engine explicitly or through the operator's terminal."""
     if os.geteuid() == 0:
         raise OperationError(
             "Conix container operations refuse host root (UID 0). Use the selected "
             "Docker Engine's unprivileged operator account, not sudo."
         )
-    listing = command(
-        ["docker", "context", "ls", "--format", "{{.Name}}\t{{.DockerEndpoint}}"],
-        env=environment(), timeout=10, capture=True,
-    )
+
+    listing = command(["docker", "context", "ls", "--format", "{{.Name}}\t{{.DockerEndpoint}}"],
+                      env=environment(), timeout=10, capture=True)
     contexts = {}
     for line in listing.splitlines():
-        key, sep, endpoint = line.partition("\t")
-        if not sep or not CONTEXT_NAME.fullmatch(key) or key in contexts:
+        (context_name, separator, endpoint) = line.partition("\t")
+        if not separator or not CONTEXT_NAME.fullmatch(context_name) or context_name in contexts:
             raise OperationError("Docker returned malformed or duplicate context entries.")
-        contexts[key] = endpoint
-    available = {key: endpoint for (key, endpoint) in contexts.items()
-                 if local_socket(endpoint)}
+
+        contexts[context_name] = endpoint
+
+    available = {context_name: endpoint for (context_name, endpoint) in contexts.items() if local_socket(endpoint)}
     if origin == "command line":
         if not CONTEXT_NAME.fullmatch(name):
             raise OperationError("Select one named local Docker context on the Make command line.")
+
         if name not in available:
             raise OperationError(f"Context {name!r} is missing or does not use a local Unix socket.")
+
         return available[name]
+
     if not available:
         raise OperationError("Docker does not list a usable local Unix-socket context.")
+
     try:
         with open("/dev/tty", "r") as reader, open("/dev/tty", "w") as writer:
             keys = sorted(available)
             writer.write("Choose a local Docker context (none selected automatically):\n")
             for (number, context_name) in enumerate(keys, 1):
                 writer.write(f"  {number}) {context_name}\n")
+
             writer.write("Context number: ")
             writer.flush()
             answer = reader.readline().strip()
@@ -181,8 +204,10 @@ def select_endpoint(name, origin):
             "No terminal. Pass DOCKER_CONTEXT=<name> on the Make command line. "
             f"Local contexts: {', '.join(sorted(available))}."
         ) from error
+
     if not answer.isascii() or not answer.isdecimal() or str(int(answer)) != answer or not 1 <= int(answer) <= len(keys):
         raise OperationError("Invalid context choice. No Docker Engine was selected.")
+
     return available[keys[int(answer) - 1]]
 
 
