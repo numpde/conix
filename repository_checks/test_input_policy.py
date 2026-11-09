@@ -63,7 +63,7 @@ def verify_requirements(project, runtime, build):
         (direct_versions(project["project"]["dependencies"]), lock_versions(runtime), "runtime"),
         (direct_versions(project["build-system"]["requires"]), lock_versions(build), "build"),
     ):
-        for name, version in expected.items():
+        for (name, version) in expected.items():
             if name not in actual or actual[name][0] != version:
                 raise ValueError(f"{label} lock has no matching exact artifact for {name}.")
         if label == "build" and set(actual) != set(expected):

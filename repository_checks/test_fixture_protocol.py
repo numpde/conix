@@ -35,12 +35,12 @@ def valid():
     abi = [
         {"type": "event", "name": "VoucherCollected", "anonymous": False, "inputs": event},
         *(dict(type="function", name=name, inputs=[dict(type=kind) for kind in kinds])
-          for name, kinds in functions.items()),
+          for (name, kinds) in functions.items()),
     ]
     project = "dapps-pay-to-play-fixture-" + IDENTITY
     accounts = {
-        name: {"address": "0x" + f"{i:02x}" * 20, "privateKey": "0x" + f"{i:02x}" * 32}
-        for i, name in enumerate(("admin", "customer", "relayer", "payee"), 1)
+        name: {"address": "0x" + f"{index:02x}" * 20, "privateKey": "0x" + f"{index:02x}" * 32}
+        for (index, name) in enumerate(("admin", "customer", "relayer", "payee"), 1)
     }
     contract = {"address": CONTRACT, "deploymentBlock": 2, "creationTransaction": HASH}
     return {

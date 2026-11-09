@@ -92,7 +92,7 @@ class FixtureRunnerTests(unittest.TestCase):
             with patch.object(runner.subprocess, "run", side_effect=controlled):
                 runner.pin_sibling_context(selected, "science")
             self.assertEqual(len(commands), 2)
-            for argv, kwargs in commands:
+            for (argv, kwargs) in commands:
                 self.assertEqual(argv[:3], ["docker", "--config", folder])
                 self.assertEqual(kwargs["env"]["DOCKER_CONFIG"], folder)
             self.assertIn("host=" + selected.endpoint, commands[0][0])

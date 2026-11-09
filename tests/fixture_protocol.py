@@ -40,7 +40,7 @@ class FixtureError(ValueError):
 def _pairs(rows):
     """Reject duplicate JSON keys before accepting any source identity."""
     result = {}
-    for name, value in rows:
+    for (name, value) in rows:
         if name in result:
             raise FixtureError("Fixture JSON contains duplicate object members.")
         result[name] = value
@@ -93,7 +93,7 @@ def decode(raw: bytes, *, fixture_id: str):
     contracts = document["contracts"]
     if type(contracts) is not dict or set(contracts) != REQUIRED_CONTRACTS:
         raise FixtureError("Fixture must declare exactly the verified base deployment contracts.")
-    for name, item in contracts.items():
+    for (name, item) in contracts.items():
         required = {"address", "deploymentBlock", "creationTransaction"}
         if name == "PayToPlay":
             required.add("abi")
@@ -114,7 +114,7 @@ def decode(raw: bytes, *, fixture_id: str):
         for item in event[0].get("inputs", [])
     ] != EVENT:
         raise FixtureError("Fixture VoucherCollected ABI does not match the indexed contract.")
-    for name, types in FUNCTIONS.items():
+    for (name, types) in FUNCTIONS.items():
         matches = [
             row for row in abi if row.get("type") == "function" and row.get("name") == name
             and tuple(argument.get("type") for argument in row.get("inputs", ())) == types
