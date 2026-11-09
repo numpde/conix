@@ -737,92 +737,108 @@ class Docker:
         )
 
     def test(self, image, images):
-        """Run isolated PostgreSQL tests without adopting external resources."""
+        """Run an isolated PostgreSQL test project and retire only its resources."""
         if not IMAGE_ID.fullmatch(image):
             raise OperationError("test/postgres/run requires immutable RUNNER_IMAGE=sha256:<id>.")
 
         self.require_role(image, "test-runner")
         self.require_image(images["postgres"])
-        project = "conix-tier0-" + secrets.token_hex(6)
-        compose = [
+
+        test_project = "conix-tier0-" + secrets.token_hex(6)
+        compose_argv = [
             "compose", "--env-file", "/dev/null", "--project-directory", str(ROOT),
-            "-p", project, "-f", str(ROOT / "compose/tests.yml"),
+            "-p", test_project, "-f", str(ROOT / "compose/tests.yml"),
         ]
-        env = self.docker_environment.copy()
-        env["CONIX_TEST_RUNNER_IMAGE"] = image
-        env["CONIX_POSTGRES_IMAGE"] = images["postgres"]
+        compose_environment = self.docker_environment.copy()
+        compose_environment["CONIX_TEST_RUNNER_IMAGE"] = image
+        compose_environment["CONIX_POSTGRES_IMAGE"] = images["postgres"]
+
         try:
-            rendered = json.loads(self.run(*compose, "config", "--format", "json",
-                                          env=env, timeout=20, capture=True))
-            services = rendered["services"]
-            networks = rendered["networks"]
-            if (set(services) != {"tests", "postgres", "bootstrap", "initialize"}
-                or services["tests"].get("image") != image
-                or services["tests"].get("read_only") is not True
-                or services["tests"].get("user") != "65532:65532"
-                or services["postgres"].get("image") != images["postgres"]
-                or services["postgres"].get("user") != "999:999"
-                or services["postgres"].get("read_only") is not True
-                or services["bootstrap"].get("image") != images["postgres"]
-                or services["bootstrap"].get("user") != "999:999"
-                or services["bootstrap"].get("read_only") is not True
-                or services["initialize"].get("image") != image
-                or services["initialize"].get("user") != "65532:65532"
-                or services["initialize"].get("read_only") is not True
-                or any(s.get("build") or s.get("ports") or s.get("privileged") or s.get("network_mode") for s in services.values())
-                or any(any(v.get("type") == "bind" for v in s.get("volumes", [])) for s in services.values())
-                or len(networks) != 1
-                or not next(iter(networks.values())).get("internal")):
+            rendered_configuration = json.loads(self.run(
+                *compose_argv, "config", "--format", "json",
+                env=compose_environment, timeout=20, capture=True,
+            ))
+            rendered_services = rendered_configuration["services"]
+            rendered_networks = rendered_configuration["networks"]
+
+            if (
+                set(rendered_services) != {"tests", "postgres", "bootstrap", "initialize"}
+                or rendered_services["tests"].get("image") != image
+                or rendered_services["tests"].get("read_only") is not True
+                or rendered_services["tests"].get("user") != "65532:65532"
+                or rendered_services["postgres"].get("image") != images["postgres"]
+                or rendered_services["postgres"].get("user") != "999:999"
+                or rendered_services["postgres"].get("read_only") is not True
+                or rendered_services["bootstrap"].get("image") != images["postgres"]
+                or rendered_services["bootstrap"].get("user") != "999:999"
+                or rendered_services["bootstrap"].get("read_only") is not True
+                or rendered_services["initialize"].get("image") != image
+                or rendered_services["initialize"].get("user") != "65532:65532"
+                or rendered_services["initialize"].get("read_only") is not True
+                or any(service.get("build") or service.get("ports") or service.get("privileged") or service.get("network_mode")
+                       for service in rendered_services.values())
+                or any(any(mount.get("type") == "bind" for mount in service.get("volumes", []))
+                       for service in rendered_services.values())
+                or len(rendered_networks) != 1
+                or not next(iter(rendered_networks.values())).get("internal")
+            ):
                 raise OperationError("Rendered test services violate selected images, no-bind, network or confinement rules.")
         except (KeyError, ValueError) as error:
             raise OperationError("Cannot validate rendered test deployment.") from error
 
-        failure = None
-        try:
-            # A successful, terminating bootstrap is deliberate; do not use
-            # --abort-on-container-exit, which would stop tests as soon as
-            # this one-shot migration completes.
-            self.run(*compose, "up", "--detach", "--no-build", "--pull", "never",
-                     "--wait", "--wait-timeout", "60", "postgres",
-                     env=env, timeout=90)
-            self.run(*compose, "run", "--rm", "--no-deps", "--pull",
-                     "never", "bootstrap", env=env, timeout=60)
-            self.run(*compose, "run", "--rm", "--no-deps", "--pull",
-                     "never", "initialize", env=env, timeout=60)
-            self.run(*compose, "run", "--rm", "--no-deps", "--pull",
-                     "never", "tests", env=env, timeout=240)
-        except Exception as error:
-            failure = error
+        test_failure = None
 
-            # Capture bounded diagnostics before teardown, not after the
-            # disposable container has been removed. These are fixture-only
-            # services; never use this on a deployment with private inputs.
+        try:
+            # Bootstrap terminates successfully before tests; abort-on-exit
+            # would stop PostgreSQL when that one-shot initialization finishes.
+            self.run(
+                *compose_argv, "up", "--detach", "--no-build", "--pull", "never",
+                "--wait", "--wait-timeout", "60", "postgres",
+                env=compose_environment, timeout=90,
+            )
+            self.run(*compose_argv, "run", "--rm", "--no-deps", "--pull",
+                     "never", "bootstrap", env=compose_environment, timeout=60)
+            self.run(*compose_argv, "run", "--rm", "--no-deps", "--pull",
+                     "never", "initialize", env=compose_environment, timeout=60)
+            self.run(*compose_argv, "run", "--rm", "--no-deps", "--pull",
+                     "never", "tests", env=compose_environment, timeout=240)
+        except Exception as error:
+            test_failure = error
+
+            # Collect fixture-only diagnostics before disposable containers
+            # disappear. Production private-volume logs are never captured here.
             try:
-                self.run(*compose, "ps", "--all", env=env, timeout=15)
-                self.run(*compose, "logs", "--no-color", "--tail", "35",
-                         "postgres", "bootstrap", "initialize", "tests", env=env, timeout=15)
+                self.run(*compose_argv, "ps", "--all", env=compose_environment, timeout=15)
+                self.run(
+                    *compose_argv, "logs", "--no-color", "--tail", "35",
+                    "postgres", "bootstrap", "initialize", "tests",
+                    env=compose_environment, timeout=15,
+                )
             except OperationError:
                 pass
         finally:
             try:
-                self.run(*compose, "down", "--volumes", "--remove-orphans",
-                         "--timeout", "30", env=env, timeout=90)
-            except Exception as cleanup:
+                self.run(
+                    *compose_argv, "down", "--volumes", "--remove-orphans",
+                    "--timeout", "30", env=compose_environment, timeout=90,
+                )
+            except Exception as cleanup_error:
                 print(
-                    f"Cleanup unconfirmed: project={project}, endpoint={self.docker_command_prefix[-1]}, "
+                    f"Cleanup unconfirmed: project={test_project}, endpoint={self.endpoint}, "
                     f"compose={ROOT / 'compose/tests.yml'}. Inspect before removing.",
                     file=sys.stderr,
                 )
-                first = (
-                    f" Original test failure: {failure}."
-                    if isinstance(failure, OperationError) else
-                    f" Original test failure: {type(failure).__name__}."
-                    if failure is not None else ""
+                original_failure_note = (
+                    f" Original test failure: {test_failure}."
+                    if isinstance(test_failure, OperationError) else
+                    f" Original test failure: {type(test_failure).__name__}."
+                    if test_failure is not None else ""
                 )
-                raise OperationError(f"Test project cleanup failed: {cleanup}.{first}") from cleanup
 
-        if failure is not None:
-            raise failure
+                raise OperationError(f"Test project cleanup failed: {cleanup_error}.{original_failure_note}") from cleanup_error
+
+        if test_failure is not None:
+            raise test_failure
 
 
 def main():
