@@ -180,9 +180,10 @@ class Journal:
                 yield writer
             finally:
                 writer._active = False
-                # Connection close also releases the advisory lock after failure.
-                if not connection.closed:
-                    await connection.execute("SELECT pg_advisory_unlock(%s)", (key,))
+                # Closing this dedicated PostgreSQL session releases its
+                # advisory lock. Do not issue another SQL command here: an
+                # unlock error after an unanswered COMMIT could hide the
+                # original publication failure. _connection owns the close.
 
     async def basis(self) -> Basis:
         async with self._snapshot() as connection:
