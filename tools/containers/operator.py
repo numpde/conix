@@ -66,6 +66,28 @@ def environment(client_config=None):
     return result
 
 
+def _staging_failure(stderr):
+    """Read only the indexer image's fixed nonsecret InputError diagnosis."""
+    prefix = "Conix input staging failed (InputError): "
+    try:
+        lines = stderr[-4096:].decode("utf-8").splitlines()
+    except (UnicodeError, AttributeError):
+        return None
+    for line in reversed(lines):
+        if line.startswith(prefix):
+            reason = line[len(prefix):]
+            if (
+                1 <= len(reason) <= 240
+                and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.,:/()-]*", reason)
+                and not any(mark in reason.lower() for mark in (
+                    "password", "private", "secret", "://",
+                ))
+                and re.search(r"(?:0x)?[0-9a-fA-F]{64}", reason) is None
+            ):
+                return reason
+    return None
+
+
 def _docker_operation(argv):
     """Name the invoked Docker action using only known verbs, not private args."""
     if "compose" in argv:
@@ -327,7 +349,11 @@ class Docker:
             result = subprocess.run(argv, input=envelope, capture_output=True,
                                     cwd=ROOT, env=self.env, timeout=40, check=False)
             if result.returncode:
-                raise OperationError("Conix input staging rejected the private inputs or volume; no secret was logged.")
+                cause = _staging_failure(result.stderr)
+                detail = cause or "no admitted nonsecret diagnostic returned"
+                raise OperationError(
+                    f"Conix input staging failed (exit {result.returncode}): {detail}."
+                )
             self.verify_inputs(image, volume)
             if not proof:
                 remove = False
