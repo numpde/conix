@@ -79,11 +79,11 @@ async def advance_one(writer, chain: Chain) -> AdvanceResult:
         await _invalidate(writer, publication_basis, f"Completed checkpoint {completed_block.number} changed during acquisition.")
 
     await writer.publish_block(
-        expected=publication_basis,
-        block=candidate_block,
-        collections=collected_events,
-        head=upstream_head,
-        now=datetime.now(UTC),
+        expected_basis=publication_basis,
+        candidate_block=candidate_block,
+        collected_events=collected_events,
+        upstream_head=upstream_head,
+        observed_at=datetime.now(UTC),
     )
 
     return AdvanceResult(candidate_block.number, True)

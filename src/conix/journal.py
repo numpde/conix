@@ -377,7 +377,7 @@ class Journal:
 
 
 class Writer:
-    """Concrete writer capability; never transfer across sessions or connections."""
+    """An exclusive PostgreSQL writer capability tied to one live session."""
 
     def __init__(self, journal: Journal, connection: AsyncConnection):
         self._journal = journal
@@ -392,125 +392,180 @@ class Writer:
         self._require_active()
         return await _state(self._connection, self._journal.settings)
 
-    async def note_head(self, expected: Basis, head: Block, now: datetime):
+    async def note_head(self, expected_basis: Basis, upstream_head: Block, observed_at: datetime):
         """Record an idle upstream observation without advancing completed history."""
         self._require_active()
+
         async with self._connection.transaction():
-            await _check_basis(self._connection, self._journal.settings, expected)
+            await _check_basis(self._connection, self._journal.settings, expected_basis)
+
             await self._connection.execute(
-                "UPDATE conix.source_progress SET head_height=%s, head_hash=%s, "
-                "head_parent_hash=%s, head_timestamp=%s, head_observed_at=%s, revision=revision+1 WHERE id=1",
-                (head.number, head.hash, head.parent_hash, head.timestamp, now),
+                query="UPDATE conix.source_progress SET head_height=%s, head_hash=%s, "
+                      "head_parent_hash=%s, head_timestamp=%s, head_observed_at=%s, revision=revision+1 WHERE id=1",
+                params=(
+                    upstream_head.number,
+                    upstream_head.hash,
+                    upstream_head.parent_hash,
+                    upstream_head.timestamp,
+                    observed_at,
+                ),
             )
 
-    async def publish_block(self, expected: Basis, block: Block,
-                            collections: tuple[Collection, ...], head: Block, now: datetime):
-        """The only forward publication; one complete block and cursor per transaction."""
+    async def publish_block(
+        self,
+        expected_basis: Basis,
+        candidate_block: Block,
+        collected_events: tuple[Collection, ...],
+        upstream_head: Block,
+        observed_at: datetime,
+    ):
+        """Commit a complete next block and its dense event prefix atomically."""
         self._require_active()
         settings = self._journal.settings
+
         async with self._connection.transaction():
-            current = await _check_basis(self._connection, settings, expected)
-            if current.blocked_reason:
+            current_basis = await _check_basis(self._connection, settings, expected_basis)
+
+            if current_basis.blocked_reason:
                 raise Blocked("Indexed history is blocked; repair before publishing.")
 
-            next_height = settings.start_block if current.checkpoint is None else current.checkpoint.number + 1
-            if block.number != next_height or (
-                current.checkpoint is not None and block.parent_hash != current.checkpoint.hash
+            expected_next_height = (
+                settings.start_block if current_basis.checkpoint is None else current_basis.checkpoint.number + 1
+            )
+
+            if candidate_block.number != expected_next_height or (
+                current_basis.checkpoint is not None and candidate_block.parent_hash != current_basis.checkpoint.hash
             ):
                 raise StateChanged("Publication does not extend the current completed block by exactly one.")
 
-            if len({event.log_index for event in collections}) != len(collections):
+            if len({event.log_index for event in collected_events}) != len(collected_events):
                 raise ValueError("Duplicate block-global log index in one block.")
 
-            if tuple(sorted(collections, key=lambda e: (e.transaction_index, e.log_index))) != collections:
+            if tuple(sorted(collected_events, key=lambda event: (event.transaction_index, event.log_index))) != collected_events:
                 raise ValueError("Collection event order must follow transaction/log order.")
 
-            # Validate the entire block before any insert. The transaction
-            # commits header, events, cursor and progress together or not at all.
-            for event in collections:
-                if (event.block_number, event.block_hash, event.block_timestamp) != (block.number, block.hash, block.timestamp):
+            for collection in collected_events:
+                if (collection.block_number, collection.block_hash, collection.block_timestamp) != (
+                    candidate_block.number, candidate_block.hash, candidate_block.timestamp
+                ):
                     raise ValueError("Collection event disagrees with its containing block.")
 
-                if not (0 < event.amount <= event.voucher_paid < 2**256 and 0 <= event.channel_id < 2**256):
+                if not (0 < collection.amount <= collection.voucher_paid < 2**256 and 0 <= collection.channel_id < 2**256):
                     raise ValueError("Collection amount, voucher total or channel identifier exceeds uint256 bounds.")
 
+            # Header, events, count and checkpoint all commit in this transaction;
+            # no partial block can become an observable collection prefix.
             await self._connection.execute(
-                "INSERT INTO conix.blocks(number,hash,parent_hash,timestamp) VALUES (%s,%s,%s,%s)",
-                (block.number, block.hash, block.parent_hash, block.timestamp),
+                query="INSERT INTO conix.blocks(number,hash,parent_hash,timestamp) VALUES (%s,%s,%s,%s)",
+                params=(candidate_block.number, candidate_block.hash, candidate_block.parent_hash, candidate_block.timestamp),
             )
 
-            # Offsets are derived from committed count, never an independent
-            # PostgreSQL sequence that could skip values on rollback.
-            for (index, event) in enumerate(collections):
+            # Use committed count, not a database sequence that can skip on rollback.
+            for (collection_index, collection) in enumerate(collected_events):
                 await self._connection.execute(
-                    "INSERT INTO conix.collections "
-                    "(sequence,block_number,block_hash,block_timestamp,transaction_hash,transaction_index,log_index,"
-                    "customer,channel_id,payee,amount,voucher_paid,invoice_hash) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (current.collection_count + index, event.block_number, event.block_hash,
-                     event.block_timestamp, event.transaction_hash, event.transaction_index, event.log_index,
-                     _address(event.customer), event.channel_id, _address(event.payee),
-                     event.amount, event.voucher_paid, event.invoice_hash),
+                    query="INSERT INTO conix.collections "
+                          "(sequence,block_number,block_hash,block_timestamp,transaction_hash,transaction_index,log_index,"
+                          "customer,channel_id,payee,amount,voucher_paid,invoice_hash) "
+                          "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    params=(
+                        current_basis.collection_count + collection_index,
+                        collection.block_number,
+                        collection.block_hash,
+                        collection.block_timestamp,
+                        collection.transaction_hash,
+                        collection.transaction_index,
+                        collection.log_index,
+                        _address(collection.customer),
+                        collection.channel_id,
+                        _address(collection.payee),
+                        collection.amount,
+                        collection.voucher_paid,
+                        collection.invoice_hash,
+                    ),
                 )
 
             await self._connection.execute(
-                "UPDATE conix.source_progress SET completed_height=%s, completed_hash=%s, "
-                "collection_count=%s, head_height=%s, head_hash=%s, head_parent_hash=%s, "
-                "head_timestamp=%s, head_observed_at=%s, revision=revision+1 WHERE id=1",
-                (block.number, block.hash, current.collection_count + len(collections),
-                 head.number, head.hash, head.parent_hash, head.timestamp, now),
+                query="UPDATE conix.source_progress SET completed_height=%s, completed_hash=%s, "
+                      "collection_count=%s, head_height=%s, head_hash=%s, head_parent_hash=%s, "
+                      "head_timestamp=%s, head_observed_at=%s, revision=revision+1 WHERE id=1",
+                params=(
+                    candidate_block.number,
+                    candidate_block.hash,
+                    current_basis.collection_count + len(collected_events),
+                    upstream_head.number,
+                    upstream_head.hash,
+                    upstream_head.parent_hash,
+                    upstream_head.timestamp,
+                    observed_at,
+                ),
             )
 
-    async def invalidate(self, expected: Basis, reason: str):
-        """Fail closed on a proven contradiction; never discard collection evidence here."""
+    async def invalidate(self, expected_basis: Basis, reason: str):
+        """Block a contradicted generation without discarding its evidence."""
         self._require_active()
+
         if not reason or len(reason) > 1000:
             raise ValueError("Invalidation requires a bounded actionable reason.")
 
         async with self._connection.transaction():
-            await _check_basis(self._connection, self._journal.settings, expected)
+            await _check_basis(self._connection, self._journal.settings, expected_basis)
+
             await self._connection.execute(
-                "UPDATE conix.source_progress SET generation=%s, blocked_reason=%s, revision=revision+1 WHERE id=1",
-                (uuid4(), reason),
+                query="UPDATE conix.source_progress SET generation=%s, blocked_reason=%s, revision=revision+1 WHERE id=1",
+                params=(uuid4(), reason),
             )
 
-    async def repair_to(self, expected: Basis, target: Block | None, chain):
-        """Sole repair mutation: validate canonical source, then atomically rewind."""
+    async def repair_to(self, expected_basis: Basis, repair_target: Block | None, chain):
+        """Validate the proposed ancestor, then atomically rewind and rotate generation."""
         self._require_active()
         settings = self._journal.settings
-        # The operator/controller proposes an ancestor; the core establishes
-        # canonicality itself, outside SQL transactions but under writer lock.
+
+        # The writer retains exclusive ownership while RPC checks run outside
+        # the transaction. The caller's proposed ancestor is not authority.
         await chain.assert_source()
-        if target is not None and not await chain.canonical(target):
+
+        if repair_target is not None and not await chain.canonical(repair_target):
             raise BranchConflict("The repair target is no longer canonical; choose a verified ancestor.")
 
         async with self._connection.transaction():
-            current = await _check_basis(self._connection, settings, expected)
-            if target is not None:
-                if current.checkpoint is None or not settings.start_block <= target.number <= current.checkpoint.number:
+            current_basis = await _check_basis(self._connection, settings, expected_basis)
+
+            if repair_target is not None:
+                if current_basis.checkpoint is None or not settings.start_block <= repair_target.number <= current_basis.checkpoint.number:
                     raise StateChanged("Repair target is outside retained completed history.")
 
-                row = await (await self._connection.execute(
-                    "SELECT * FROM conix.blocks WHERE number=%s", (target.number,)
+                stored_target_row = await (await self._connection.execute(
+                    query="SELECT * FROM conix.blocks WHERE number=%s",
+                    params=(repair_target.number,),
                 )).fetchone()
-                if row is None or _block(row) != target:
+
+                if stored_target_row is None or _block(stored_target_row) != repair_target:
                     raise StateChanged("Repair target differs from stored block identity.")
 
-                await self._connection.execute("DELETE FROM conix.blocks WHERE number > %s", (target.number,))
-                # Cascading suffix deletion also drops its collection rows;
-                # recompute the dense prefix count before rotating generation.
-                count = int((await (await self._connection.execute(
-                    "SELECT COUNT(*) AS n FROM conix.collections"
-                )).fetchone())["n"])
-                height, block_hash = target.number, target.hash
+                await self._connection.execute(
+                    query="DELETE FROM conix.blocks WHERE number > %s",
+                    params=(repair_target.number,),
+                )
+
+                # Cascading suffix deletion removes collection rows too. Count
+                # the surviving prefix before committing the new generation.
+                remaining_count_row = await (await self._connection.execute(
+                    query="SELECT COUNT(*) AS n FROM conix.collections",
+                )).fetchone()
+
+                remaining_collection_count = int(remaining_count_row["n"])
+                completed_height = repair_target.number
+                completed_hash = repair_target.hash
             else:
                 await self._connection.execute("DELETE FROM conix.blocks")
-                count, height, block_hash = 0, None, None
+                remaining_collection_count = 0
+                completed_height = None
+                completed_hash = None
 
             await self._connection.execute(
-                "UPDATE conix.source_progress SET generation=%s, revision=revision+1, "
-                "completed_height=%s, completed_hash=%s, collection_count=%s, blocked_reason=NULL, "
-                "head_height=NULL,head_hash=NULL,head_parent_hash=NULL,head_timestamp=NULL,head_observed_at=NULL "
-                "WHERE id=1",
-                (uuid4(), height, block_hash, count),
+                query="UPDATE conix.source_progress SET generation=%s, revision=revision+1, "
+                      "completed_height=%s, completed_hash=%s, collection_count=%s, blocked_reason=NULL, "
+                      "head_height=NULL,head_hash=NULL,head_parent_hash=NULL,head_timestamp=NULL,head_observed_at=NULL "
+                      "WHERE id=1",
+                params=(uuid4(), completed_height, completed_hash, remaining_collection_count),
             )
