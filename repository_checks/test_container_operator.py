@@ -127,6 +127,19 @@ class LocalDockerOperatorTests(unittest.TestCase):
                     self.assertNotEqual(completed.returncode, 0,
                         "Unknown Docker command was silently accepted by the fake.")
 
+    def test_staging_diagnostics_admit_fixed_causes_but_not_secrets(self):
+        admitted = operator._staging_failure(
+            b"Conix input staging failed (InputError): Staged inputs were truncated or have trailing bytes.\n"
+        )
+        self.assertIn("truncated", admitted)
+        self.assertIsNone(operator._staging_failure(
+            b"Conix input staging failed (InputError): password=0x"
+            + b"ab" * 32 + b"\n"
+        ))
+        self.assertIsNone(operator._staging_failure(
+            b"database password in upstream stderr only\n"
+        ))
+
     def test_endpoint_only_accepts_local_unix_socket(self):
         for value in ("unix:///run/docker.sock", "unix:///tmp/other.sock"):
             self.assertTrue(operator.local_socket(value))
