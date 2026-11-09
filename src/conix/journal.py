@@ -26,6 +26,7 @@ ABI_PROFILE = "PayToPlay/2|asset()|viewPosition(address,uint256,address)|Voucher
 
 
 def source_digest(settings: Settings) -> bytes:
+    """Bind retained history to chain, contract, origin and ABI—not RPC URL."""
     document = {
         "chain_id": settings.deployment.chain_id,
         "contract": settings.deployment.address.lower(),
@@ -36,12 +37,15 @@ def source_digest(settings: Settings) -> bytes:
 
 
 def advisory_key(settings: Settings) -> int:
-    # Lock same source within one PostgreSQL database, independently of schema version.
+    """Identify the one session lock shared by schema work and the writer."""
+    # The lock is scoped by source identity, not by a process's config path.
     return int.from_bytes(source_digest(settings)[:8], "big", signed=True)
 
 
 @dataclass(frozen=True, slots=True)
 class Basis:
+    """Generation invalidates handles; revision fences even A-to-B-to-A writes."""
+
     generation: UUID
     revision: int
     checkpoint: Block | None
@@ -56,6 +60,7 @@ def _block(row) -> Block:
 
 
 async def _state(connection: AsyncConnection, settings: Settings) -> Basis:
+    """Read progress and reject a mismatched or structurally incomplete source."""
     row = await (await connection.execute("SELECT * FROM conix.source_progress WHERE id = 1")).fetchone()
     if row is None:
         raise ConfigurationError("conix schema is not initialized. Run conix init.")
@@ -91,6 +96,7 @@ async def _state(connection: AsyncConnection, settings: Settings) -> Basis:
 
 
 async def _check_basis(connection: AsyncConnection, settings: Settings, expected: Basis) -> Basis:
+    """Discard prepared work when any committed publication basis has moved."""
     current = await _state(connection, settings)
     if (current.generation, current.revision, current.checkpoint, current.collection_count) != (
         expected.generation, expected.revision, expected.checkpoint, expected.collection_count
@@ -122,20 +128,21 @@ class Journal:
 
     @asynccontextmanager
     async def _connection(self):
+        """Open only the selected restricted login with server-side time limits."""
         async with await AsyncConnection.connect(
             self._dsn, autocommit=True, row_factory=dict_row,
             connect_timeout=10,
         ) as connection:
-            # PostgreSQL enforces these deadlines independently of Python
-            # cancellation or an unreachable database/client connection.
-            milliseconds = max(1, int(self.settings.operation_timeout_seconds * 1000))
+            # The server enforces time limits even if Python cancellation or
+            # transport loss makes client-side timeouts ineffective.
+            timeout_ms = max(1, int(self.settings.operation_timeout_seconds * 1000))
             await connection.execute(
                 "SELECT set_config('statement_timeout', %s, false)",
-                (f"{milliseconds}ms",),
+                (f"{timeout_ms}ms",),
             )
             await connection.execute(
                 "SELECT set_config('lock_timeout', %s, false)",
-                (f"{min(milliseconds, 5000)}ms",),
+                (f"{min(timeout_ms, 5000)}ms",),
             )
             role = await (await connection.execute(
                 "SELECT r.rolname, r.rolsuper, r.rolcreatedb, r.rolcreaterole, "
@@ -162,6 +169,7 @@ class Journal:
 
     @asynccontextmanager
     async def _snapshot(self):
+        """Keep each SQL read internally consistent without holding locks over RPC."""
         async with self._connection() as connection:
             async with connection.transaction():
                 await connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -175,21 +183,20 @@ class Journal:
             row = await (await connection.execute("SELECT pg_try_advisory_lock(%s) AS acquired", (key,))).fetchone()
             if not row["acquired"]:
                 raise WriterBusy("Another conix writer or repair operation owns this source.")
+            # Closing this dedicated connection releases the advisory lock.
+            # A separate unlock query could mask an unanswered COMMIT error.
             writer = Writer(self, connection)
             try:
                 yield writer
             finally:
                 writer._active = False
-                # Closing this dedicated PostgreSQL session releases its
-                # advisory lock. Do not issue another SQL command here: an
-                # unlock error after an unanswered COMMIT could hide the
-                # original publication failure. _connection owns the close.
 
     async def basis(self) -> Basis:
         async with self._snapshot() as connection:
             return await _state(connection, self.settings)
 
     async def ensure_checkpoint(self, checkpoint: Checkpoint) -> Basis:
+        """Reject a checkpoint from another source, generation or prefix."""
         if checkpoint.deployment != self.settings.deployment:
             raise HistoryUnavailable("Checkpoint names another source.")
         async with self._snapshot() as connection:
@@ -203,6 +210,8 @@ class Journal:
             )).fetchone()
             if row is None or _block(row) != checkpoint.block:
                 raise HistoryUnavailable("Checkpoint block was replaced or is not retained.")
+            # The exact event count makes a retained block into a complete
+            # prefix, not merely a matching block height and hash.
             count = await (await connection.execute(
                 "SELECT COUNT(*) AS n FROM conix.collections WHERE block_number <= %s",
                 (checkpoint.block.number,),
@@ -212,6 +221,7 @@ class Journal:
             return state
 
     async def page(self, checkpoint: Checkpoint, cursor: CollectionCursor | None, limit: int) -> CollectionPage:
+        """Page a dense generation-local sequence from one complete SQL snapshot."""
         if type(limit) is not int or not 1 <= limit <= self.settings.max_page_size:
             raise ValueError("Collection page limit exceeds the configured bound.")
         if type(checkpoint) is not Checkpoint or checkpoint.deployment != self.settings.deployment:
@@ -244,6 +254,7 @@ class Journal:
                 "ORDER BY sequence LIMIT %s",
                 (offset, checkpoint.collection_count, limit),
             )).fetchall()
+            # A missing offset is corruption, not a permissible pagination gap.
             next_offset = offset + len(rows)
             if [int(row["sequence"]) for row in rows] != list(range(offset, next_offset)):
                 raise CorruptStore("Collection history has a missing or duplicate sequence.")
@@ -296,7 +307,7 @@ class Journal:
             return tuple(blocks[number] for number in numbers)
 
     async def stored_headers(self, first: int, last: int) -> tuple[Block, ...]:
-        """Retrieve exact retained canonical ancestry, without upstream RPC."""
+        """Read a connected retained prefix for deliberate repair inspection."""
         if type(first) is not int or type(last) is not int or first > last:
             raise ValueError("Header range must have ordered integer bounds.")
         if last - first + 1 > self.settings.max_evidence_blocks:
@@ -334,6 +345,7 @@ class Writer:
         return await _state(self._connection, self._journal.settings)
 
     async def note_head(self, expected: Basis, head: Block, now: datetime):
+        """Record an idle upstream observation without advancing completed history."""
         self._require_active()
         async with self._connection.transaction():
             await _check_basis(self._connection, self._journal.settings, expected)
@@ -361,6 +373,8 @@ class Writer:
                 raise ValueError("Duplicate block-global log index in one block.")
             if tuple(sorted(collections, key=lambda e: (e.transaction_index, e.log_index))) != collections:
                 raise ValueError("Collection event order must follow transaction/log order.")
+            # Validate the entire block before any insert. The transaction
+            # commits header, events, cursor and progress together or not at all.
             for event in collections:
                 if (event.block_number, event.block_hash, event.block_timestamp) != (block.number, block.hash, block.timestamp):
                     raise ValueError("Collection event disagrees with its containing block.")
@@ -370,7 +384,9 @@ class Writer:
                 "INSERT INTO conix.blocks(number,hash,parent_hash,timestamp) VALUES (%s,%s,%s,%s)",
                 (block.number, block.hash, block.parent_hash, block.timestamp),
             )
-            for index, event in enumerate(collections):
+            # Offsets are derived from committed count, never an independent
+            # PostgreSQL sequence that could skip values on rollback.
+            for (index, event) in enumerate(collections):
                 await self._connection.execute(
                     "INSERT INTO conix.collections "
                     "(sequence,block_number,block_hash,block_timestamp,transaction_hash,transaction_index,log_index,"
@@ -405,8 +421,8 @@ class Writer:
         """Sole repair mutation: validate canonical source, then atomically rewind."""
         self._require_active()
         settings = self._journal.settings
-        # The controller may propose a target; it cannot certify one. RPC is
-        # outside the SQL transaction, but checked under exclusive ownership.
+        # The operator/controller proposes an ancestor; the core establishes
+        # canonicality itself, outside SQL transactions but under writer lock.
         await chain.assert_source()
         if target is not None and not await chain.canonical(target):
             raise BranchConflict("The repair target is no longer canonical; choose a verified ancestor.")
@@ -421,6 +437,8 @@ class Writer:
                 if row is None or _block(row) != target:
                     raise StateChanged("Repair target differs from stored block identity.")
                 await self._connection.execute("DELETE FROM conix.blocks WHERE number > %s", (target.number,))
+                # Cascading suffix deletion also drops its collection rows;
+                # recompute the dense prefix count before rotating generation.
                 count = int((await (await self._connection.execute(
                     "SELECT COUNT(*) AS n FROM conix.collections"
                 )).fetchone())["n"])
