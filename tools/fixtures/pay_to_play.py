@@ -509,7 +509,7 @@ class PayToPlayTest:
 
 
 class Campaign:
-    """Own producer fixture creation and retirement around the same test."""
+    """Own a new dapp32 fixture and its Conix consumer until both are retired."""
 
     def __init__(self, docker, context, sibling, runner_image, scratch):
         self.docker = docker
@@ -523,42 +523,43 @@ class Campaign:
         self.creation_attempted = False
         self.consumer_test = None
 
-    def _file(self, name):
-        return self.scratch_dir / name
+    def _file(self, receipt_filename):
+        return self.scratch_dir / receipt_filename
 
     def _dapp32(self, action):
         if action not in ("up", "info", "down"):
             raise CampaignError("Unknown producer fixture lifecycle action.")
 
         return owned_command(
-            ["make", "--silent", "--no-print-directory", "-C", str(self.sibling_checkout_path),
-             "pay-to-play/local/fixture/" + action,
-             "DOCKER_CONTEXT=" + self.context_name,
-             "FIXTURE_ID=" + self.fixture_id],
+            [
+                "make", "--silent", "--no-print-directory", "-C", str(self.sibling_checkout_path),
+                "pay-to-play/local/fixture/" + action,
+                "DOCKER_CONTEXT=" + self.context_name,
+                "FIXTURE_ID=" + self.fixture_id,
+            ],
             output=self._file("producer-" + action + ".out"),
             error_file=self._file("producer-" + action + ".err"),
             env={**_clean_env(), "DOCKER_CONFIG": str(self.docker.config_dir)},
             timeout=480 if action == "up" else 150,
-            label=("dapp32 fixture/up (includes build)" if action == "up"
-                   else f"dapp32 fixture/{action}"),
+            label="dapp32 fixture/up (includes build)" if action == "up" else f"dapp32 fixture/{action}",
         )
 
     def acquire(self):
-        """Create and independently verify a new producer fixture."""
-        # An attempted creation is not authority to remove it; ownership is
-        # established only after the produced descriptor is checked.
+        """Require independent evidence of creation before assuming cleanup rights."""
+        # An attempted creation alone does not authorize deleting a producer.
         self.creation_attempted = True
-        created_receipt = self._dapp32("up")
-        descriptor = decode(created_receipt, fixture_id=self.fixture_id)
+        creation_receipt = self._dapp32("up")
+        created_descriptor = decode(creation_receipt, fixture_id=self.fixture_id)
 
         _progress("dapp32 fixture: verifying Anvil network and deployment")
-        verify_network(self.docker, descriptor)
+        verify_network(self.docker, created_descriptor)
 
-        inspected = decode(self._dapp32("info"), fixture_id=self.fixture_id)
-        if inspected != descriptor:
+        inspected_descriptor = decode(self._dapp32("info"), fixture_id=self.fixture_id)
+
+        if inspected_descriptor != created_descriptor:
             raise CampaignError("Producer fixture changed between creation and independent inspection.")
 
-        self.fixture_descriptor = descriptor
+        self.fixture_descriptor = created_descriptor
         self.producer_owned = True
 
     def execute(self):
@@ -567,31 +568,34 @@ class Campaign:
         self.consumer_test.execute()
 
     def cleanup(self):
-        """Retire consumers before the producer; report uncertain ownership."""
-        errors = self.consumer_test.cleanup() if self.consumer_test is not None else []
-        consumers_retired = self.consumer_test is None or (self.consumer_test.sql_retired and self.consumer_test.consumer_retired)
+        """Retire consumers first; preserve precise uncertainty about ownership."""
+        cleanup_failures = self.consumer_test.cleanup() if self.consumer_test is not None else []
+        consumers_retired = self.consumer_test is None or (
+            self.consumer_test.sql_retired and self.consumer_test.consumer_retired
+        )
 
         if self.producer_owned and consumers_retired:
             try:
                 self._dapp32("down")
                 self.producer_owned = False
             except Exception as error:
-                detail = str(error) if isinstance(error, CampaignError) else type(error).__name__
-                errors.append(f"dapp32 producer fixture/down failed: {detail}; ownership unconfirmed.")
+                safe_failure_detail = str(error) if isinstance(error, CampaignError) else type(error).__name__
+                cleanup_failures.append(f"dapp32 producer fixture/down failed: {safe_failure_detail}; ownership unconfirmed.")
 
         if self.producer_owned or (self.creation_attempted and self.fixture_descriptor is None):
-            errors.append(
+            cleanup_failures.append(
                 "Inspect the original dapp32 fixture ID on the selected Engine; "
                 "creation/retirement ownership cannot be inferred from its name."
             )
 
-        return errors
+        return cleanup_failures
 
     def recovery(self):
-        """Give exact operator coordinates without reproducing private JSON."""
-        sql = self.consumer_test.sql_project if self.consumer_test is not None else "none"
+        """Name exact resources without reproducing the private fixture descriptor."""
+        consumer_project = self.consumer_test.sql_project if self.consumer_test is not None else "none"
+
         return (
-            f"Producer fixture ID={self.fixture_id}; Conix project={sql}; "
+            f"Producer fixture ID={self.fixture_id}; Conix project={consumer_project}; "
             f"Docker context={self.context_name}; selected Engine={self.docker.endpoint}. "
             f"Inspect: make -C {self.sibling_checkout_path} pay-to-play/local/fixture/info "
             f"DOCKER_CONTEXT={self.context_name} FIXTURE_ID={self.fixture_id}. "
@@ -605,7 +609,7 @@ def _signal_interruption(_signum, _frame):
 
 
 def main():
-    """Keep the primary failure last, after cleanup and recovery evidence."""
+    """Show cleanup status before the original failure, never raw private output."""
     signal.signal(signal.SIGTERM, _signal_interruption)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--from-make", action="store_true")
@@ -615,87 +619,103 @@ def main():
     parser.add_argument("--dapp32-dir")
     parser.add_argument("--runner-image")
     parser.add_argument("--fixture-descriptor")
-    args = parser.parse_args()
+    options = parser.parse_args()
 
     try:
-        if args.from_make:
-            args.context = os.environ.get("CONIX_MAKE_DOCKER_CONTEXT", "")
-            args.dapp32_dir = os.environ.get("CONIX_MAKE_DAPP32_DIR", "")
-            args.runner_image = os.environ.get("CONIX_MAKE_RUNNER_IMAGE", "")
-            args.fixture_descriptor = os.environ.get("CONIX_MAKE_FIXTURE_DESCRIPTOR", "")
+        if options.from_make:
+            options.context = os.environ.get("CONIX_MAKE_DOCKER_CONTEXT", "")
+            options.dapp32_dir = os.environ.get("CONIX_MAKE_DAPP32_DIR", "")
+            options.runner_image = os.environ.get("CONIX_MAKE_RUNNER_IMAGE", "")
+            options.fixture_descriptor = os.environ.get("CONIX_MAKE_FIXTURE_DESCRIPTOR", "")
 
-        if not IMAGE_ID.fullmatch(args.runner_image or ""):
+        if not IMAGE_ID.fullmatch(options.runner_image or ""):
             raise CampaignError("Select a prebuilt immutable RUNNER_IMAGE=sha256:<id> with role evm-test-runner.")
 
-        owned = args.action == "campaign/pay-to-play/run"
-        if owned:
-            sibling = sibling_checkout(args.dapp32_dir)
-            if args.origin != "command line" or not args.context:
+        owns_producer = options.action == "campaign/pay-to-play/run"
+
+        if owns_producer:
+            sibling_checkout_path = sibling_checkout(options.dapp32_dir)
+
+            if options.origin != "command line" or not options.context:
                 raise CampaignError("The dapp32 campaign requires an explicit DOCKER_CONTEXT=<local-name>.")
         else:
-            # Admission precedes ALL Docker access; no sibling checkout is used.
-            borrowed = read_borrowed_descriptor(args.fixture_descriptor)
+            # Borrowed descriptors are admitted before any Docker authority.
+            borrowed_descriptor = read_borrowed_descriptor(options.fixture_descriptor)
 
-        endpoint = select_endpoint(args.context, args.origin)
+        docker_endpoint = select_endpoint(options.context, options.origin)
+
         with tempfile.TemporaryDirectory(prefix="conix-test-client-") as directory:
-            config = Path(directory)
-            (config / "config.json").write_text('{"auths":{},"proxies":{}}\n', encoding="utf-8")
-            docker = Docker(endpoint, config)
+            client_config_directory = Path(directory)
+            (client_config_directory / "config.json").write_text('{"auths":{},"proxies":{}}\n', encoding="utf-8")
+            docker = Docker(docker_endpoint, client_config_directory)
             docker.require_rootless_engine()
-            docker.require_role(args.runner_image, "evm-test-runner")
+            docker.require_role(options.runner_image, "evm-test-runner")
 
-            if owned:
-                pin_sibling_context(docker, args.context)
+            if owns_producer:
+                pin_sibling_context(docker, options.context)
 
-            scratch = Path(tempfile.mkdtemp(prefix="conix-pay-to-play-", dir="/tmp"))
-            os.chmod(scratch, 0o700)
-            operation = (
-                Campaign(docker, args.context, sibling, args.runner_image, scratch) if owned
-                else PayToPlayTest(docker, args.runner_image, scratch, borrowed)
+            receipt_directory = Path(tempfile.mkdtemp(prefix="conix-pay-to-play-", dir="/tmp"))
+            os.chmod(receipt_directory, 0o700)
+
+            campaign_operation = (
+                Campaign(docker, options.context, sibling_checkout_path, options.runner_image, receipt_directory)
+                if owns_producer
+                else PayToPlayTest(docker, options.runner_image, receipt_directory, borrowed_descriptor)
             )
-            failure = None
+
+            primary_failure = None
 
             try:
-                operation.execute()
+                campaign_operation.execute()
             except BaseException as error:
-                failure = error
+                primary_failure = error
 
             try:
-                cleanup = operation.cleanup()
+                cleanup_failures = campaign_operation.cleanup()
             except BaseException as error:
-                # Even a cleanup implementation error cannot hide the first
-                # test failure or imply that upstream resources were retired.
-                cleanup = [f"Cleanup operation raised {type(error).__name__}; owned resources require inspection."]
-                if failure is None:
-                    failure = error
+                # An exceptional cleanup never erases the original failure or
+                # authorizes retiring a resource whose ownership is uncertain.
+                cleanup_failures = [
+                    f"Cleanup operation raised {type(error).__name__}; owned resources require inspection."
+                ]
 
-            if failure is None and not cleanup:
-                shutil.rmtree(scratch)
-                print("PASS: PayToPlay collections, durable Conix indexing, "
-                      "separate-session restart and checked manual reorganization repair.")
+                if primary_failure is None:
+                    primary_failure = error
+
+            if primary_failure is None and not cleanup_failures:
+                shutil.rmtree(receipt_directory)
+                print(
+                    "PASS: PayToPlay collections, durable Conix indexing, "
+                    "separate-session restart and checked manual reorganization repair."
+                )
                 return
 
-            # Report recovery and cleanup first; end on the original failure.
-            print(f"Private phase receipts: {scratch}", file=sys.stderr)
-            print(f"Recovery: {operation.recovery()}", file=sys.stderr)
+            # Retain private receipts for operator inspection, then report
+            # cleanup and recovery before the primary failure LAST.
+            print(f"Private phase receipts: {receipt_directory}", file=sys.stderr)
+            print(f"Recovery: {campaign_operation.recovery()}", file=sys.stderr)
 
-            if cleanup:
-                for message in cleanup:
-                    print(f"Cleanup unconfirmed: {message}", file=sys.stderr)
+            if cleanup_failures:
+                for cleanup_failure in cleanup_failures:
+                    print(f"Cleanup unconfirmed: {cleanup_failure}", file=sys.stderr)
             else:
                 print("Cleanup: confirmed for owned resources.", file=sys.stderr)
 
-            if failure is not None:
-                if isinstance(failure, KeyboardInterrupt):
-                    detail = "Interrupted; inspect exact resource ownership."
-                elif isinstance(failure, (CampaignError, FixtureError, OperationError)):
-                    detail = f"{type(failure).__name__}: {failure}"
+            if primary_failure is not None:
+                if isinstance(primary_failure, KeyboardInterrupt):
+                    failure_detail = "Interrupted; inspect exact resource ownership."
+                elif isinstance(primary_failure, (CampaignError, FixtureError, OperationError)):
+                    failure_detail = f"{type(primary_failure).__name__}: {primary_failure}"
                 else:
-                    detail = f"{type(failure).__name__}: unexpected failure; inspect private receipts."
-                if cleanup:
-                    detail += " Cleanup is ALSO unconfirmed."
+                    failure_detail = (
+                        f"{type(primary_failure).__name__}: unexpected failure; inspect private receipts."
+                    )
 
-                raise CampaignError(f"PayToPlay campaign failed: {detail}") from failure
+                if cleanup_failures:
+                    failure_detail += " Cleanup is ALSO unconfirmed."
+
+                raise CampaignError(f"PayToPlay campaign failed: {failure_detail}") from primary_failure
+
             raise CampaignError("PayToPlay campaign completed but cleanup could not be confirmed.")
     except (CampaignError, FixtureError, OperationError, OSError, ValueError) as error:
         raise SystemExit(f"Conix PayToPlay test refused or failed: {error}") from None
