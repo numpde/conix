@@ -607,12 +607,12 @@ class Docker:
         print("Conix schema installed/verified through a separate owner-only session.")
 
     def deployment(self, *, operation, name, image, volume, database, rpc):
-        """Render/admit one instance, then use that exact project on this Engine."""
-        for (label, value) in (
+        """Admit the rendered deployment before using the selected Docker Engine."""
+        for (name_kind, selected_name) in (
             ("deployment", name), ("database network", database), ("RPC network", rpc),
         ):
-            if type(value) is not str or not CONTEXT_NAME.fullmatch(value):
-                raise OperationError(f"Select one valid {label} name without paths or control characters.")
+            if type(selected_name) is not str or not CONTEXT_NAME.fullmatch(selected_name):
+                raise OperationError(f"Select one valid {name_kind} name without paths or control characters.")
 
         if database == rpc:
             raise OperationError("Source RPC and database networks must be separately selected.")
@@ -620,113 +620,119 @@ class Docker:
         if not IMAGE_ID.fullmatch(image or ""):
             raise OperationError("Deployment requires immutable INDEXER_IMAGE=sha256:<id>.")
 
-        # Resource existence is a start precondition, not a stop/status
-        # precondition. Teardown must work after image, volume, network or
-        # source files have disappeared from this Engine.
+        # Apply needs live dependencies; status and removal must still work
+        # after resources have disappeared from the selected Engine.
         if operation == "apply":
             self.require_rootless_engine()
             self.require_role(image, "indexer")
 
-        # An input volume's identity and ownership label must agree before a
-        # command can reuse it. The label is not a credential or permission.
         if not re.fullmatch(r"conix-inputs-[a-f0-9]{24}", volume or ""):
             raise OperationError("Runtime requires a staged conix-inputs-<token> volume.")
 
         if operation == "apply":
-            rows = json.loads(self.run("volume", "inspect", volume, timeout=10, capture=True))
-            if (len(rows) != 1
-                or rows[0].get("Labels", {}).get("io.conix.input-token")
-                    != volume.removeprefix("conix-inputs-")):
+            input_volume_records = json.loads(self.run("volume", "inspect", volume, timeout=10, capture=True))
+
+            if (
+                len(input_volume_records) != 1
+                or input_volume_records[0].get("Labels", {}).get("io.conix.input-token")
+                != volume.removeprefix("conix-inputs-")
+            ):
                 raise OperationError("Selected input volume does not match its stage label.")
 
-            for selected in (database, rpc):
-                actual = self.run(
-                    "network", "inspect", "--format", "{{.Name}}", selected,
+            for network_name in (database, rpc):
+                observed_network_name = self.run(
+                    "network", "inspect", "--format", "{{.Name}}", network_name,
                     timeout=10, capture=True,
                 ).strip()
-                if actual != selected:
-                    raise OperationError(f"Selected network {selected!r} was not found on this Engine.")
 
-        project = "conix-" + name
-        compose = [
+                if observed_network_name != network_name:
+                    raise OperationError(f"Selected network {network_name!r} was not found on this Engine.")
+
+        compose_project = "conix-" + name
+        compose_argv = [
             "compose", "--env-file", "/dev/null", "--project-directory", str(ROOT),
-            "-p", project, "-f", str(ROOT / "compose/runtime.yml"),
+            "-p", compose_project, "-f", str(ROOT / "compose/runtime.yml"),
         ]
-        env = self.docker_environment.copy()
-        env.update(
+        compose_environment = self.docker_environment.copy()
+        compose_environment.update(
             CONIX_INDEXER_IMAGE=image,
             CONIX_INPUT_VOLUME=volume,
             CONIX_DATABASE_NETWORK=database,
             CONIX_RPC_NETWORK=rpc,
         )
+
         try:
-            rendered = json.loads(self.run(
-                *compose, "config", "--format", "json", env=env,
-                timeout=20, capture=True,
+            rendered_configuration = json.loads(self.run(
+                *compose_argv, "config", "--format", "json",
+                env=compose_environment, timeout=20, capture=True,
             ))
-            services = rendered["services"]
-            service = services["indexer"]
-            volumes = service.get("volumes", [])
-            networks = rendered["networks"]
+            rendered_services = rendered_configuration["services"]
+            indexer_service = rendered_services["indexer"]
+            input_mounts = indexer_service.get("volumes", [])
+            rendered_networks = rendered_configuration["networks"]
+
             if (
-                set(services) != {"indexer"}
-                or service.get("image") != image
-                or service.get("pull_policy") != "never"
-                or service.get("user") != "65532:65532"
-                or service.get("read_only") is not True
-                or service.get("privileged", False)
-                or service.get("ports") or service.get("network_mode")
-                or set(service.get("cap_drop", [])) != {"ALL"}
-                or service.get("cap_add")
-                or set(service.get("security_opt", [])) != {"no-new-privileges:true"}
-                or set(service.get("networks", [])) != {"database", "rpc"}
-                or service.get("devices") or service.get("device_cgroup_rules")
-                or service.get("pid") or service.get("ipc") or service.get("uts")
-                or len(volumes) != 1
-                or volumes[0].get("type") != "volume"
-                or volumes[0].get("source") not in ("inputs", volume)
-                or volumes[0].get("target") != "/run/conix"
-                or volumes[0].get("read_only") is not True
-                or len(networks) != 2
-                or networks["database"]["name"] != database
-                or networks["rpc"]["name"] != rpc
+                set(rendered_services) != {"indexer"}
+                or indexer_service.get("image") != image
+                or indexer_service.get("pull_policy") != "never"
+                or indexer_service.get("user") != "65532:65532"
+                or indexer_service.get("read_only") is not True
+                or indexer_service.get("privileged", False)
+                or indexer_service.get("ports") or indexer_service.get("network_mode")
+                or set(indexer_service.get("cap_drop", [])) != {"ALL"}
+                or indexer_service.get("cap_add")
+                or set(indexer_service.get("security_opt", [])) != {"no-new-privileges:true"}
+                or set(indexer_service.get("networks", [])) != {"database", "rpc"}
+                or indexer_service.get("devices") or indexer_service.get("device_cgroup_rules")
+                or indexer_service.get("pid") or indexer_service.get("ipc") or indexer_service.get("uts")
+                or len(input_mounts) != 1
+                or input_mounts[0].get("type") != "volume"
+                or input_mounts[0].get("source") not in ("inputs", volume)
+                or input_mounts[0].get("target") != "/run/conix"
+                or input_mounts[0].get("read_only") is not True
+                or len(rendered_networks) != 2
+                or rendered_networks["database"]["name"] != database
+                or rendered_networks["rpc"]["name"] != rpc
             ):
                 raise OperationError("Rendered runtime deployment violates image, input or confinement policy.")
         except (ValueError, KeyError, IndexError, TypeError) as error:
             raise OperationError("Cannot validate the selected runtime deployment configuration.") from error
 
         if operation == "config/check":
-            print(f"Verified constrained runtime Compose graph for {project} on selected Engine.")
+            print(f"Verified constrained runtime Compose graph for {compose_project} on selected Engine.")
             return
 
         if operation == "status":
-            self.run(*compose, "ps", "--all", env=env, timeout=20)
+            self.run(*compose_argv, "ps", "--all", env=compose_environment, timeout=20)
             return
 
         if operation == "remove":
-            self.run(*compose, "stop", "--timeout", "90", "indexer", env=env, timeout=105)
-            self.run(*compose, "down", "--remove-orphans", env=env, timeout=60)
-            print(f"Removed conix deployment project {project}; external inputs and networks were retained.")
+            self.run(*compose_argv, "stop", "--timeout", "90", "indexer", env=compose_environment, timeout=105)
+            self.run(*compose_argv, "down", "--remove-orphans", env=compose_environment, timeout=60)
+            print(f"Removed conix deployment project {compose_project}; external inputs and networks were retained.")
             return
 
         if operation != "apply":
             raise OperationError("Deployment operation must be apply, remove, status or config/check.")
 
         self.verify_inputs(image, volume)
-        self.run(*compose, "stop", "--timeout", "90", "indexer", env=env, timeout=105)
+        self.run(*compose_argv, "stop", "--timeout", "90", "indexer", env=compose_environment, timeout=105)
+
         try:
-            self.run(*compose, "up", "--detach", "--no-build", "--pull",
-                     "never", "--wait", "--wait-timeout", "30",
-                     "indexer", env=env, timeout=60)
+            self.run(
+                *compose_argv, "up", "--detach", "--no-build", "--pull", "never",
+                "--wait", "--wait-timeout", "30", "indexer",
+                env=compose_environment, timeout=60,
+            )
         except OperationError as error:
             raise OperationError(
-                f"Conix project {project} did not confirm startup: {error}. "
+                f"Conix project {compose_project} did not confirm startup: {error}. "
                 "Inspect the selected Engine and use deployment/status or "
                 "deployment/remove with the same exact settings; inputs were retained."
             ) from error
 
         print(
-            f"Applied conix project {project}; a running container is not evidence "
+            f"Applied conix project {compose_project}; a running container is not evidence "
             "of chain freshness or payment readiness."
         )
 
