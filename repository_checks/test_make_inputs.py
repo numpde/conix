@@ -51,7 +51,7 @@ class MakeInputSafety(unittest.TestCase):
                 capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(finished.returncode, 0, finished.stderr)
-            self.assertIn("conix container commands", finished.stdout.lower())
+            self.assertIn("conix make api", finished.stdout.lower())
             self.assertFalse(marker.exists(), "Plain make executed an operator-controlled expression.")
 
     def test_operator_values_cross_make_without_evaluation(self):

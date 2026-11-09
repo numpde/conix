@@ -131,7 +131,7 @@ class FixtureRunnerTests(unittest.TestCase):
         runtime = "sha256:" + "a" * 64
         postgres = "sha256:" + "b" * 64
         baseline = graph(runtime, postgres, "test-rpc")
-        runner.admit(baseline, fixture_image=runtime, postgres_image=postgres, rpc_network="test-rpc")
+        runner.admit(baseline, runner_image=runtime, postgres_image=postgres, rpc_network="test-rpc")
         for change in (
             lambda d: d["services"]["consumer"].update({"cap_add": ["SYS_ADMIN"]}),
             lambda d: d["services"]["consumer"]["environment"].update({
@@ -145,7 +145,7 @@ class FixtureRunnerTests(unittest.TestCase):
             candidate = json.loads(json.dumps(baseline))
             change(candidate)
             with self.subTest(candidate=candidate), self.assertRaises(runner.CampaignError):
-                runner.admit(candidate, fixture_image=runtime, postgres_image=postgres, rpc_network="test-rpc")
+                runner.admit(candidate, runner_image=runtime, postgres_image=postgres, rpc_network="test-rpc")
 
     def test_newly_created_fixture_is_rechecked_by_info_and_network(self):
         with tempfile.TemporaryDirectory() as path:
@@ -183,36 +183,40 @@ class FixtureRunnerTests(unittest.TestCase):
 
     def test_project_name_is_not_sufficient_cleanup_ownership(self):
         with tempfile.TemporaryDirectory() as path:
-            campaign = runner.Campaign(
-                FakeDocker(), "science", Path(path), "sha256:" + "a" * 64, Path(path)
+            docker = FakeDocker()
+            borrowed = runner.PayToPlayTest(
+                docker, "sha256:" + "a" * 64, Path(path),
+                descriptor_for("borrowed-1"),
             )
             calls = []
             def occupied(*args, **kwargs):
                 calls.append(args)
                 return "existing-id\n" if args[0] == "volume" else ""
-            with patch.object(campaign.docker, "run", side_effect=occupied):
+            with patch.object(docker, "run", side_effect=occupied):
                 with self.assertRaises(runner.CampaignError):
-                    campaign.check_new_sql_project()
-            self.assertTrue(any(call[0] == "container" for call in calls))
-            self.assertTrue(any(call[0] == "network" for call in calls))
-            self.assertTrue(any(call[0] == "volume" for call in calls))
+                    borrowed.check_new_sql_project()
+            self.assertEqual({call[0] for call in calls}, {"container", "network", "volume"})
             self.assertFalse(any("down" in call for call in calls))
 
     def test_cleanup_order_respects_consumer_retirement(self):
         with tempfile.TemporaryDirectory() as path:
             docker = FakeDocker()
             campaign = runner.Campaign(
-                docker, "science", Path(path), "sha256:" + "a" * 64, Path(path)
+                docker, "agentic", Path(path), "sha256:" + "a" * 64, Path(path),
             )
-            campaign.sql_started = True
-            campaign.sql_retired = False
             campaign.producer_owned = True
             campaign.descriptor = descriptor_for(campaign.fixture_id)
-            campaign.env = {}
+            borrowed = runner.PayToPlayTest(
+                docker, campaign.runner_image, Path(path), campaign.descriptor,
+            )
+            borrowed.sql_started = True
+            borrowed.sql_retired = False
+            borrowed.env = {}
+            campaign.test = borrowed
             down = []
             def producer(action):
                 down.append(action)
-                self.assertTrue(campaign.sql_retired)
+                self.assertTrue(borrowed.sql_retired)
                 return b""
             with patch.object(campaign, "_dapp32", side_effect=producer):
                 self.assertEqual(campaign.cleanup(), [])
@@ -223,19 +227,77 @@ class FixtureRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as path:
             docker = FakeDocker()
             campaign = runner.Campaign(
-                docker, "science", Path(path), "sha256:" + "a" * 64, Path(path)
+                docker, "agentic", Path(path), "sha256:" + "a" * 64, Path(path)
             )
-            campaign.sql_started = True
-            campaign.sql_retired = False
             campaign.producer_owned = True
             campaign.descriptor = descriptor_for(campaign.fixture_id)
-            campaign.env = {}
+            borrowed = runner.PayToPlayTest(
+                docker, campaign.runner_image, Path(path), campaign.descriptor,
+            )
+            borrowed.sql_started = True
+            borrowed.sql_retired = False
+            borrowed.env = {}
+            campaign.test = borrowed
             with patch.object(docker, "run", side_effect=runner.OperationError("uncertain")), patch.object(
                 campaign, "_dapp32"
             ) as producer:
                 failures = campaign.cleanup()
             self.assertTrue(failures)
-            self.assertFalse(campaign.sql_retired)
+            self.assertFalse(borrowed.sql_retired)
+            producer.assert_not_called()
+
+    def test_borrowed_descriptor_is_private_and_does_not_transfer_cleanup_rights(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "fixture.json"
+            descriptor = descriptor_for("borrowed-1")
+            path.write_text(json.dumps(descriptor) + "\n")
+            path.chmod(0o600)
+            self.assertEqual(runner.read_borrowed_descriptor(str(path)), descriptor)
+            path.chmod(0o644)
+            with self.assertRaises(runner.CampaignError):
+                runner.read_borrowed_descriptor(str(path))
+            path.chmod(0o600)
+            link = Path(directory) / "link.json"
+            link.symlink_to(path)
+            with self.assertRaises(runner.CampaignError):
+                runner.read_borrowed_descriptor(str(link))
+            with self.assertRaises(runner.CampaignError):
+                runner.read_borrowed_descriptor("relative.json")
+
+    def test_borrowed_executable_never_calls_dapp32_lifecycle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            docker = FakeDocker()
+            descriptor = descriptor_for("borrowed-1")
+            run = runner.PayToPlayTest(docker, "sha256:" + "a" * 64,
+                                       Path(directory), descriptor)
+            count = {"baseline": 0, "collected": 2, "restart": 2, "reorg": 0}
+            phases = []
+            def phase(_service, name, *, state, need_receipt):
+                phases.append((name, state["phase"] if state else None))
+                return {"phase": name, "collection_count": count[name]}
+            with patch.object(runner, "verify_network") as validate, patch.object(
+                run, "sql"
+            ), patch.object(run, "_phase", side_effect=phase):
+                run.execute()
+            validate.assert_called_once_with(docker, descriptor)
+            self.assertEqual(phases, [
+                ("baseline", None), ("collected", "baseline"),
+                ("restart", "collected"), ("reorg", "restart"),
+            ])
+            with patch.object(docker, "run", side_effect=AssertionError("Should not contact producer")):
+                self.assertEqual(run.cleanup(), [])
+
+    def test_unconfirmed_producer_creation_does_not_grant_cleanup_authority(self):
+        with tempfile.TemporaryDirectory() as directory:
+            campaign = runner.Campaign(
+                FakeDocker(), "agentic", Path(directory),
+                "sha256:" + "a" * 64, Path(directory),
+            )
+            campaign.creation_attempted = True
+            campaign.descriptor = None
+            campaign.producer_owned = False
+            with patch.object(campaign, "_dapp32") as producer:
+                self.assertTrue(campaign.cleanup())
             producer.assert_not_called()
 
     def test_timed_out_owned_process_is_reaped_before_retirement(self):

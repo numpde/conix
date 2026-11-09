@@ -264,7 +264,7 @@ class Docker:
     def stage_inputs(self, image, config_path, dsn_path, *, proof=False, announce=True):
         """Create and own a unique input volume, with no host bind mounts."""
         if not IMAGE_ID.fullmatch(image or ""):
-            raise OperationError("CONIX_IMAGE must select a prepared immutable runtime image.")
+            raise OperationError("INDEXER_IMAGE must select a prebuilt immutable indexer image.")
         self.require_role(image, "indexer")
         config = self.private_bytes(config_path, 64 * 1024, secret=False)
         dsn = self.private_bytes(dsn_path, 8192, secret=True)
@@ -361,7 +361,7 @@ class Docker:
         The normal worker volume is never mounted here or modified.
         """
         if not IMAGE_ID.fullmatch(image or ""):
-            raise OperationError("Owner initialization requires a prepared immutable CONIX_IMAGE=sha256:<id>.")
+            raise OperationError("Owner initialization requires immutable INDEXER_IMAGE=sha256:<id>.")
         if type(database) is not str or not CONTEXT_NAME.fullmatch(database):
             raise OperationError("Choose one existing database network for schema initialization.")
         self.require_rootless_engine()
@@ -416,7 +416,7 @@ class Docker:
         if database == rpc:
             raise OperationError("Source RPC and database networks must be separately selected.")
         if not IMAGE_ID.fullmatch(image or ""):
-            raise OperationError("Runtime requires an immutable CONIX_IMAGE=sha256:<id>.")
+            raise OperationError("Deployment requires immutable INDEXER_IMAGE=sha256:<id>.")
         # Resource existence is a start precondition, not a stop/status
         # precondition. Teardown must work after image, volume, network or
         # source files have disappeared from this Engine.
@@ -499,7 +499,7 @@ class Docker:
             self.run(*compose, "down", "--remove-orphans", env=env, timeout=60)
             print(f"Removed conix deployment project {project}; external inputs and networks were retained.")
             return
-        if operation != "start":
+        if operation != "apply":
             raise OperationError("Deployment operation must be apply, remove, status or config/check.")
         self.verify_inputs(image, volume)
         self.run(*compose, "stop", "--timeout", "90", "indexer", env=env, timeout=105)
@@ -520,7 +520,7 @@ class Docker:
 
     def test(self, image, images):
         if not IMAGE_ID.fullmatch(image):
-            raise OperationError("CONIX_TEST_IMAGE must be an immutable sha256 image ID.")
+            raise OperationError("test/postgres/run requires immutable RUNNER_IMAGE=sha256:<id>.")
         self.require_role(image, "test-runner")
         self.require_image(images["postgres"])
         project = "conix-tier0-" + secrets.token_hex(6)

@@ -286,7 +286,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 return None
 
             with patch.object(docker, "require_rootless_engine"), patch.object(
-                docker, "require_image"
+                docker, "require_role"
             ), patch.object(docker, "stage_inputs", return_value=volume) as stage, patch.object(
                 docker, "remove_inputs"
             ) as cleanup, patch.object(docker, "run", side_effect=call):
@@ -327,7 +327,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 return None
 
             with patch.object(docker, "require_rootless_engine"), patch.object(
-                docker, "require_image"
+                docker, "require_role"
             ), patch.object(docker, "stage_inputs", return_value=volume), patch.object(
                 docker, "remove_inputs"
             ) as cleanup, patch.object(docker, "run", side_effect=call):
