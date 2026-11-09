@@ -75,117 +75,128 @@ _TABLES = {
 
 
 async def initialize(owner_dsn: str, settings: Settings):
-    """Install/verify this source with a dedicated schema-owner connection.
+    """Enroll or verify a source with a distinct, unprivileged schema owner.
 
-    The owner may perform DDL; the runtime role is a distinct, non-owner login.
-    Both owner installation and normal journal writing use the same PostgreSQL
-    session advisory lock, so an active Tier-0 writer prevents schema changes.
+    Owner DDL and the ordinary writer share one PostgreSQL session lock;
+    an active worker prevents installation from changing its storage.
     """
     async with await AsyncConnection.connect(
-        owner_dsn, autocommit=True, row_factory=dict_row, connect_timeout=10
+        conninfo=owner_dsn,
+        autocommit=True,
+        row_factory=dict_row,
+        connect_timeout=10,
     ) as connection:
-        timeout_ms = max(1, int(settings.operation_timeout_seconds * 1000))
-        await connection.execute("SELECT set_config('statement_timeout', %s, false)", (f"{timeout_ms}ms",))
-        await connection.execute("SELECT set_config('lock_timeout', %s, false)", (f"{min(timeout_ms, 5000)}ms",))
-        role = await (await connection.execute(
+        statement_timeout_ms = max(1, int(settings.operation_timeout_seconds * 1000))
+        await connection.execute("SELECT set_config('statement_timeout', %s, false)", (f"{statement_timeout_ms}ms",))
+        await connection.execute("SELECT set_config('lock_timeout', %s, false)", (f"{min(statement_timeout_ms, 5000)}ms",))
+
+        owner_role_row = await (await connection.execute(
             "SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
             "rolreplication, rolbypassrls FROM pg_roles WHERE rolname = current_user"
         )).fetchone()
+
         if (
-            role is None or not role["rolcanlogin"]
-            or any(role[name] for name in (
+            owner_role_row is None or not owner_role_row["rolcanlogin"]
+            or any(owner_role_row[name] for name in (
                 "rolsuper", "rolcreatedb", "rolcreaterole", "rolreplication", "rolbypassrls"
             ))
-            or role["rolname"] == settings.runtime_role
+            or owner_role_row["rolname"] == settings.runtime_role
         ):
-            raise ConfigurationError(
-                "Schema initialization requires a separate non-superuser schema-owner login."
-            )
-        row = await (await connection.execute(
+            raise ConfigurationError("Schema initialization requires a separate non-superuser schema-owner login.")
+
+        schema_owner_row = await (await connection.execute(
             "SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace "
             "WHERE nspname = 'conix'"
         )).fetchone()
-        if row is None or row["owner"] != role["rolname"]:
-            raise ConfigurationError(
-                "The conix schema must already exist and be owned by the selected schema-owner login."
-            )
 
-        runtime = await (await connection.execute(
-            "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
-            "rolreplication, rolbypassrls, "
-            "pg_has_role(%s, current_user, 'member') AS owner_member "
-            "FROM pg_roles WHERE rolname = %s",
-            (settings.runtime_role, settings.runtime_role),
+        if schema_owner_row is None or schema_owner_row["owner"] != owner_role_row["rolname"]:
+            raise ConfigurationError("The conix schema must already exist and be owned by the selected schema-owner login.")
+
+        runtime_role_row = await (await connection.execute(
+            query="SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
+                  "rolreplication, rolbypassrls, "
+                  "pg_has_role(%s, current_user, 'member') AS owner_member "
+                  "FROM pg_roles WHERE rolname = %s",
+            params=(settings.runtime_role, settings.runtime_role),
         )).fetchone()
+
         if (
-            runtime is None or not runtime["rolcanlogin"] or runtime["owner_member"]
-            or any(runtime[name] for name in (
+            runtime_role_row is None or not runtime_role_row["rolcanlogin"] or runtime_role_row["owner_member"]
+            or any(runtime_role_row[name] for name in (
                 "rolsuper", "rolcreatedb", "rolcreaterole", "rolreplication", "rolbypassrls"
             ))
         ):
-            raise ConfigurationError(
-                "The runtime role must be a separate unprivileged login without schema-owner membership."
-            )
-        # One lock excludes schema enrollment from a running writer without
-        # exposing owner credentials to the runtime process.
-        key = advisory_key(settings)
-        locked = await (await connection.execute(
-            "SELECT pg_try_advisory_lock(%s) AS locked", (key,)
+            raise ConfigurationError("The runtime role must be a separate unprivileged login without schema-owner membership.")
+
+        # Schema enrollment must not race with a source's active writer.
+        advisory_lock_key = advisory_key(settings)
+        lock_result = await (await connection.execute(
+            query="SELECT pg_try_advisory_lock(%s) AS locked",
+            params=(advisory_lock_key,),
         )).fetchone()
-        if not locked["locked"]:
+
+        if not lock_result["locked"]:
             raise WriterBusy("Cannot initialize schema while the selected Conix writer is active.")
 
         try:
             async with connection.transaction():
-                for statement in SCHEMA.split(";"):
-                    if statement.strip():
-                        await connection.execute(statement)
-                # Repeated installation verifies rather than re-enrolling or
-                # resetting a source with existing collection history.
+                for ddl_statement in SCHEMA.split(";"):
+                    if ddl_statement.strip():
+                        await connection.execute(ddl_statement)
+
+                # Reinstallation verifies existing identity; it never replaces
+                # a source progress row or resets an existing generation.
                 await connection.execute(
-                    "INSERT INTO conix.source_progress "
-                    "(id, schema_version, source_digest, chain_id, contract_address, "
-                    "start_block, generation, revision, collection_count) "
-                    "VALUES (1, %s, %s, %s, %s, %s, %s, 0, 0) "
-                    "ON CONFLICT (id) DO NOTHING",
-                    (VERSION, source_digest(settings), settings.deployment.chain_id,
-                     bytes.fromhex(settings.deployment.address[2:]),
-                     settings.start_block, uuid4()),
+                    query="INSERT INTO conix.source_progress "
+                          "(id, schema_version, source_digest, chain_id, contract_address, "
+                          "start_block, generation, revision, collection_count) "
+                          "VALUES (1, %s, %s, %s, %s, %s, %s, 0, 0) "
+                          "ON CONFLICT (id) DO NOTHING",
+                    params=(
+                        VERSION,
+                        source_digest(settings),
+                        settings.deployment.chain_id,
+                        bytes.fromhex(settings.deployment.address[2:]),
+                        settings.start_block,
+                        uuid4(),
+                    ),
                 )
-                # Refuse pre-existing tables owned by another role instead of
-                # adopting them, and refuse a mismatched source without a reset.
-                rows = await (await connection.execute(
+
+                table_owner_rows = await (await connection.execute(
                     "SELECT relname, pg_get_userbyid(relowner) AS owner "
                     "FROM pg_class WHERE relnamespace = 'conix'::regnamespace "
                     "AND relkind = 'r'"
                 )).fetchall()
-                found = {record["relname"]: record["owner"] for record in rows}
-                if any(found.get(table) != role["rolname"] for table in _TABLES):
-                    raise ConfigurationError(
-                        "Conix data tables must exist and belong to the selected schema owner."
-                    )
+                table_owners = {row["relname"]: row["owner"] for row in table_owner_rows}
+
+                if any(table_owners.get(table_name) != owner_role_row["rolname"] for table_name in _TABLES):
+                    raise ConfigurationError("Conix data tables must exist and belong to the selected schema owner.")
 
                 await _state(connection, settings)
 
-                # Owner controls all privileges; runtime is deliberately given
-                # no schema CREATE, table TRUNCATE or source-row INSERT/DELETE.
-                target = sql.Identifier(settings.runtime_role)
+                # The runtime login receives only DML grants, never schema
+                # creation, table truncation or source-row deletion.
+                runtime_role_identifier = sql.Identifier(settings.runtime_role)
+
                 await connection.execute(
-                    sql.SQL("REVOKE ALL ON SCHEMA conix FROM PUBLIC, {}").format(target)
+                    query=sql.SQL("REVOKE ALL ON SCHEMA conix FROM PUBLIC, {}").format(runtime_role_identifier),
                 )
                 await connection.execute(
-                    sql.SQL("GRANT USAGE ON SCHEMA conix TO {}").format(target)
+                    query=sql.SQL("GRANT USAGE ON SCHEMA conix TO {}").format(runtime_role_identifier),
                 )
-                for (table, allowed) in _TABLES.items():
-                    name = sql.Identifier("conix", table)
+
+                for (table_name, allowed_privileges) in _TABLES.items():
+                    table_identifier = sql.Identifier("conix", table_name)
+
                     await connection.execute(
-                        sql.SQL("REVOKE ALL ON TABLE {} FROM PUBLIC, {}").format(name, target)
+                        query=sql.SQL("REVOKE ALL ON TABLE {} FROM PUBLIC, {}").format(table_identifier, runtime_role_identifier),
                     )
                     await connection.execute(
-                        sql.SQL("GRANT " + allowed + " ON TABLE {} TO {}").format(name, target)
+                        query=sql.SQL("GRANT " + allowed_privileges + " ON TABLE {} TO {}").format(table_identifier, runtime_role_identifier),
                     )
         finally:
             if not connection.closed:
                 await connection.execute(
-                    "SELECT pg_advisory_unlock(%s)", (key,)
+                    query="SELECT pg_advisory_unlock(%s)",
+                    params=(advisory_lock_key,),
                 )
