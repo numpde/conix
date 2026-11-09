@@ -22,8 +22,8 @@ IMAGE_ID = re.compile(r"sha256:[a-f0-9]{64}\Z")
 
 def pinned_images():
     document = json.loads((ROOT / "containers/images.json").read_text(encoding="utf-8"))
-    if set(document) != {"python_base", "postgres", "foundry"}:
-        raise OperationError("Reviewed image manifest must contain exactly python_base, postgres and foundry.")
+    if set(document) != {"python_base", "postgres", "foundry", "dockerfile_frontend"}:
+        raise OperationError("Reviewed manifest must contain python_base, postgres, foundry and dockerfile_frontend.")
     for role, name in document.items():
         if (type(name) is not str or "@sha256:" not in name
                 or not IMAGE_ID.fullmatch("sha256:" + name.rsplit("@sha256:", 1)[-1])):
@@ -179,33 +179,43 @@ class Docker:
                 "a local Unix socket alone does not qualify a rootful daemon."
             )
 
-    def prepare(self, images):
-        """Networked, explicit image acquisition; never part of a test run."""
-        for reference in (
-            images["python_base"],
-            images["postgres"],
-            "docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e",
-        ):
-            self.run("pull", "--platform", "linux/amd64", reference, timeout=180)
+    def acquire_image(self, role, images):
+        """Acquire exactly one reviewed component; no implicit companions."""
+        source = {
+            "python-base": "python_base",
+            "postgres": "postgres",
+            "dockerfile-frontend": "dockerfile_frontend",
+            "foundry": "foundry",
+        }
+        if role not in source:
+            raise OperationError("Image acquisition requires an explicitly declared component role.")
+        self.run("pull", "--platform", "linux/amd64",
+                 images[source[role]], timeout=240 if role == "foundry" else 180)
 
-    def prepare_fixture_tool(self, images):
-        """Explicit acquisition of the optional, test-only Foundry image."""
-        self.run("pull", "--platform", "linux/amd64", images["foundry"], timeout=240)
-
-    def smoke(self, image):
+    def require_role(self, image, role):
+        """Bind a concrete image ID to its recorded purpose before use."""
+        if role not in ("indexer", "test-runner", "evm-test-runner"):
+            raise OperationError("An image role must be one of the reviewed Conix roles.")
         if not IMAGE_ID.fullmatch(image or ""):
-            raise OperationError("CONIX_IMAGE must select an immutable local image ID.")
-        self.require_image(image)
+            raise OperationError("An image role check requires an immutable sha256 image ID.")
+        if self.require_image(image) != image:
+            raise OperationError("The requested immutable image ID changed.")
+        observed = self.run("image", "inspect",
+                            "--format", '{{index .Config.Labels "io.conix.image-role"}}',
+                            image, capture=True, timeout=10).strip()
+        if observed != role:
+            raise OperationError(f"Selected image does not have the required {role} role.")
+
+    def check_indexer(self, image):
+        self.require_role(image, "indexer")
         self.run("run", "--rm", "--pull", "never", "--network", "none", "--read-only",
                  "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
                  "--pids-limit", "64", "--memory", "256m",
                  "--user", "65532:65532", image, "--help", timeout=30)
 
-    def smoke_fixture(self, image):
-        """Verify the installed optional image, no network or fixture credentials."""
-        if not IMAGE_ID.fullmatch(image or ""):
-            raise OperationError("CONIX_FIXTURE_IMAGE must select an immutable prebuilt image.")
-        self.require_image(image)
+    def check_evm_test_runner(self, image):
+        """Check a test-only EVM runner without network or fixture secrets."""
+        self.require_role(image, "evm-test-runner")
         grants = (
             "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
             "--user", "65532:65532", "--cap-drop", "ALL",
@@ -255,7 +265,7 @@ class Docker:
         """Create and own a unique input volume, with no host bind mounts."""
         if not IMAGE_ID.fullmatch(image or ""):
             raise OperationError("CONIX_IMAGE must select a prepared immutable runtime image.")
-        self.require_image(image)
+        self.require_role(image, "indexer")
         config = self.private_bytes(config_path, 64 * 1024, secret=False)
         dsn = self.private_bytes(dsn_path, 8192, secret=True)
         try:
@@ -355,7 +365,7 @@ class Docker:
         if type(database) is not str or not CONTEXT_NAME.fullmatch(database):
             raise OperationError("Choose one existing database network for schema initialization.")
         self.require_rootless_engine()
-        self.require_image(image)
+        self.require_role(image, "indexer")
         actual = self.run(
             "network", "inspect", "--format", "{{.Name}}", database,
             timeout=10, capture=True,
@@ -410,14 +420,14 @@ class Docker:
         # Resource existence is a start precondition, not a stop/status
         # precondition. Teardown must work after image, volume, network or
         # source files have disappeared from this Engine.
-        if operation == "start":
+        if operation == "apply":
             self.require_rootless_engine()
-            self.require_image(image)
+            self.require_role(image, "indexer")
         # An input volume's identity and ownership label must agree before a
         # command can reuse it. The label is not a credential or permission.
         if not re.fullmatch(r"conix-inputs-[a-f0-9]{24}", volume or ""):
             raise OperationError("Runtime requires a staged conix-inputs-<token> volume.")
-        if operation == "start":
+        if operation == "apply":
             rows = json.loads(self.run("volume", "inspect", volume, timeout=10, capture=True))
             if (len(rows) != 1
                 or rows[0].get("Labels", {}).get("io.conix.input-token")
@@ -478,19 +488,19 @@ class Docker:
         except (ValueError, KeyError, IndexError, TypeError) as error:
             raise OperationError("Cannot validate the selected runtime deployment configuration.") from error
 
-        if operation == "render":
+        if operation == "config/check":
             print(f"Verified constrained runtime Compose graph for {project} on selected Engine.")
             return
         if operation == "status":
             self.run(*compose, "ps", "--all", env=env, timeout=20)
             return
-        if operation == "stop":
+        if operation == "remove":
             self.run(*compose, "stop", "--timeout", "90", "indexer", env=env, timeout=105)
             self.run(*compose, "down", "--remove-orphans", env=env, timeout=60)
-            print(f"Stopped project {project}; external inputs and networks were retained.")
+            print(f"Removed conix deployment project {project}; external inputs and networks were retained.")
             return
         if operation != "start":
-            raise OperationError("Runtime operation must be start, stop, status or render.")
+            raise OperationError("Deployment operation must be apply, remove, status or config/check.")
         self.verify_inputs(image, volume)
         self.run(*compose, "stop", "--timeout", "90", "indexer", env=env, timeout=105)
         try:
@@ -500,18 +510,18 @@ class Docker:
         except OperationError:
             raise OperationError(
                 f"Conix project {project} did not confirm startup. Inspect the "
-                "selected Engine and use runtime/status or runtime/stop with "
+                "selected Engine and use deployment/status or deployment/remove with "
                 "the same exact settings; inputs were retained."
             ) from None
         print(
-            f"Started conix project {project}; a running container is not evidence "
+            f"Applied conix project {project}; a running container is not evidence "
             "of chain freshness or payment readiness."
         )
 
     def test(self, image, images):
         if not IMAGE_ID.fullmatch(image):
             raise OperationError("CONIX_TEST_IMAGE must be an immutable sha256 image ID.")
-        self.run("image", "inspect", image, timeout=10)
+        self.require_role(image, "test-runner")
         self.require_image(images["postgres"])
         project = "conix-tier0-" + secrets.token_hex(6)
         compose = [
@@ -592,14 +602,20 @@ def main():
     parser.add_argument("--context", default="")
     parser.add_argument("--origin", default="undefined")
     parser.add_argument("action", choices=(
-        "deps/images/prepare", "deps/fixture-image/prepare", "deps/wheelhouse/check", "deps/wheelhouse/acquire", "image/build",
-        "image/smoke", "tests/image/build", "tests/fixture/image/build", "tests/fixture/image/smoke", "tests/container",
-        "inputs/stage", "inputs/proof", "inputs/remove", "schema/init",
-        "runtime/start", "runtime/stop", "runtime/status", "runtime/render",
+        "image/python-base/acquire", "image/postgres/acquire",
+        "image/dockerfile-frontend/acquire", "image/foundry/acquire",
+        "wheelhouse/check", "wheelhouse/acquire",
+        "image/indexer/build", "image/test-runner/build", "image/evm-test-runner/build",
+        "image/indexer/check", "image/evm-test-runner/check",
+        "test/postgres/run", "test/input-staging/run",
+        "deployment/inputs/create", "deployment/inputs/remove",
+        "database/schema/initialize",
+        "deployment/config/check", "deployment/apply", "deployment/status", "deployment/remove",
     ))
-    parser.add_argument("--test-image")
     parser.add_argument("--wheelhouse")
     parser.add_argument("--image")
+    parser.add_argument("--runner-image")
+    parser.add_argument("--indexer-image")
     parser.add_argument("--config-file")
     parser.add_argument("--dsn-file")
     parser.add_argument("--owner-dsn-file")
@@ -613,67 +629,62 @@ def main():
             # Make exports simple, literally captured values via $(value VAR).
             # No operator text is ever interpolated into a shell recipe.
             raw = {key: os.environ.get("CONIX_MAKE_" + key, "") for key in (
-                "DOCKER_CONTEXT", "WHEELHOUSE", "CONIX_IMAGE",
-                "CONIX_TEST_IMAGE", "CONIX_CONFIG_FILE", "CONIX_DSN_FILE",
-                "CONIX_OWNER_DSN_FILE", "CONIX_INPUT_VOLUME", "CONIX_DEPLOYMENT",
-                "CONIX_DATABASE_NETWORK", "CONIX_RPC_NETWORK",
+                "DOCKER_CONTEXT", "WHEELHOUSE", "IMAGE", "RUNNER_IMAGE",
+                "INDEXER_IMAGE", "CONFIG_FILE", "DSN_FILE",
+                "OWNER_DSN_FILE", "INPUT_VOLUME", "DEPLOYMENT",
+                "DATABASE_NETWORK", "RPC_NETWORK",
             )}
             args.context = raw["DOCKER_CONTEXT"]
             args.wheelhouse = raw["WHEELHOUSE"]
-            args.image = raw["CONIX_IMAGE"]
-            args.test_image = raw["CONIX_TEST_IMAGE"]
-            args.config_file = raw["CONIX_CONFIG_FILE"]
-            args.dsn_file = raw["CONIX_DSN_FILE"]
-            args.owner_dsn_file = raw["CONIX_OWNER_DSN_FILE"]
-            args.volume = raw["CONIX_INPUT_VOLUME"]
-            args.deployment = raw["CONIX_DEPLOYMENT"]
-            args.database_network = raw["CONIX_DATABASE_NETWORK"]
-            args.rpc_network = raw["CONIX_RPC_NETWORK"]
+            args.image = raw["IMAGE"]
+            args.runner_image = raw["RUNNER_IMAGE"]
+            args.indexer_image = raw["INDEXER_IMAGE"]
+            args.config_file = raw["CONFIG_FILE"]
+            args.dsn_file = raw["DSN_FILE"]
+            args.owner_dsn_file = raw["OWNER_DSN_FILE"]
+            args.volume = raw["INPUT_VOLUME"]
+            args.deployment = raw["DEPLOYMENT"]
+            args.database_network = raw["DATABASE_NETWORK"]
+            args.rpc_network = raw["RPC_NETWORK"]
         endpoint = select_endpoint(args.context, args.origin)
         with tempfile.TemporaryDirectory(prefix="conix-docker-client-") as directory:
             config = Path(directory)
             (config / "config.json").write_text('{"auths":{},"proxies":{}}\n', encoding="utf-8")
             docker = Docker(endpoint, config)
             images = pinned_images()
-            if args.action == "deps/images/prepare":
-                docker.prepare(images)
-            elif args.action == "deps/fixture-image/prepare":
-                docker.prepare_fixture_tool(images)
-            elif args.action in ("deps/wheelhouse/check", "deps/wheelhouse/acquire"):
+            if args.action.startswith("image/") and args.action.endswith("/acquire"):
+                docker.acquire_image(args.action.split("/")[1], images)
+            elif args.action in ("wheelhouse/check", "wheelhouse/acquire"):
                 from tools.wheelhouse.operations import SharedWheelhouse
                 pool = SharedWheelhouse(docker, images, args.wheelhouse)
                 selected = pool.check() if args.action.endswith("/check") else pool.acquire()
-                print(f"Verified {len(selected)} hash-locked artifacts in the selected shared WHEELHOUSE.",
+                print(f"Verified {len(selected)} hash-locked artifacts in WHEELHOUSE.",
                       file=sys.stderr)
-            elif args.action == "tests/container":
-                docker.test(args.test_image or "", images)
-            elif args.action == "image/smoke":
-                docker.smoke(args.image)
-            elif args.action == "tests/fixture/image/smoke":
-                docker.smoke_fixture(os.environ.get("CONIX_MAKE_CONIX_FIXTURE_IMAGE", "") if args.from_make else args.image)
-            elif args.action in ("inputs/stage", "inputs/proof"):
-                docker.stage_inputs(args.image, args.config_file, args.dsn_file,
-                                    proof=args.action == "inputs/proof")
-            elif args.action == "inputs/remove":
+            elif args.action == "test/postgres/run":
+                docker.test(args.runner_image or "", images)
+            elif args.action == "image/indexer/check":
+                docker.check_indexer(args.image)
+            elif args.action == "image/evm-test-runner/check":
+                docker.check_evm_test_runner(args.image)
+            elif args.action in ("deployment/inputs/create", "test/input-staging/run"):
+                docker.stage_inputs(args.indexer_image, args.config_file, args.dsn_file,
+                                    proof=args.action == "test/input-staging/run")
+            elif args.action == "deployment/inputs/remove":
                 docker.remove_inputs(args.volume)
-            elif args.action == "schema/init":
+            elif args.action == "database/schema/initialize":
                 docker.initialize_schema(
-                    args.image, args.config_file, args.owner_dsn_file,
+                    args.indexer_image, args.config_file, args.owner_dsn_file,
                     args.database_network,
                 )
-            elif args.action.startswith("runtime/"):
+            elif args.action.startswith("deployment/"):
                 docker.deployment(
-                    operation=args.action.removeprefix("runtime/"),
-                    name=args.deployment, image=args.image,
+                    operation=args.action.removeprefix("deployment/"),
+                    name=args.deployment, image=args.indexer_image,
                     volume=args.volume, database=args.database_network,
                     rpc=args.rpc_network,
                 )
             else:
-                target = {
-                    "image/build": "runtime",
-                    "tests/image/build": "tests",
-                    "tests/fixture/image/build": "fixture",
-                }[args.action]
+                target = args.action.split("/")[1]
                 from tools.wheelhouse.operations import SharedWheelhouse
                 print(SharedWheelhouse(docker, images, args.wheelhouse).build(target))
     except (OperationError, OSError) as error:
