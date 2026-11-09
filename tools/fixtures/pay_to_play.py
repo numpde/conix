@@ -18,13 +18,14 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 from tools.containers.operator import (
     CONTEXT_NAME, Docker, IMAGE_ID, OperationError, ROOT, pinned_images, select_endpoint,
 )
 
 sys.path.insert(0, str(ROOT / "tests"))
-from fixture_protocol import FixtureError, _bad_constant, _pairs, decode, receipt
+from fixture_protocol import FixtureError, _bad_constant, _pairs, decode, parse_phase_failure, receipt
 
 ID = re.compile(r"conix-[0-9a-f]{12}\Z")
 GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -94,19 +95,41 @@ def _clean_env():
     return result
 
 
-def owned_command(argv, *, output, error_file, env, timeout, payload=None):
-    """Bound a subprocess and its process group; never log private stdout."""
+def _progress(message):
+    """Progress messages contain only known operation names, never subprocess text."""
+    print(f"[conix] {message}", file=sys.stderr, flush=True)
+
+
+def owned_command(argv, *, output, error_file, env, timeout, payload=None, label="fixture command"):
+    """Bound/reap a child, keep its private output off terminal, report liveness."""
+    started = time.monotonic()
+    _progress(f"{label}: started")
     with output.open("wb") as out, error_file.open("wb") as err:
+        # The scratch directory is private; tighten individual receipts too.
+        output.chmod(0o600)
+        error_file.chmod(0o600)
         child = subprocess.Popen(
             argv, cwd=ROOT, env=env, stdin=subprocess.PIPE if payload is not None else subprocess.DEVNULL,
             stdout=out, stderr=err, start_new_session=True,
         )
+        first = True
         try:
-            child.communicate(input=payload, timeout=timeout)
+            while True:
+                remaining = timeout - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(argv, timeout)
+                try:
+                    child.communicate(
+                        input=payload if first else None, timeout=min(15, remaining)
+                    )
+                    break
+                except subprocess.TimeoutExpired:
+                    first = False
+                    if time.monotonic() - started >= timeout:
+                        raise
+                    _progress(f"{label}: running ({int(time.monotonic() - started)}s)")
         except BaseException as error:
-            # Timeout, SIGINT and SIGTERM all require explicit retirement
-            # before upstream resources can be considered unborrowed.
-            # Detached daemon operations may still be unknown.
+            # CLI termination does not certify daemon-side cleanup.
             try:
                 os.killpg(child.pid, signal.SIGTERM)
             except ProcessLookupError:
@@ -121,13 +144,16 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None):
                 child.wait(timeout=5)
             if isinstance(error, subprocess.TimeoutExpired):
                 raise CampaignError(
-                    "A fixture operation exceeded its budget; resulting daemon effects are unconfirmed."
-                ) from None
+                    f"{label} timed out after {timeout}s; daemon effects are unconfirmed."
+                ) from error
             raise
     if child.returncode != 0:
-        raise CampaignError("A fixture command failed; inspect its private diagnostic receipt and ownership before retrying.")
+        raise CampaignError(
+            f"{label} exited with status {child.returncode}; see private {error_file.name}."
+        )
     if output.stat().st_size > 1048576:
-        raise CampaignError("Fixture command produced an oversized receipt; no JSON was admitted.")
+        raise CampaignError(f"{label} produced an oversized receipt; no JSON was admitted.")
+    _progress(f"{label}: completed ({int(time.monotonic() - started)}s)")
     return output.read_bytes()
 
 
