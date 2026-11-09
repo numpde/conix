@@ -46,6 +46,7 @@ class Observer:
     def __init__(self, journal: Journal, chain: Chain):
         if journal.settings != chain.settings:
             raise ValueError("Observer's journal and chain must use identical source configuration.")
+
         self.journal = journal
         self.chain = chain
 
@@ -54,23 +55,29 @@ class Observer:
         state = await self.journal.basis()
         if state.blocked_reason:
             raise ObservationUnavailable(f"Indexed history blocked: {state.blocked_reason}")
+
         if state.checkpoint is None:
             raise ObservationUnavailable("Indexed history has no complete block; run the conix worker.")
+
         await self.chain.assert_source()
         if not await self.chain.canonical(state.checkpoint):
             raise ObservationUnavailable(
                 "Stored checkpoint is no longer canonical; stop the worker and repair indexed history."
             )
+
         head = await self.chain.current_head()
         if head.number < state.checkpoint.number:
             raise ObservationUnavailable("Upstream head is behind the retained checkpoint.")
+
         # RPC cannot be part of the SQL snapshot. Re-read the durable basis
         # afterward so repair or invalidation cannot authorize a stale result.
         current = await self.journal.basis()
         if current.blocked_reason or current.generation != state.generation:
             raise ObservationUnavailable("Indexed history was invalidated during observation.")
+
         if current.checkpoint is None or current.checkpoint.number < state.checkpoint.number:
             raise ObservationUnavailable("Indexed checkpoint disappeared during observation.")
+
         return Checkpoint(
             self.journal.settings.deployment,
             state.generation,
@@ -91,6 +98,7 @@ class Observer:
         asset, position = await self.chain.contract.position(customer, channel_id, checkpoint.block)
         if not await self.chain.canonical(checkpoint.block):
             raise ObservationUnavailable("Position block was replaced during its block-pinned read.")
+
         await self.journal.ensure_checkpoint(checkpoint)
         return PositionObservation(checkpoint, datetime.now(UTC), asset, position)
 
@@ -102,6 +110,7 @@ class Observer:
         page = await self.journal.page(checkpoint, cursor, limit)
         if not await self.chain.canonical(checkpoint.block):
             raise HistoryUnavailable("Collection checkpoint changed canonical branch; resynchronize.")
+
         await self.journal.ensure_checkpoint(checkpoint)
         return page
 
@@ -112,14 +121,19 @@ class Observer:
         """Connect receipt and optional finality claims to the retained prefix."""
         if type(checkpoint) is not Checkpoint or checkpoint.deployment != self.journal.settings.deployment:
             raise HistoryUnavailable("Canonical evidence requires a checkpoint from this deployment.")
+
         if type(include_finalized) is not bool or type(block_numbers) is not tuple:
             raise ValueError("Canonical evidence requires a tuple of block heights and a bool include_finalized.")
+
         if any(type(number) is not int or number < 0 or number > checkpoint.block.number for number in block_numbers):
             raise ValueError("Canonical evidence heights must be nonnegative and at/below checkpoint.")
+
         if len(set(block_numbers)) != len(block_numbers):
             raise ValueError("Canonical evidence heights must be unique.")
+
         if len(block_numbers) > self.journal.settings.max_evidence_blocks:
             raise ObservationUnavailable("Canonical evidence exceeds configured size limit.")
+
         await self.journal.ensure_checkpoint(checkpoint)
         if not await self.chain.canonical(checkpoint.block):
             raise ObservationUnavailable("Checkpoint is no longer canonical.")
@@ -137,6 +151,7 @@ class Observer:
         if first_requested < start:
             if start - first_requested > self.journal.settings.max_evidence_blocks:
                 raise ObservationUnavailable("Earlier receipt ancestry exceeds the evidence work bound.")
+
             earlier = tuple(
                 [await self.chain.header(number) for number in range(first_requested, start)]
             )
@@ -153,6 +168,7 @@ class Observer:
             actual = await self.chain.header(number)
             if actual != recorded[number]:
                 raise ObservationUnavailable(f"Stored/requested block {number} disagrees with the canonical source.")
+
         finalized = None
         if include_finalized:
             finalized = await self.chain.finalized()
@@ -165,6 +181,7 @@ class Observer:
                 if recorded_finalized is None and finalized.number < start:
                     if start - finalized.number > self.journal.settings.max_evidence_blocks:
                         raise ObservationUnavailable("Finality ancestry preceding coverage exceeds the evidence bound.")
+
                     earlier = tuple([await self.chain.header(number) for number in range(finalized.number, start)])
                     opening = (await self.journal.headers_at(checkpoint, (start,)))[0]
                     if earlier[-1].hash != opening.parent_hash or any(
@@ -174,7 +191,9 @@ class Observer:
                     recorded_finalized = earlier[0]
                 if recorded_finalized != finalized:
                     raise ObservationUnavailable("Finalized block disagrees with the checkpoint's canonical ancestry.")
+
         if not await self.chain.canonical(checkpoint.block):
             raise ObservationUnavailable("Canonical branch changed while collecting confidence evidence.")
+
         await self.journal.ensure_checkpoint(checkpoint)
         return CanonicalEvidence(checkpoint, tuple(recorded[number] for number in block_numbers), finalized)

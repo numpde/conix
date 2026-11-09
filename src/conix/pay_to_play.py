@@ -67,8 +67,10 @@ class PayToPlay:
     def __init__(self, rpc: RpcClient, deployment: Deployment):
         if type(deployment.chain_id) is not int or not 0 <= deployment.chain_id < 2**256:
             raise ValueError("Deployment chain ID must fit uint256, excluding bool.")
+
         if not is_checksum_address(deployment.address):
             raise ValueError("Deployment contract address must be a checksummed EVM address.")
+
         self.rpc = rpc
         self.deployment = deployment
 
@@ -87,6 +89,7 @@ class PayToPlay:
         """Read asset and position at the supplied block; actor zero supplies no UI identity."""
         if not is_checksum_address(customer):
             raise ValueError("Customer address must be a checksummed EVM address.")
+
         # Both contract reads refer to the same block hash. Actor zero avoids
         # substituting a UI caller's permissions for accounting facts.
         asset_raw = await self._call(keccak(text="asset()")[:4], block)
@@ -149,6 +152,7 @@ class PayToPlay:
         )
         if position.customer != customer or position.channel_id != channel_id:
             raise RpcProtocolError("PayToPlay returned another customer or channel's position.")
+
         return asset, position
 
     async def voucher_collected_events(self, block: Block) -> tuple[Collection, ...]:
@@ -165,6 +169,7 @@ class PayToPlay:
         )
         if type(result) is not list:
             raise RpcProtocolError("RPC collection log result must be an array.")
+
         # Block-global log_index, not transaction hash, defines occurrence order.
         return tuple(sorted((self.collection(item, block) for item in result), key=lambda event: event.log_index))
 
@@ -172,13 +177,16 @@ class PayToPlay:
         """Decode an exact occurrence; invoice_hash does not allocate a payment."""
         if type(value) is not dict:
             raise RpcProtocolError("RPC collection log must be an object.")
+
         try:
             topics = value["topics"]
             if type(topics) is not list or len(topics) != 4:
                 raise RpcProtocolError("PayToPlay collection log must have four topics.")
+
             decoded_topics = [data(topic, "event topic", size=32) for topic in topics]
             if decoded_topics[0] != keccak(text=COLLECTION_SIGNATURE):
                 raise RpcProtocolError("RPC returned a different event in the collection query.")
+
             if (
                 value["removed"] is not False
                 or to_checksum_address(data(value["address"], "log address", size=20)) != self.deployment.address
@@ -195,6 +203,7 @@ class PayToPlay:
             )
             if amount == 0 or amount > paid:
                 raise RpcProtocolError("PayToPlay collection log has inconsistent positive payment amounts.")
+
             return Collection(
                 block.number,
                 block.hash,

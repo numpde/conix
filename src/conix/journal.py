@@ -64,6 +64,7 @@ async def _state(connection: AsyncConnection, settings: Settings) -> Basis:
     progress = await (await connection.execute("SELECT * FROM conix.source_progress WHERE id = 1")).fetchone()
     if progress is None:
         raise ConfigurationError("conix schema is not initialized. Run conix init.")
+
     if (
         progress["schema_version"] != VERSION
         or bytes(progress["source_digest"]) != source_digest(settings)
@@ -81,6 +82,7 @@ async def _state(connection: AsyncConnection, settings: Settings) -> Basis:
         )).fetchone()
         if block_row is None or bytes(block_row["hash"]) != bytes(progress["completed_hash"]):
             raise CorruptStore("Completed checkpoint has no matching stored block.")
+
         checkpoint = _block(block_row)
     elif int(progress["collection_count"]) != 0:
         raise CorruptStore("Unstarted source has a nonzero collection count.")
@@ -183,6 +185,7 @@ class Journal:
             row = await (await connection.execute("SELECT pg_try_advisory_lock(%s) AS acquired", (key,))).fetchone()
             if not row["acquired"]:
                 raise WriterBusy("Another conix writer or repair operation owns this source.")
+
             # Closing this dedicated connection releases the advisory lock.
             # A separate unlock query could mask an unanswered COMMIT error.
             writer = Writer(self, connection)
@@ -199,17 +202,21 @@ class Journal:
         """Reject a checkpoint from another source, generation or prefix."""
         if checkpoint.deployment != self.settings.deployment:
             raise HistoryUnavailable("Checkpoint names another source.")
+
         async with self._snapshot() as connection:
             state = await _state(connection, self.settings)
             if state.blocked_reason or state.generation != checkpoint.generation:
                 raise HistoryUnavailable("History is blocked or belongs to a retired generation.")
+
             if state.checkpoint is None or checkpoint.block.number > state.checkpoint.number:
                 raise HistoryUnavailable("Checkpoint is ahead of completed history.")
+
             row = await (await connection.execute(
                 "SELECT * FROM conix.blocks WHERE number = %s", (checkpoint.block.number,)
             )).fetchone()
             if row is None or _block(row) != checkpoint.block:
                 raise HistoryUnavailable("Checkpoint block was replaced or is not retained.")
+
             # The exact event count makes a retained block into a complete
             # prefix, not merely a matching block height and hash.
             count = await (await connection.execute(
@@ -218,14 +225,17 @@ class Journal:
             )).fetchone()
             if int(count["n"]) != checkpoint.collection_count:
                 raise HistoryUnavailable("Checkpoint collection prefix no longer agrees with retained history.")
+
             return state
 
     async def page(self, checkpoint: Checkpoint, cursor: CollectionCursor | None, limit: int) -> CollectionPage:
         """Page a dense generation-local sequence from one complete SQL snapshot."""
         if type(limit) is not int or not 1 <= limit <= self.settings.max_page_size:
             raise ValueError("Collection page limit exceeds the configured bound.")
+
         if type(checkpoint) is not Checkpoint or checkpoint.deployment != self.settings.deployment:
             raise HistoryUnavailable("Collection history requires a checkpoint from this source.")
+
         if cursor is not None and (
             type(cursor) is not CollectionCursor or cursor.generation != checkpoint.generation
             or type(cursor.next_sequence) is not int or cursor.next_sequence < 0
@@ -237,18 +247,22 @@ class Journal:
             state = await _state(connection, self.settings)
             if state.blocked_reason or state.generation != checkpoint.generation:
                 raise HistoryUnavailable("Collection generation was invalidated; resynchronize.")
+
             if state.checkpoint is None or checkpoint.block.number > state.checkpoint.number:
                 raise HistoryUnavailable("Requested checkpoint has not been published.")
+
             block_row = await (await connection.execute(
                 "SELECT * FROM conix.blocks WHERE number = %s", (checkpoint.block.number,)
             )).fetchone()
             if block_row is None or _block(block_row) != checkpoint.block:
                 raise HistoryUnavailable("Collection checkpoint block was replaced.")
+
             first = await (await connection.execute(
                 "SELECT * FROM conix.blocks WHERE number = %s", (self.settings.start_block,)
             )).fetchone()
             if first is None:
                 raise CorruptStore("Retained history has no declared opening block.")
+
             rows = await (await connection.execute(
                 "SELECT * FROM conix.collections WHERE sequence >= %s AND sequence < %s "
                 "ORDER BY sequence LIMIT %s",
@@ -258,8 +272,10 @@ class Journal:
             next_offset = offset + len(rows)
             if [int(row["sequence"]) for row in rows] != list(range(offset, next_offset)):
                 raise CorruptStore("Collection history has a missing or duplicate sequence.")
+
             if next_offset < checkpoint.collection_count and len(rows) < limit:
                 raise CorruptStore("Collection page ended before its complete retained prefix.")
+
             return CollectionPage(
                 checkpoint, _block(first), tuple(_collection(row) for row in rows),
                 CollectionCursor(checkpoint.generation, next_offset),
@@ -302,20 +318,25 @@ class Journal:
             blocks = {int(row["number"]): _block(row) for row in rows}
             if len(blocks) != len(numbers):
                 raise CorruptStore("Retained complete prefix is missing a requested block.")
+
             if blocks.get(checkpoint.block.number, checkpoint.block) != checkpoint.block:
                 raise HistoryUnavailable("Completed checkpoint block was replaced.")
+
             return tuple(blocks[number] for number in numbers)
 
     async def stored_headers(self, first: int, last: int) -> tuple[Block, ...]:
         """Read a connected retained prefix for deliberate repair inspection."""
         if type(first) is not int or type(last) is not int or first > last:
             raise ValueError("Header range must have ordered integer bounds.")
+
         if last - first + 1 > self.settings.max_evidence_blocks:
             raise HistoryUnavailable("Requested header range exceeds max_evidence_blocks.")
+
         async with self._snapshot() as connection:
             state = await _state(connection, self.settings)
             if state.blocked_reason or state.checkpoint is None or first < self.settings.start_block or last > state.checkpoint.number:
                 raise HistoryUnavailable("Requested ancestry is not covered by usable stored history.")
+
             rows = await (await connection.execute(
                 "SELECT * FROM conix.blocks WHERE number BETWEEN %s AND %s ORDER BY number",
                 (first, last),
@@ -364,6 +385,7 @@ class Writer:
             current = await _check_basis(self._connection, settings, expected)
             if current.blocked_reason:
                 raise Blocked("Indexed history is blocked; repair before publishing.")
+
             next_height = settings.start_block if current.checkpoint is None else current.checkpoint.number + 1
             if block.number != next_height or (
                 current.checkpoint is not None and block.parent_hash != current.checkpoint.hash
@@ -371,15 +393,19 @@ class Writer:
                 raise StateChanged("Publication does not extend the current completed block by exactly one.")
             if len({event.log_index for event in collections}) != len(collections):
                 raise ValueError("Duplicate block-global log index in one block.")
+
             if tuple(sorted(collections, key=lambda e: (e.transaction_index, e.log_index))) != collections:
                 raise ValueError("Collection event order must follow transaction/log order.")
+
             # Validate the entire block before any insert. The transaction
             # commits header, events, cursor and progress together or not at all.
             for event in collections:
                 if (event.block_number, event.block_hash, event.block_timestamp) != (block.number, block.hash, block.timestamp):
                     raise ValueError("Collection event disagrees with its containing block.")
+
                 if not (0 < event.amount <= event.voucher_paid < 2**256 and 0 <= event.channel_id < 2**256):
                     raise ValueError("Collection amount, voucher total or channel identifier exceeds uint256 bounds.")
+
             await self._connection.execute(
                 "INSERT INTO conix.blocks(number,hash,parent_hash,timestamp) VALUES (%s,%s,%s,%s)",
                 (block.number, block.hash, block.parent_hash, block.timestamp),
@@ -410,6 +436,7 @@ class Writer:
         self._require_active()
         if not reason or len(reason) > 1000:
             raise ValueError("Invalidation requires a bounded actionable reason.")
+
         async with self._connection.transaction():
             await _check_basis(self._connection, self._journal.settings, expected)
             await self._connection.execute(
@@ -426,16 +453,19 @@ class Writer:
         await chain.assert_source()
         if target is not None and not await chain.canonical(target):
             raise BranchConflict("The repair target is no longer canonical; choose a verified ancestor.")
+
         async with self._connection.transaction():
             current = await _check_basis(self._connection, settings, expected)
             if target is not None:
                 if current.checkpoint is None or not settings.start_block <= target.number <= current.checkpoint.number:
                     raise StateChanged("Repair target is outside retained completed history.")
+
                 row = await (await self._connection.execute(
                     "SELECT * FROM conix.blocks WHERE number=%s", (target.number,)
                 )).fetchone()
                 if row is None or _block(row) != target:
                     raise StateChanged("Repair target differs from stored block identity.")
+
                 await self._connection.execute("DELETE FROM conix.blocks WHERE number > %s", (target.number,))
                 # Cascading suffix deletion also drops its collection rows;
                 # recompute the dense prefix count before rotating generation.

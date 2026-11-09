@@ -113,6 +113,7 @@ async def initialize(owner_dsn: str, settings: Settings):
             raise ConfigurationError(
                 "The conix schema must already exist and be owned by the selected schema-owner login."
             )
+
         runtime = await (await connection.execute(
             "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
             "rolreplication, rolbypassrls, "
@@ -137,6 +138,7 @@ async def initialize(owner_dsn: str, settings: Settings):
         )).fetchone()
         if not locked["locked"]:
             raise WriterBusy("Cannot initialize schema while the selected Conix writer is active.")
+
         try:
             async with connection.transaction():
                 for statement in SCHEMA.split(";"):
@@ -166,6 +168,7 @@ async def initialize(owner_dsn: str, settings: Settings):
                     raise ConfigurationError(
                         "Conix data tables must exist and belong to the selected schema owner."
                     )
+
                 await _state(connection, settings)
                 # Owner controls all privileges; runtime is deliberately given
                 # no schema CREATE, table TRUNCATE or source-row INSERT/DELETE.
