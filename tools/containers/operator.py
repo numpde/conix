@@ -537,12 +537,7 @@ class Docker:
         self.run("volume", "rm", volume, timeout=30)
 
     def initialize_schema(self, image, config_path, owner_dsn_path, database):
-        """Confined, one-shot owner-only schema operation, no worker credentials.
-
-        Reuse the existing private input stager, but place owner credentials in
-        an ephemeral volume mounted only into the installation container.
-        The normal worker volume is never mounted here or modified.
-        """
+        """Run schema enrollment with a separate owner credential and temporary volume."""
         if not IMAGE_ID.fullmatch(image or ""):
             raise OperationError("Owner initialization requires immutable INDEXER_IMAGE=sha256:<id>.")
 
@@ -551,15 +546,19 @@ class Docker:
 
         self.require_rootless_engine()
         self.require_role(image, "indexer")
-        actual = self.run(
+
+        observed_database_network = self.run(
             "network", "inspect", "--format", "{{.Name}}", database,
             timeout=10, capture=True,
         ).strip()
-        if actual != database:
+
+        if observed_database_network != database:
             raise OperationError("Selected owner-init database network is missing or has another identity.")
 
-        volume = self.stage_inputs(image, config_path, owner_dsn_path, announce=False)
-        failure = None
+        # The ordinary worker never receives this temporary owner credential.
+        owner_input_volume = self.stage_inputs(image, config_path, owner_dsn_path, announce=False)
+        schema_failure = None
+
         try:
             self.run(
                 "run", "--rm", "--init", "--pull", "never",
@@ -569,38 +568,41 @@ class Docker:
                 "--security-opt", "no-new-privileges:true",
                 "--pids-limit", "64", "--memory", "256m",
                 "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=16m",
-                "--mount", f"type=volume,source={volume},target=/run/conix-owner,readonly",
+                "--mount", f"type=volume,source={owner_input_volume},target=/run/conix-owner,readonly",
                 image, "init", "--config", "/run/conix-owner/config.toml",
                 "--owner-dsn-file", "/run/conix-owner/connection.dsn",
                 timeout=90,
             )
         except Exception as error:
-            failure = error
+            schema_failure = error
 
         cleanup_failure = None
+
         try:
-            self.remove_inputs(volume)
+            self.remove_inputs(owner_input_volume)
         except Exception as error:
             cleanup_failure = error
 
         if cleanup_failure is not None:
-            first = (
-                f" Original schema init failed: {failure}."
-                if isinstance(failure, OperationError) else
-                f" Original schema init failed ({type(failure).__name__})."
-                if failure is not None else ""
+            original_failure_note = (
+                f" Original schema init failed: {schema_failure}."
+                if isinstance(schema_failure, OperationError) else
+                f" Original schema init failed ({type(schema_failure).__name__})."
+                if schema_failure is not None else ""
             )
+
             raise OperationError(
-                f"Schema init input-volume cleanup is unconfirmed for {volume} "
-                f"on selected Engine {self.docker_command_prefix[-1]}.{first} Inspect exact volume ownership."
+                f"Schema init input-volume cleanup is unconfirmed for {owner_input_volume} "
+                f"on selected Engine {self.endpoint}.{original_failure_note} Inspect exact volume ownership."
             ) from cleanup_failure
 
-        if failure is not None:
-            detail = str(failure) if isinstance(failure, OperationError) else type(failure).__name__
+        if schema_failure is not None:
+            safe_failure_detail = str(schema_failure) if isinstance(schema_failure, OperationError) else type(schema_failure).__name__
+
             raise OperationError(
-                f"Conix schema init failed: {detail}. Check durable source identity "
+                f"Conix schema init failed: {safe_failure_detail}. Check durable source identity "
                 "before retrying the explicit idempotent owner operation."
-            ) from failure
+            ) from schema_failure
 
         print("Conix schema installed/verified through a separate owner-only session.")
 
