@@ -2,7 +2,12 @@ Conix — candidate declarative EVM indexer design
 =================================================
 
 Date: 2026-11-09
-Status: DESIGN PROPOSAL; not implemented, qualified, or an API commitment.
+Status: DESIGN RESEARCH / TEST CATALOG, NOT THE ACTIVE TIER-0 SCOPE.
+The governing pristine Tier-0 plan is 004_rpc_evidence_and_raw_log_indexer_plan.txt.
+The prior decoded-field/JSONB persistence candidate, nonindexed-field
+filtering, and any requirement to preserve PayToPlay-specific code, schema
+or APIs are superseded. ABI ambiguity/type-safety test requirements remain
+relevant where consistent with the new supported-type matrix.
 Branch: 20261108-tier0-executable-core
 Companions: 000_architecture_guidelines.txt, 001_implementation_plan.txt,
 002_make_operator_contract.txt.

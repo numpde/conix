@@ -1,151 +1,236 @@
-Conix — RPC findings and raw-log implementation plan
-=====================================================
+Conix — pristine generic Tier 0: design, evidence, and execution plan
+=====================================================================
 
-2026-11-09 | Candidate design decision, not implemented or qualified.
-Related: notes/000_architecture_guidelines.txt,
-notes/001_implementation_plan.txt, notes/003_declarative_evm_indexer_design.txt.
+Date: 2026-11-09
+Status: TARGET PLAN, NOT IMPLEMENTED. This note is the current Tier-0 scope
+decision. 001 describes an earlier PayToPlay-specific implementation plan;
+003 is an exploratory generic design/type-safety workshop. 000 remains
+authoritative about Tier 1/2 delegation AFTER this new Tier 0 exists.
 
-This note records what the observed public-RPC behavior changes about the
-generic Conix proposal. It narrows note 003's candidate decoded-field store
-and nonindexed equality filters; those remain possible future optimizations,
-not first-release requirements. It does NOT cancel the type-safety tests or
-the existing durable-block/reorganization guarantees.
+Decision: START FRESH. There is no production Conix database, schema,
+checkpoint, log history, API contract or deployed worker to migrate or keep
+compatible. Existing PayToPlay-specific Conix code is disposable. Delete
+or replace it as needed. No dual write, read adapter, historical-schema
+upgrade, replay-to-old-format, compatibility shim or cutover ceremony.
+Set up a new schema against a fresh database and index from the explicit
+origin. Only reusable scientific facts, tests and design lessons are worth
+lifting. In particular, do not keep a bad interface merely because the
+current experimental implementation or a test happens to use it.
 
-Evidence, accurately scoped
----------------------------
+Question being solved
+---------------------
 
-Source: numpde/dapp32@fe8068fc119ce781b2288b9431009856d47009d8
-  docs/public/deployment/rpc/capabilities.json
-  js/packages/cam-viewer/src/rpc-catalog.json
-  tools/rpc_catalog_probe.py
-Measured: 2026-11-09T18:27:50+00:00.
+Can one small, correct, operator-run Python package, with one ABI-driven
+scanner and one PostgreSQL journal, index selected events from ordinary
+EVM contracts and let a consumer retrieve exact event history and
+block-pinned read-only contract values?
 
-The report covers 30 networks, 39 endpoints, 29 keyless endpoints tested,
-and 10 API-key endpoints explicitly skipped. The report's "chain_verified"
-status means that the observed chain ID matched the catalog, NOT that the
-service is honest, complete, archive-capable, or production-qualified.
+Yes: make that the whole of Tier 0. It must work for PayToPlay, ERC-20
+and ERC-721 WITHOUT changing Conix's source. It must be independently
+useful with no Tier 1 recovery service, Tier 2 accelerator, SQL/JSON
+expression language, application-specific adapter or external API.
 
-Observed among 29 keyless endpoints:
+A checkpoint is a statement about a complete SELECTED block prefix
+UNDER AN EXPLICITLY TRUSTED RPC SOURCE. It is not a claim that the RPC
+is honest, that blocks are permanently finalized, or that data before
+the chosen origin is known. An empty indexed result is not proof that
+nothing happened before the origin. No feature may silently strengthen
+these claims beyond the available evidence.
 
-  Correct chain ID, sampled headers by number and hash:     29/29
-  EIP-1898 eth_call pinned by blockHash:                    29/29
-  Rejection of a deliberately nonexistent blockHash:       29/29
-  eth_getBlockByNumber("finalized"):                        29/29
-  eth_getLogs using blockHash:                             18 OK;
-                                                           9 empty/inconclusive;
-                                                           2 RPC errors
-  eth_getLogs over four blocks:                            14 OK;
-                                                           9 empty/inconclusive;
-                                                           6 RPC errors
-  eth_call at a block 4096 behind the sample:             24 OK; 5 RPC errors
-  eth_getBlockReceipts:                                     23 OK; 6 other
+Why the scope is this size
+--------------------------
 
-Provider details that affect architecture:
+Several fixed contracts/events on ONE chain, with ONE start block and
+ONE shared checkpoint: IN Tier 0. A single-contract configuration
+would establish type-genericity, but adding a cross-contract checkpoint
+later would change the core's completeness, error and publication
+semantics. It is straightforward to establish now: obtain all selected
+events for block N, then commit one complete block. If any acquisition
+fails, commit none. This deliberate coupling is simpler than independent
+per-contract cursors. Separate start heights, independent checkpoints,
+dynamic contract discovery and multiple chains are OUT.
 
-- Ethereum mainnet, Ethereum Sepolia, Base mainnet and Base Sepolia returned
-  -32701 for the range request but returned real Transfer logs via blockHash:
-  620, 109, 10 and 5 respectively. The range request covered four blocks
-  across ALL emitting addresses. This does not establish that a query
-  restricted to one contract/event would fail.
-- BSC mainnet and testnet returned -32005 for BOTH log-query forms. Neither
-  endpoint is qualified for Conix ingestion by this measurement.
-- Nine blockHash log probes returned no Transfer logs in the selected sample.
-  Empty is inconclusive; test against a known nonempty block before admission.
-- The five failed historical eth_call probes were Ethereum mainnet, both
-  BSC networks and both opBNB networks. The probe used an identity precompile
-  only 4096 blocks back, not a deployed historical contract or archive depth.
-- Finalized-tag acceptance and requireCanonical argument acceptance do not
-  independently establish consensus, nor was a genuine reorganization tested.
-- getBlockReceipts failures are not blockers: the core does not need it.
+Position-filtered history: IN Tier 0. PayToPlay's actual consumer wants
+collections for a (customer, channelId), not every collection by every
+customer. Filtered pagination is a core query contract with its own
+coverage/cursor semantics, not a speed trick. Do not implement a global
+PayToPlay page API first and retrofit a second query method later.
 
-Implication: block-hash log selection and EIP-1898 reads are viable across
-many no-key providers. However, correct answers from the chosen RPC remain
-a trust assumption. No provider check can prove absence of omitted logs.
-Do not infer this from a reported "OK" or an empty log array.
+Raw log storage: IN Tier 0. Store exact topics and data; do not store
+generic ABI-decoded PostgreSQL numeric/JSONB fields. The consumer can
+obtain typed values by ABI decoding when reading. This removes several
+lossy type transformations without eliminating the obligation to
+validate every supported ABI shape, including before publication.
 
-What Conix actually needs
--------------------------
+Read-only eth_call: IN Tier 0, explicitly separable from event ingestion.
+Calls use the full ABI and a checkpoint hash. A provider that cannot
+execute an old state call may still deliver valid historical event logs.
+Do not require latest-head code presence before indexing past events.
 
-1. Chain and identified block reads (eth_chainId, eth_getBlockByNumber).
-2. Complete processing of logs for an explicit contract/event selection
-   in one identified block (eth_getLogs with blockHash/address/topics).
-3. ABI-typed read-only eth_call pinned to the SAME checkpoint when the
-   consumer needs contract state.
-4. Optional canonical/finalized evidence according to consumer policy.
+Manual repair and restart after uncertain COMMIT: IN Tier 0. A program
+that cannot recover safely under an operator's explicit command is not
+a complete Tier 0. Automated recovery, backoff and session restarts are
+Tier 1; prefetch, caching, batching and throughput tuning are Tier 2
+unless essential resource limits demand a smaller change to base code.
 
-eth_getBlockReceipts is a possible corroboration/optimization, not a
-prerequisite. eth_getBalance, eth_getStorageAt, traces, signing, submission,
-arbitrary JSON-RPC methods and an indexer-specific filter language are not
-needed by the proposed core.
+ABI support: a declared and TESTED subset, not a vague "all Solidity"
+claim. Reject unsupported types or layouts at configuration admission.
+Large numbers, nested values and indexed dynamic hashes must not
+silently coerce, truncate, or be presented as original preimages.
 
-Conix currently queries PayToPlay VoucherCollected using blockHash, contract
-address and topic0 (src/conix/pay_to_play.py), and viewPosition/asset using
-EIP-1898. Preserve those guarantees, not necessarily their special-case
-implementation. The current Chain.assert_source() bytecode-present-at-latest
-check is inappropriate for historical event indexing: old logs can be
-legitimate without code at the current tip. Move any code-availability
-requirement to the selected historical contract call.
+1. Concrete product boundary
+----------------------------
 
-dapp32's existing restricted indexer proxy allows eth_chainId,
-eth_blockNumber, eth_getBlockByNumber and eth_getLogs, but NOT eth_call.
-Conix's view reader therefore needs either a reviewed proxy allowlist
-change or a separate confined read-only RPC route. Never silently bypass
-this network boundary.
+Operator inputs (illustrative TOML only; no second configuration DSL):
 
-Minimal event history: raw facts
---------------------------------
+    version = 1
 
-Operator configuration describes a single explicitly identified chain,
-a fixed collection of contract addresses, complete ABI files, selected
-nonanonymous events and a history origin. The ABI is the only language
-describing types. No checks grammar, column grammar or [views] binding
-language is justified.
+    [chain]
+    chain_id = 31337
+    genesis_hash = "0x<32 bytes>"
+    rpc_url = "http://anvil:8545"
+    start_block = 1
 
-Proposed durable concepts:
+    [contracts.payment]
+    address = "0x<20-byte address>"
+    abi_file = "abi/PayToPlay.json"
+    events = ["VoucherCollected(address,uint256,address,uint256,uint256,bytes32)"]
 
-  source_progress — chain/genesis + immutable indexing-catalog fingerprint;
-                    origin; complete checkpoint; generation/revision and
-                    blocked/observed-head state.
+    [contracts.token]
+    address = "0x<20-byte address>"
+    abi_file = "abi/ERC20.json"
+    events = ["Transfer(address,address,uint256)"]
 
-  blocks          — contiguous block number, hash, parent hash, timestamp.
-                    Includes blocks with zero selected events.
+Database roles, connection inputs, resource limits and work deadlines
+are explicit. The program checks the chain ID/genesis; it binds source
+identity to chain/genesis, origin, selected addresses, complete selected
+event ABI declarations (including indexed flags) and catalog version.
+An alias is a configuration identifier, not another deployed contract.
+Reject duplicate addresses, duplicate selected events and incompatible
+same-contract event layouts. Freeze a local immutable, bounded snapshot
+of ABI bytes at preparation; no runtime download or ambient path access.
+An event-selection change starts a fresh source; the first version does
+NOT expand an existing indexed prefix in place. Changing view-only
+function declarations should not require reindexing unchanged events.
 
-  events          — selected occurrence's block number/hash, transaction
-                    hash/index, log index, emitter address, topic0..topic3
-                    and the original data byte sequence.
+Do not make ABI types from TOML, generate SQL tables per event, add
+arbitrary transforms, consumer assertions, grouped-view definitions or
+an untyped plug-in handler. ABI files are the single type vocabulary.
 
-Represent topics and data as PostgreSQL bytea; missing topics are not
-zero-valued topics. Raw log metadata must be checked against the selected
-block, with unique occurrence identity and deterministic chain ordering.
-There can be gaps between log indices because only configured events
-are retained. De-duplicate overlapping selectors by exact occurrence
-identity; reject conflicting descriptions of that occurrence.
+No signing/transaction submission, contract deployment, financial
+accounting, live discovery, HTTP/GraphQL, WebSockets, subscriptions,
+event-to-event joins or derived balances in the base package.
 
-No persisted ABI-decoded uint256, amount, invoiceHash or generic JSONB fields
-are necessary initially. Raw storage avoids the costly ABI -> SQL numeric/
-JSON -> filter -> Python type conversion path seen in rindexer. BUT it does
-not eliminate type safety: the ABI descriptor governs structural validation
-during ingestion, filter encoding, on-demand decoding and view-call arguments
-and results. One invalid/malformed matching log must fail the block rather
-than be omitted or published as undecodable complete history.
+2. ABI contract and failure boundaries
+--------------------------------------
 
-Keep atomic publication of all configured events from ALL selected contracts
-for a block, and preserve writer lock, checked basis, generation invalidation,
-explicit manual repair, no RPC inside SQL transactions, and owner/runtime
-privilege separation. A failed contract query must not advance the block
-checkpoint using the other contracts' events.
+At preparation, compile one coherent descriptor per selected event and
+readable function. Resolve canonical signatures AND complete indexed
+layouts against their CONTRACT. ERC-20 and ERC-721 Transfer share topic0
+but differ in indexed flags; both must work with the SAME generic code.
+Within one contract, same topic0 with incompatible layouts is ambiguous
+and must be rejected, not guessed. Anonymous events are unsupported in
+the first release.
 
-One-block PUBLICATION does not logically require one-block ACQUISITION.
-Begin with the simple blockHash path and benchmark historical catch-up.
-Bounded batch/range acquisition can be considered later only if it keeps
-every complete-block/checkpoint guarantee. Do not assume that because
-range requests had failures for a global Transfer filter, every narrower
-range request is unusable.
+Explicit minimum admitted types:
+  - uintM/intM (8 <= M <= 256, multiples of 8), address, bool, bytes1..32;
+  - dynamic bytes, UTF-8 string, fixed/dynamic arrays and tuples in
+    nonindexed data and view/pure arguments/returns, within explicit
+    maximum nesting, element count and encoded size;
+  - indexed dynamic/array/tuple fields as their on-chain 32-byte HASH,
+    not as reconstructed Python values.
 
-Queries and exact type semantics
---------------------------------
+Preserve positional argument identity for unnamed ABI arguments; expose
+names only when unique and unambiguous. Indexed equality filters are
+initially available only for uniquely named STATIC SCALARS listed above.
+If a filter names a missing, duplicate, nonindexed, hashed or unsupported
+field, reject it explicitly. Avoid a name-normalization layer that
+collapses distinct ABI fields or PostgreSQL's identifier truncation.
+Unrecognized or malformed ABI JSON, overloaded function ambiguity,
+encoding padding errors, wrong tuple shape, overflowing integers,
+booleans supplied as integers, or invalid UTF-8 result data must fail.
 
-The public API is the same across PayToPlay, ERC-20 and ERC-721:
+The type matrix describes SUPPORTED and REJECTED combinations for each
+operation: admission, log decoding, indexed-filter encoding, call-input
+encoding and call-output decoding. All accepted combinations must have
+independent boundary vectors and actual-wire tests. One descriptor
+governs every relevant boundary. Do not create redundant ad hoc
+PayToPlay codecs.
+
+ABI-valid logs containing economically odd amounts, unexpected payees
+or unrecognized invoice hashes are nevertheless valid EVENT facts.
+Conix must retain them. Financial interpretation belongs to PayToPlay.
+
+3. Storage and one complete-block publisher
+------------------------------------------
+
+Initialize NEW owner-controlled PostgreSQL tables; do not attempt to
+read or transform the current experimental collections schema.
+
+    source_progress:
+        exact source/catalog identity; history origin; nullable last
+        complete block; generation and revision; observed head and
+        blocked reason.
+
+    blocks:
+        contiguous indexed block number, hash, parent hash, timestamp;
+        include blocks containing NO selected events.
+
+    events:
+        block number/hash; transaction hash and transaction index;
+        block-global log index; emitting address; topic0, nullable
+        topic1/topic2/topic3; original data bytea.
+
+Each topic is validated to exactly 32 bytes; missing topics are NULL,
+not zero words. Original data is exact bytea (including empty bytes).
+Use an occurrence identity based on chain block + log index and verify
+transaction hash/index consistency; do not identify logs by transaction
+hash alone. Source-specific log_index sequences may be sparse because
+other events were not selected. Forbid duplicate/overlapping acquisition
+selectors in configuration; conflicting or duplicate returned occurrences
+must fail the block rather than be silently ignored.
+
+For next block N, the ONE concrete advance operation:
+
+  1. Acquire an exclusive writer and read the checked durable basis.
+     Verify configured chain and retained checkpoint compatibility.
+  2. Obtain the identified next block header and continuity evidence.
+     Query eth_getLogs by its blockHash, exact emitting contract
+     address and event topic0 for EVERY selected contract/event.
+     Do not filter acquisition by consumers' later customer predicates.
+  3. Validate each response envelope and original log: block hash and
+     height, address, topic count/values, transaction/log indices,
+     order, uniqueness and structurally valid ABI encoded data.
+     Check limits on returned log count, response size and time.
+  4. Recheck candidate block canonicality and preceding checkpoint
+     compatibility BEFORE publication. A changed branch or one failed
+     query prevents publication, including when all OTHER queries worked.
+  5. In ONE short SQL transaction compare expected generation/revision,
+     write every event and the block, update the complete checkpoint and
+     commit. No RPC inside the transaction.
+  6. On an unanswered COMMIT or connection loss: retire the writer,
+     stop, and require fresh durable-state inspection on the next
+     explicit run. Do not replay the assumed-failed mutation.
+
+Blocks are committed individually; the worker can exit on failure. At
+the tip, still check whether a same-height retained block was replaced.
+An intentional manual repair selects an identified retained ancestor,
+revalidates against durable basis, deletes the orphaned suffix and
+changes generation/revision atomically; old cursors fail even under an
+A -> B -> A history. Explicit full rebuild uses the NEW schema and
+configured origin and is destructive only when intentionally invoked.
+Never auto-migrate or drop arbitrary existing data at startup.
+
+Owner-only schema bootstrap (no superuser), separate restricted runtime
+writer and read-only consumer identities, explicit Docker engine context,
+confined filesystems/networks, no credentials in reports, bounded
+operations and cancellation are part of Tier 0. No retry framework or
+high-tier hooks are prerequisites.
+
+4. One generic reader and a precise meaning of "complete"
+----------------------------------------------------------
+
+Proposed Python operations:
 
     checkpoint = await reader.checkpoint()
 
@@ -158,7 +243,7 @@ The public API is the same across PayToPlay, ERC-20 and ERC-721:
         limit=100,
     )
 
-    state = await reader.call(
+    position = await reader.call(
         checkpoint=checkpoint,
         contract="payment",
         function="viewPosition(address,uint256,address)",
@@ -171,97 +256,208 @@ The public API is the same across PayToPlay, ERC-20 and ERC-721:
         include_finalized=True,
     )
 
-The where mapping supports ABI-typed equality on supported INDEXED SCALAR
-arguments only. The ABI encoder builds exact 32-byte topic values; PostgreSQL
-compares those bytes. Check signedness, widths and padding; reject bool as
-int, float as integer, overflow, invalid addresses and fixed-byte lengths.
+The journal only publishes a checkpoint AFTER every source was processed
+through its block. A reader cannot claim prior coverage, unfinished
+blocks, or independent RPC completeness. A zero-match query is a valid,
+complete EMPTY RESULT only for a selected event/filter inside that
+known complete prefix. The returned page identifies start of coverage,
+selected checkpoint, source/catalog identity and invalidatable generation.
 
-Indexed dynamic/array/tuple arguments are topic HASHES, not recoverable
-preimages. Expose them accurately, and do not promise preimage filtering
-unless its separate Solidity hashing semantics are implemented and tested.
+Typed 'where' equality encodes ABI indexed scalar values to the exact
+topic bytes and uses byte equality in SQL. Do not turn uint256 into
+PostgreSQL NUMERIC or a lossy JSON number. Decode matching logs by the
+event descriptor on return. Return exact Python integers, byte arrays,
+tuple/array shapes and source metadata, retaining the distinction
+between indexed hash values and actual dynamic preimages.
 
-The complete event declaration, including indexed flags, must determine
-decoding. ERC-20 and ERC-721 have the same
-Transfer(address,address,uint256) event signature but different indexed
-layouts. Resolve against the specific emitting contract and ABI. Reject
-ambiguous incompatible layouts on the same contract before startup.
+Pages are ordered by (block_number, transaction_index, log_index).
+Use bounded keyset continuation, not OFFSET over matching rows or the
+old PayToPlay-global sequence count. Cursors bind source/catalog,
+history generation, event selection, exact filters, checkpoint and
+last returned occurrence. Tier 0 permits continuation ONLY against the
+same checkpoint; a newer checkpoint requires a new query. Ordinary
+appends should not invalidate older complete checkpoints. Any repair
+or source change must reject stale cursors. An actual empty page must
+not advance a cursor past undisclosed matching rows.
 
-Queryable event count and page completion must be about this exact
-source/catalog, history generation, selected event/filter, and fixed
-checkpoint. A cursor must not turn global sequence offsets into false
-evidence of completeness for sparse filtered pages. Reorg-invalidated
-cursors and checkpoints must fail, including same-height A->B->A.
+Read-only view/pure calls take the ABI input and function signature,
+pin eth_call to the checkpoint's blockHash with requireCanonical=true,
+decode and validate its return, then recheck generation/branch.
+Missing historical state, missing code at the SELECTED block, a
+reverted call or unsupported EIP-1898 must fail explicitly; never
+silently fall back to latest. Availability of historical views does
+not determine validity of previously ingested log history.
 
-Performance-driven indexes should match real requests, including topic2-
-only and topic3-only equality. A composite index beginning with topic1
-will not necessarily accelerate these. Choose after query-plan and
-storage measurements, not by exposing SQL indexes as configuration.
+Block evidence returns identified ancestry and, if requested and
+available, source-reported finalized ancestry. Unknown state differs
+from a proven fork. A validated checkpoint is not financial finality.
 
-Read-only contract calls are ABI-defined (no duplicated [views] config),
-pinned to the checkpoint's block hash, and followed by generation checks.
-An RPC that lacks historical state causes an explicit unavailable result;
-that limitation must not stop independent raw-log ingestion.
+Basic PostgreSQL indexes supporting the actual Tier-0 query (including
+topic2-only and topic3-only filters) and bounded queries are mandatory.
+More elaborate indexes or denormalizations require measured benefit
+and should not change reader semantics.
 
-PayToPlay consumer migration
-----------------------------
+5. Executable sequence and release gates — ALL Tier 0
+------------------------------------------------------
 
-VoucherCollected indexed fields:
-  customer=topic1, channelId=topic2, payee=topic3.
-Nonindexed fields:
-  amount, voucherPaid, invoiceHash.
+Each stage produces real executable behavior and negative tests.
+These are incremental commits within ONE Tier-0 release, not
+self-standing product tiers. No obligation to retain old Conix files,
+classes, schema, names, protocol methods or test harness layout.
 
-Current pay-to-play/src/management/cycle_evidence.py fetches deployment-wide
-pages; ledger/accounting.py verifies a global collection-count sequence and
-then filters by (customer, channelId). The generic reader can fetch only the
-matching topics. Replace the global completeness proof with a sound
-position-filtered history completeness proof. Missing earlier history
-must never become "zero collections". Keep invoice and money validation
-in PayToPlay when Conix stops rejecting ABI-valid but economically strange
-logs. Conix must not interpret contracts as accounting policy.
+T0-0. Specify the installed contract and test fixtures BEFORE writing
+the scanner. Choose the exact config schema, source identity, supported
+ABI matrix, public reader types/cursor/failure categories, fixed
+resource bounds and SQL ownership model. Establish independent
+ERC-20/ERC-721 event vectors, a compound ABI fixture, actual PayToPlay
+event ABI, and a concrete end-to-end Anvil/PostgreSQL harness.
 
-Implementation gates, in order
-------------------------------
+T0-1. ABI compiler and codec, entirely independent of PostgreSQL.
+Reject ambiguous/unsupported layouts. Golden vectors from a different
+encoder, property generation with persistent failure seeds, malformed
+topics, canonical padding, overflow, signed edges, arrays/tuples and
+same-signature ERC-20/721. Exit: one descriptor can encode indexed
+filters and decode exact events and view inputs/outputs.
 
-1. Record raw-log/checkpoint/query contracts and a supported ABI type matrix.
-   Update superseded portions of note 003/001 deliberately; do not claim
-   this note alone implements their end state.
+T0-2. Fresh schema, configuration admission, one writer, raw journal.
+Use dedicated owner/runtime/read roles. Exercise actual PostgreSQL
+bytea round trips, uniqueness, sparse occurrence indices, two writers,
+concurrent readers, empty blocks, config drift, source identity,
+SQL failure before/after COMMIT and real process termination.
+Exit: no partial publication or unknown-commit double write.
 
-2. Implement catalog compiler and attack tests: ABI ambiguity, overloads,
-   indexed layouts, duplicate/unnamed fields, dynamic indexed hashes,
-   unsupported types, explicit chain/genesis/source identity.
-   Reuse tests/test_abi_type_safety.py, tests/test_abi_golden_vectors.py and
-   the existing typed-view tests. ERC-20 vs ERC-721 is mandatory.
+T0-3. One concrete scanner with block-hash RPC. Multi-contract/event
+blocks are mandatory. Hostile/fault-injected RPC covers wrong chain,
+forks, ignored selectors, omitted fields, duplicate/out-of-order
+events, timeout, truncated/oversized results, empty blocks, log
+contradictions and incorrect response identities. Exact ABI validation
+runs before commit. Exit: only a verified complete set for a block
+under the admitted RPC trust model may advance the checkpoint.
 
-3. Implement raw journal and generic block scanner with REAL PostgreSQL
-   tests for multiple contracts, empty blocks, exact topic/data storage,
-   deduplication, malformed logs, unknown COMMIT, restart and reorg.
-   Reuse the existing concrete publication and repair machinery rather
-   than introducing a second scanner hidden behind a facade.
+T0-4. One reader for events(), call(), checkpoint(), evidence().
+Test topic equality for ALL admitted indexed scalars, filtered-empty
+versus unknown history, sparse pagination, wrong filter/cursor, old
+checkpoint after append, invalidation after repair, EIP-1898 and
+unavailable historical state. Real Postgres, real Anvil and independent
+wire fixtures, not only mocked decoder outputs.
+Exit: same ABI and history give exact results after restart.
 
-4. Implement checkpoint/call/events/evidence on raw history: typed topic
-   equality, sparse pagination, generation-bound cursors, historical calls,
-   and exact decoded values. Test rejected unsupported queries as well as
-   successful ones. Benchmark indexing/storage/filter plans.
+T0-5. Demonstrate generality and real consumption with ONE installed
+package. Deploy and emit actual ERC-20 and ERC-721 transfers; their
+identical signatures/different layouts decode without source edits.
+Deploy actual supported PayToPlay; produce a signed voucher, collect,
+index, obtain customer/channel-filtered history, obtain block-pinned
+position state, and execute the real payment cycle. PayToPlay owns
+its accounting and monetary guards and must prove a complete history
+from its accepted-obligation origin, not use Conix to interpret invoices.
+No fallback to the old PayToPlay observer; no compatibility shim.
+Exercise restart and manual reorg/reconciliation. If that integration
+exposes a generic gap, fix ONE shared Tier-0 API rather than adding
+special-case behavior in Conix.
 
-5. Integrate the REAL PayToPlay accounting worker, not a mock of its output;
-   signed invoice/voucher -> collection -> indexing -> payment cycle ->
-   restart -> reorg/reconciliation. Financial safeguards remain in the
-   consumer. Run independent actual Solidity/Anvil ERC-20 and ERC-721
-   scenarios through the very same installed generic Conix package.
+T0-6. Close release qualification: one supported-type matrix, real
+Anvil/PostgreSQL end-to-end suite, adverse RPC and SQL fault matrix,
+cancellation/cleanup, bounded execution, owner confinement and
+correct packaging of every test/fixture. Measure baseline per-block
+catch-up, retained history size and filtered query plans. These
+measurements select basic indexes and reveal later Tier-2 work;
+Tier 0 needs no promised throughput beyond explicit finite bounds.
+Record the exact concrete core operations for future delegation
+proofs, without prebuilding extension infrastructure.
 
-6. Independently improve dapp32's RPC qualification: request logs for a
-   KNOWN nonempty receipt by exact emitting address, topic0 and blockHash;
-   test real historical deployed contract state and a range of history
-   depths. Resolve the BSC -32005 and testnet empty-log uncertainties.
-   This can proceed alongside generic core work; provider success is
-   not proof of event completeness.
+Exit standard: remove ALL future-tier code and the installed Tier-0
+package remains correct and operator-usable. One wrong ABI value,
+dropped configured log, false complete page, stale usable cursor,
+partial block, unauthorized DB mutation, hidden latest fallback,
+or PayToPlay economic safeguard lost during consumer integration
+blocks this release. Existing PayToPlay-specific unit-test successes
+do not qualify the new program; tests may be reused as independent
+facts, but not as proof of API/implementation compatibility.
 
-Explicitly deferred: nonindexed-field predicates, generic derived tables,
-SQL or view grammars, GraphQL/HTTP, streaming/subscriptions, bulk performance
-features without measurement, autonomous repair and speculative caching.
+6. Later tiers — explicit non-goals of this implementation
+----------------------------------------------------------
 
-Release-blocking invariant: a checkpoint means that all configured sources
-were processed through that exact block under a declared RPC trust boundary.
-No type conversion, dropped log, partially published block, incorrect
-filtered completion, stale generation or lost financial safeguard can be
-accepted as a qualified implementation.
+Tier 1: unattended resilience. Classify and retry transient RPC reads,
+retire and restart failed sessions, and invoke the SAME checked Tier-0
+manual repair after bounded ancestor discovery. It must call the
+concrete Tier-0 scanner, validator, journal and reader. No parallel
+publisher or repair SQL. An unattended recovery scenario and a
+selected live-RPC qualification campaign are Tier-1 OPERATIONS tests,
+not reasons to make Tier 0 depend on a paid provider.
+
+Tier 2: measured I/O assistance. Prefetch raw eligible responses,
+cache exact block-pinned raw results or coalesce identical in-flight
+reads while still calling the same Tier-0 validation/publication path.
+Range/block batching is only admissible if it prepares per-block raw
+inputs for the unchanged concrete validator and one-block publisher;
+if it requires new publication semantics, propose an explicit shared
+core redesign instead of disguising a second scanner as an extension.
+No speculative extension framework in the Tier-0 source.
+
+Outside these tiers: new EVM business semantics, arbitrary expression
+filters, unindexed-field global indexes, derived balances, generated
+application-specific tables, GraphQL/HTTP, message brokers, signing,
+transaction submission, distributed active-active writer election,
+cross-chain joins, indefinite histories without provenance, and
+provider-quorum consensus.
+
+7. External RPC evidence and remaining uncertainty
+--------------------------------------------------
+
+Source: numpde/dapp32@fe8068fc119ce781b2288b9431009856d47009d8
+  docs/public/deployment/rpc/capabilities.json
+  js/packages/cam-viewer/src/rpc-catalog.json
+  tools/rpc_catalog_probe.py
+Measurement: 2026-11-09T18:27:50+00:00.
+
+Of 30 listed networks and 39 endpoints, 29 keyless endpoints were
+probed and 10 requiring API keys skipped. Across the 29 tested:
+
+  chain ID, sampled block headers by height/hash:       29 OK
+  EIP-1898 eth_call with blockHash:                     29 OK
+  deliberately unknown blockHash rejected:             29 OK
+  source-reported finalized tag:                        29 OK
+  eth_getLogs with blockHash:                           18 OK, 9 empty
+                                                        inconclusive, 2 errors
+  eth_getLogs across four blocks:                       14 OK, 9 empty
+                                                        inconclusive, 6 errors
+  eth_call 4,096 blocks behind sample:                  24 OK, 5 errors
+  eth_getBlockReceipts:                                 23 OK, 6 other
+
+Ethereum mainnet/Sepolia and Base mainnet/Sepolia rejected broad
+UNFILTERED-ADDRESS four-block Transfer queries (-32701) while
+returning 620/109/10/5 matching logs respectively by blockHash.
+These failures do not prove contract-address-scoped acquisition
+fails. BSC mainnet and testnet returned -32005 for both forms and
+are not qualified by this run. Several testnets had empty samples:
+a known nonempty receipt is needed to determine useful log support.
+Historical eth_call failed on Ethereum mainnet, both BSC and both
+opBNB networks. That test used a precompile at only 4,096-block
+depth, not a historical deployed application contract.
+
+The report's "chain_verified" means a chain-ID match; it is NOT an
+indexer-capability certificate. Neither a correct result nor an empty
+log array proves completeness against a dishonest RPC. The probe did
+not exercise a real reorganization, independently authenticate
+finality, or establish archive depth. No mandatory upstream RPC
+provider is implied by Tier 0; Anvil suffices for the controlled
+release qualification.
+
+The dapp32 restricted indexer RPC proxy currently permits
+eth_chainId, eth_blockNumber, eth_getBlockByNumber and eth_getLogs,
+not eth_call. A real Conix deployment requiring view calls needs
+an explicitly reviewed read-only method allowance or a separate
+confined read channel. Never silently bypass its network policy.
+
+A follow-up dapp32 probe should query a KNOWN nonempty receipt's
+contract address, topic0 and blockHash, then verify historical
+contract state at several depths. This qualifies individual
+endpoints; it is not part of Conix's generic Tier-0 implementation.
+
+Last line
+---------
+
+This is a new Tier-0 PROGRAM, not a migration plan. Implement one
+ABI-driven core and fresh raw-event history, then freeze its concrete
+validated operations. Only AFTER that do Tier 1 and Tier 2 delegate
+to it. Do not retain today's narrow implementation for its own sake.

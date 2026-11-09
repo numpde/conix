@@ -2,8 +2,13 @@ Executable core with mandatory delegation
 ========================================
 
 Date: 2026-11-08
-Status: governing design guidelines; not a claim of implemented behavior.
-Companion: 001_implementation_plan.txt.
+Status: governing rule for Tier 1/2 delegation AFTER a generic Tier 0 has
+been implemented and qualified. Active fresh Tier-0 plan: 004.
+Earlier examples refer to an experimental PayToPlay-specific core; they
+do not require preservation of its code, schema, API or event history.
+There is currently no frozen generic Tier 0. Build it cleanly, then
+protect its concrete operations from replacement by later tiers.
+Historical context: 001_implementation_plan.txt.
 
 1. Governing requirement
 ------------------------
@@ -251,9 +256,12 @@ an architectural witness test even if a happy-path output looks plausible.
 10. New capabilities versus transparent extensions
 --------------------------------------------------
 
-A position-filtered history API changes scope, coverage and pagination. It is
-not a drop-in version of deployment-wide history. It needs a separate explicit
-contract and consumer integration, and is outside the current tiers.
+The generic Tier 0 in note 004 INCLUDES typed position-filtered event
+history. It replaces, rather than extends, the older PayToPlay-specific
+deployment-wide pagination contract. This new behavior must be qualified
+before freezing the shared generic core; it cannot later be smuggled in as
+a transparent Tier 1/2 extension. There is no production compatibility or
+stored-history migration requirement for the experimental prior code.
 
 Multi-block publication similarly changes transaction/visibility semantics.
 It is not included. A future proposal may change the common implementation,
