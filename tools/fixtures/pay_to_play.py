@@ -89,13 +89,13 @@ def _clean_env():
         "DOCKER_", "COMPOSE_", "BUILDX_", "CONIX_MAKE_", "CAM_",
         "PAY_TO_PLAY_", "MAKE", "GNUMAKEFLAGS",
     )
-    result = {
-        k: v for k, v in os.environ.items()
+    forwarded = {
+        k: v for (k, v) in os.environ.items()
         if not k.startswith(excluded) and k not in (
             "PRIVATE_KEY", "BASH_ENV", "ENV", "FIXTURE_ID", "SCENARIO",
         )
     }
-    return result
+    return forwarded
 
 
 def _progress(message):
@@ -196,7 +196,7 @@ def admit(rendered, *, runner_image, postgres_image, rpc_network):
             or networks["rpc"].get("external") is not True
         ):
             raise CampaignError("Fixture graph includes an unknown service or network.")
-        for name, service in services.items():
+        for (name, service) in services.items():
             expected_image = postgres_image if name in ("postgres", "bootstrap") else runner_image
             required_user = "999:999" if name in ("postgres", "bootstrap") else "65532:65532"
             if (
@@ -362,10 +362,10 @@ class PayToPlayTest:
             # Admit only a bounded phase failure from the installed script,
             # not arbitrary Docker stderr, Cast output or fixture secrets.
             try:
-                captured = self._file("conix-" + phase + ".err").read_bytes()[-16384:]
+                stderr_tail = self._file("conix-" + phase + ".err").read_bytes()[-16384:]
             except OSError:
-                captured = b""
-            reason = parse_phase_failure(captured, phase=phase)
+                stderr_tail = b""
+            reason = parse_phase_failure(stderr_tail, phase=phase)
             if reason is not None:
                 raise CampaignError(f"Conix phase/{phase} failed: {reason}.") from error
             # On timeout, a daemon-side one-shot process may still be running.
@@ -383,14 +383,14 @@ class PayToPlayTest:
         # The test changes its exclusive chain state through real transactions.
         verify_network(self.docker, self.descriptor)
         self.sql()
-        previous = None
+        previous_receipt = None
         for phase in ("baseline", "collected", "restart", "reorg"):
-            previous = self._phase("consumer", phase, state=previous, need_receipt=True)
-            if phase == "baseline" and previous["collection_count"] != 0:
+            previous_receipt = self._phase("consumer", phase, state=previous_receipt, need_receipt=True)
+            if phase == "baseline" and previous_receipt["collection_count"] != 0:
                 raise CampaignError("Baseline unexpectedly contains collection events.")
-            if phase in ("collected", "restart") and previous["collection_count"] != 2:
+            if phase in ("collected", "restart") and previous_receipt["collection_count"] != 2:
                 raise CampaignError("Expected two real indexed collection events.")
-            if phase == "reorg" and previous["collection_count"] != 0:
+            if phase == "reorg" and previous_receipt["collection_count"] != 0:
                 raise CampaignError("Orphaned collections remain after checked reorganization repair.")
 
     def cleanup(self):
@@ -452,12 +452,12 @@ class Campaign:
         """Create and independently verify a new producer fixture."""
         # Never adopt an existing fixture or infer ownership from its ID.
         self.creation_attempted = True
-        raw = self._dapp32("up")
-        descriptor = decode(raw, fixture_id=self.fixture_id)
+        created_receipt = self._dapp32("up")
+        descriptor = decode(created_receipt, fixture_id=self.fixture_id)
         _progress("dapp32 fixture: verifying Anvil network and deployment")
         verify_network(self.docker, descriptor)
-        same = decode(self._dapp32("info"), fixture_id=self.fixture_id)
-        if same != descriptor:
+        inspected = decode(self._dapp32("info"), fixture_id=self.fixture_id)
+        if inspected != descriptor:
             raise CampaignError("Producer fixture changed between creation and independent inspection.")
         self.descriptor = descriptor
         self.producer_owned = True

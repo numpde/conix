@@ -27,7 +27,7 @@ def pinned_images():
     document = json.loads((ROOT / "containers/images.json").read_text(encoding="utf-8"))
     if set(document) != {"python_base", "postgres", "foundry", "dockerfile_frontend"}:
         raise OperationError("Reviewed manifest must contain python_base, postgres, foundry and dockerfile_frontend.")
-    for role, name in document.items():
+    for (role, name) in document.items():
         if (type(name) is not str or "@sha256:" not in name
                 or not IMAGE_ID.fullmatch("sha256:" + name.rsplit("@sha256:", 1)[-1])):
             raise OperationError(f"Reviewed {role} base image must have a complete sha256 pin.")
@@ -58,7 +58,7 @@ def environment(client_config=None):
     """Remove ambient Docker, Compose and proxy selection before execution."""
     # Ambient client/Compose overrides are not authority to select an Engine,
     # Compose file, project, profile or build path.
-    result = {k: v for k, v in os.environ.items()
+    result = {k: v for (k, v) in os.environ.items()
               if not k.startswith(("DOCKER_", "COMPOSE_", "BUILDX_", "BUILDKIT_"))
               and k not in ("CONTAINER_HOST", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                             "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy")}
@@ -115,7 +115,7 @@ def _docker_operation(argv):
 def command(argv, *, env, timeout=60, capture=False, progress_to_stderr=False, public_diagnostic=False):
     """Execute bounded Docker commands; never echo private captured text."""
     try:
-        result = subprocess.run(argv, cwd=ROOT, env=env, timeout=timeout,
+        completed = subprocess.run(argv, cwd=ROOT, env=env, timeout=timeout,
                                 text=capture or public_diagnostic,
                                 capture_output=capture or public_diagnostic,
                                 stdout=None if capture or public_diagnostic else
@@ -123,23 +123,23 @@ def command(argv, *, env, timeout=60, capture=False, progress_to_stderr=False, p
                                 check=False)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise OperationError(f"{_docker_operation(argv)} failed to run ({type(error).__name__}).") from error
-    if result.returncode:
+    if completed.returncode:
         # Only nonsecret acquisition workers may opt in to bounded stdout/
         # stderr diagnostics. Never echo a runtime credential or a fixture
         # descriptor from generic Docker/Compose operations.
         if public_diagnostic:
-            detail = (result.stderr or "")[-1200:]
+            detail = (completed.stderr or "")[-1200:]
             detail = detail.replace("\r", " ").replace("\x00", " ")
             raise OperationError(
-                f"Contained public wheel acquisition failed (exit {result.returncode}): "
+                f"Contained public wheel acquisition failed (exit {completed.returncode}): "
                 + (detail.strip() or "no worker diagnostic returned."),
-                exit_code=result.returncode,
+                exit_code=completed.returncode,
             )
-        raise OperationError(f"{_docker_operation(argv)} failed (exit {result.returncode}).",
-                             exit_code=result.returncode)
-    if capture and len(result.stdout) > 65536:
+        raise OperationError(f"{_docker_operation(argv)} failed (exit {completed.returncode}).",
+                             exit_code=completed.returncode)
+    if capture and len(completed.stdout) > 65536:
         raise OperationError("Docker returned an oversized response.")
-    return result.stdout if capture else None
+    return completed.stdout if capture else None
 
 
 def select_endpoint(name, origin):
@@ -159,7 +159,7 @@ def select_endpoint(name, origin):
         if not sep or not CONTEXT_NAME.fullmatch(key) or key in contexts:
             raise OperationError("Docker returned malformed or duplicate context entries.")
         contexts[key] = endpoint
-    available = {key: endpoint for key, endpoint in contexts.items()
+    available = {key: endpoint for (key, endpoint) in contexts.items()
                  if local_socket(endpoint)}
     if origin == "command line":
         if not CONTEXT_NAME.fullmatch(name):
@@ -327,8 +327,8 @@ class Docker:
         config = self.private_bytes(config_path, 64 * 1024, secret=False)
         dsn = self.private_bytes(dsn_path, 8192, secret=True)
         try:
-            data = tomllib.loads(config.decode("utf-8"))
-            if data["database"]["dsn_file"] != "/run/conix/connection.dsn":
+            settings_document = tomllib.loads(config.decode("utf-8"))
+            if settings_document["database"]["dsn_file"] != "/run/conix/connection.dsn":
                 raise ValueError
         except (UnicodeError, KeyError, TypeError, ValueError) as error:
             raise OperationError(
@@ -356,13 +356,13 @@ class Docker:
                 "--mount", f"type=volume,source={volume},target=/run/conix",
                 "--entrypoint", "python", image, "-m", "conix.input_staging",
             ]
-            result = subprocess.run(argv, input=envelope, capture_output=True,
+            staging_result = subprocess.run(argv, input=envelope, capture_output=True,
                                     cwd=ROOT, env=self.env, timeout=40, check=False)
-            if result.returncode:
-                cause = _staging_failure(result.stderr)
+            if staging_result.returncode:
+                cause = _staging_failure(staging_result.stderr)
                 detail = cause or "no admitted nonsecret diagnostic returned"
                 raise OperationError(
-                    f"Conix input staging failed (exit {result.returncode}): {detail}."
+                    f"Conix input staging failed (exit {staging_result.returncode}): {detail}."
                 )
             self.verify_inputs(image, volume)
             if not proof:
@@ -488,7 +488,7 @@ class Docker:
 
     def deployment(self, *, operation, name, image, volume, database, rpc):
         """Render/admit one instance, then use that exact project on this Engine."""
-        for label, value in (
+        for (label, value) in (
             ("deployment", name), ("database network", database), ("RPC network", rpc),
         ):
             if type(value) is not str or not CONTEXT_NAME.fullmatch(value):

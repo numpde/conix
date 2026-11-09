@@ -84,15 +84,15 @@ def main():
     group.add_argument("--write", action="store_true")
     group.add_argument("--emit-b64", action="store_true")
     args = parser.parse_args()
-    result = generate()
+    locks = generate()
     if args.write:
-        for name, content in result.items():
+        for (name, content) in locks.items():
             destination = ROOT / "requirements" / (name + ".lock")
             destination.parent.mkdir(exist_ok=True)
             destination.write_text(content, encoding="utf-8")
             print(f"Wrote {destination}")
     else:
-        for name, content in result.items():
+        for (name, content) in locks.items():
             encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
             print(f"CONIX_{name.upper()}_LOCK_B64={encoded}")
 
