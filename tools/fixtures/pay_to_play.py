@@ -9,16 +9,16 @@ it created; the producer owns Anvil, deployment and its cleanup operation.
 import argparse
 import json
 import os
-from pathlib import Path
 import re
 import secrets
-import stat
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 
 from tools.containers.operator import (
     CONTEXT_NAME, Docker, IMAGE_ID, OperationError, ROOT, pinned_images, select_endpoint,
@@ -72,7 +72,7 @@ def pin_sibling_context(docker, name):
     )
     for command in commands:
         try:
-            result = subprocess.run(
+            context_command = subprocess.run(
                 ["docker", "--config", str(docker.config_dir), *command],
                 env=docker.env, cwd=ROOT, stdin=subprocess.DEVNULL,
                 capture_output=True, text=True, timeout=15, check=False,
@@ -114,14 +114,16 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
     """Bound and reap one child; leave private receipts out of terminal output."""
     started = time.monotonic()
     _progress(f"{label}: started")
+
     with output.open("wb") as out, error_file.open("wb") as err:
-        # The scratch directory is private; tighten individual receipts too.
+        # Receipts remain private even if the files are moved after failure.
         output.chmod(0o600)
         error_file.chmod(0o600)
         child = subprocess.Popen(
             argv, cwd=ROOT, env=env, stdin=subprocess.PIPE if payload is not None else subprocess.DEVNULL,
             stdout=out, stderr=err, start_new_session=True,
         )
+
         send_payload = True
         try:
             while True:
@@ -143,11 +145,12 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
 
                     _progress(f"{label}: running ({int(time.monotonic() - started)}s)")
         except BaseException as error:
-            # CLI termination does not certify daemon-side cleanup.
+            # Reaping the CLI does not prove the Docker daemon retired its work.
             try:
                 os.killpg(child.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
+
             try:
                 child.wait(timeout=10)
             except subprocess.TimeoutExpired:
@@ -156,6 +159,7 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
                 except ProcessLookupError:
                     pass
                 child.wait(timeout=5)
+
             if isinstance(error, subprocess.TimeoutExpired):
                 raise CampaignError(
                     f"{label} timed out after {timeout}s; daemon effects are unconfirmed."
@@ -177,12 +181,12 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
 def verify_network(docker, descriptor):
     """Prove that the descriptor identifies a live, producer-owned Anvil."""
     project = descriptor["composeProject"]
-    name = descriptor["dockerNetwork"]
-    expected = f"true {project} {name}"
+    network_name = descriptor["dockerNetwork"]
+    expected = f"true {project} {network_name}"
     observed = docker.run(
         "network", "inspect", "--format",
         '{{.Internal}} {{index .Labels "com.docker.compose.project"}} {{.Name}}',
-        name, timeout=15, capture=True,
+        network_name, timeout=15, capture=True,
     ).strip()
     if observed != expected:
         raise CampaignError("dapp32 fixture network is not the internal, producer-owned network in the JSON.")
@@ -209,6 +213,7 @@ def admit(rendered, *, runner_image, postgres_image, rpc_network):
             or networks["rpc"].get("external") is not True
         ):
             raise CampaignError("Fixture graph includes an unknown service or network.")
+
         for (name, service) in services.items():
             expected_image = postgres_image if name in ("postgres", "bootstrap") else runner_image
             required_user = "999:999" if name in ("postgres", "bootstrap") else "65532:65532"
@@ -238,6 +243,7 @@ def admit(rendered, *, runner_image, postgres_image, rpc_network):
             or "CONIX_TEST_DSN" not in runtime or "CONIX_TEST_OWNER_DSN" in runtime
         ):
             raise CampaignError("One-shot owner credentials are not separated from the runtime.")
+
     except (TypeError, AttributeError, KeyError) as error:
         raise CampaignError("Cannot validate the rendered fixture service graph.") from None
 
@@ -262,11 +268,13 @@ def read_borrowed_descriptor(value):
             if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
                 or info.st_mode & 0o077 or not 0 < info.st_size <= 1048576):
                 raise CampaignError("Fixture JSON must be an owner-owned, mode-0600-or-stricter regular file.")
+
             raw = os.read(fd, 1048577)
         finally:
             os.close(fd)
     except OSError:
         raise CampaignError("Cannot open the selected private fixture descriptor.") from None
+
     if len(raw) > 1048576:
         raise CampaignError("Private fixture descriptor exceeds its byte limit.")
 
@@ -275,6 +283,7 @@ def read_borrowed_descriptor(value):
                              parse_constant=_bad_constant)
     except (UnicodeError, ValueError, RecursionError):
         raise CampaignError("Fixture descriptor must be unique-key UTF-8 JSON.") from None
+
     if type(decoded) is not dict:
         raise CampaignError("Fixture descriptor must be a JSON object.")
 
@@ -319,6 +328,7 @@ class PayToPlayTest:
                     "label=com.docker.compose.project=" + self.project]
             if kind == "container":
                 args.insert(2, "--all")
+
             if self.docker.run(*args, timeout=15, capture=True).strip():
                 raise CampaignError(
                     "The generated Conix SQL project already has resources; "
@@ -330,6 +340,7 @@ class PayToPlayTest:
         images = pinned_images()
         self.docker.require_role(self.runner_image, "evm-test-runner")
         self.docker.require_image(images["postgres"])
+
         self.env = self.docker.env.copy()
         self.env.update(
             CONIX_EVM_TEST_RUNNER_IMAGE=self.runner_image,
@@ -337,25 +348,28 @@ class PayToPlayTest:
             CONIX_FIXTURE_ID=self.fixture_id,
             CONIX_RPC_NETWORK=self.descriptor["dockerNetwork"],
         )
-        argv = _compose(self.docker, self.project)
-        raw = self.docker.run(*argv, "config", "--format", "json",
-                              capture=True, timeout=20, env=self.env)
+        compose = _compose(self.docker, self.project)
+        rendered_json = self.docker.run(*compose, "config", "--format", "json",
+                                        capture=True, timeout=20, env=self.env)
         try:
-            definition = json.loads(raw)
+            rendered = json.loads(rendered_json)
         except ValueError:
             raise CampaignError("Compose returned invalid rendered fixture JSON.") from None
+
         admit(
-            definition, runner_image=self.runner_image,
+            rendered, runner_image=self.runner_image,
             postgres_image=images["postgres"], rpc_network=self.descriptor["dockerNetwork"],
         )
         self.check_new_sql_project()
+
         self.sql_retired = False
         self.sql_started = True
         _progress("Disposable PostgreSQL: starting")
-        self.docker.run(*argv, "up", "--detach", "--no-build", "--pull", "never",
+        self.docker.run(*compose, "up", "--detach", "--no-build", "--pull", "never",
                         "--wait", "--wait-timeout", "60", "postgres",
                         env=self.env, timeout=90)
         _progress("Disposable PostgreSQL: ready")
+
         self._phase("bootstrap", "bootstrap", state=None, need_receipt=False)
         self._phase("initialize", "initialize", state=None, need_receipt=False)
 
@@ -367,6 +381,7 @@ class PayToPlayTest:
         ]
         payload = _json_request(self.descriptor, state) if phase != "bootstrap" else None
         self.consumer_retired = False
+
         try:
             phase_output = owned_command(
                 argv,
@@ -383,6 +398,7 @@ class PayToPlayTest:
                 stderr_tail = self._file("conix-" + phase + ".err").read_bytes()[-16384:]
             except OSError:
                 stderr_tail = b""
+
             reason = parse_phase_failure(stderr_tail, phase=phase)
             if reason is not None:
                 raise CampaignError(f"Conix phase/{phase} failed: {reason}.") from error
@@ -400,10 +416,11 @@ class PayToPlayTest:
 
     def execute(self):
         """Run all phases without acquiring or retiring the dapp32 fixture."""
-        # This is a borrower: the producer's fixture is never started or retired.
-        # The test changes its exclusive chain state through real transactions.
+        # The fixture is borrowed, but its chain state is changed deliberately
+        # by the scenario's transactions and reorganization tests.
         verify_network(self.docker, self.descriptor)
         self.sql()
+
         previous_receipt = None
         for phase in ("baseline", "collected", "restart", "reorg"):
             previous_receipt = self._phase("consumer", phase, state=previous_receipt, need_receipt=True)
@@ -475,12 +492,15 @@ class Campaign:
 
     def acquire(self):
         """Create and independently verify a new producer fixture."""
-        # Never adopt an existing fixture or infer ownership from its ID.
+        # An attempted creation is not authority to remove it; ownership is
+        # established only after the produced descriptor is checked.
         self.creation_attempted = True
         created_receipt = self._dapp32("up")
         descriptor = decode(created_receipt, fixture_id=self.fixture_id)
+
         _progress("dapp32 fixture: verifying Anvil network and deployment")
         verify_network(self.docker, descriptor)
+
         inspected = decode(self._dapp32("info"), fixture_id=self.fixture_id)
         if inspected != descriptor:
             raise CampaignError("Producer fixture changed between creation and independent inspection.")
@@ -496,9 +516,8 @@ class Campaign:
     def cleanup(self):
         """Retire consumers before the producer; report uncertain ownership."""
         errors = self.test.cleanup() if self.test is not None else []
-        consumers_retired = (
-            self.test is None or (self.test.sql_retired and self.test.consumer_retired)
-        )
+        consumers_retired = self.test is None or (self.test.sql_retired and self.test.consumer_retired)
+
         if self.producer_owned and consumers_retired:
             try:
                 self._dapp32("down")
@@ -506,11 +525,13 @@ class Campaign:
             except Exception as error:
                 detail = str(error) if isinstance(error, CampaignError) else type(error).__name__
                 errors.append(f"dapp32 producer fixture/down failed: {detail}; ownership unconfirmed.")
+
         if self.producer_owned or (self.creation_attempted and self.descriptor is None):
             errors.append(
                 "Inspect the original dapp32 fixture ID on the selected Engine; "
                 "creation/retirement ownership cannot be inferred from its name."
             )
+
         return errors
 
     def recovery(self):
@@ -542,12 +563,14 @@ def main():
     parser.add_argument("--runner-image")
     parser.add_argument("--fixture-descriptor")
     args = parser.parse_args()
+
     try:
         if args.from_make:
             args.context = os.environ.get("CONIX_MAKE_DOCKER_CONTEXT", "")
             args.dapp32_dir = os.environ.get("CONIX_MAKE_DAPP32_DIR", "")
             args.runner_image = os.environ.get("CONIX_MAKE_RUNNER_IMAGE", "")
             args.fixture_descriptor = os.environ.get("CONIX_MAKE_FIXTURE_DESCRIPTOR", "")
+
         if not IMAGE_ID.fullmatch(args.runner_image or ""):
             raise CampaignError("Select a prebuilt immutable RUNNER_IMAGE=sha256:<id> with role evm-test-runner.")
 
@@ -559,6 +582,7 @@ def main():
         else:
             # Admission precedes ALL Docker access; no sibling checkout is used.
             borrowed = read_borrowed_descriptor(args.fixture_descriptor)
+
         endpoint = select_endpoint(args.context, args.origin)
         with tempfile.TemporaryDirectory(prefix="conix-test-client-") as directory:
             config = Path(directory)
@@ -566,8 +590,10 @@ def main():
             docker = Docker(endpoint, config)
             docker.require_rootless_engine()
             docker.require_role(args.runner_image, "evm-test-runner")
+
             if owned:
                 pin_sibling_context(docker, args.context)
+
             scratch = Path(tempfile.mkdtemp(prefix="conix-pay-to-play-", dir="/tmp"))
             os.chmod(scratch, 0o700)
             operation = (
@@ -575,10 +601,12 @@ def main():
                 else PayToPlayTest(docker, args.runner_image, scratch, borrowed)
             )
             failure = None
+
             try:
                 operation.execute()
             except BaseException as error:
                 failure = error
+
             try:
                 cleanup = operation.cleanup()
             except BaseException as error:
@@ -587,19 +615,23 @@ def main():
                 cleanup = [f"Cleanup operation raised {type(error).__name__}; owned resources require inspection."]
                 if failure is None:
                     failure = error
+
             if failure is None and not cleanup:
                 shutil.rmtree(scratch)
                 print("PASS: PayToPlay collections, durable Conix indexing, "
                       "separate-session restart and checked manual reorganization repair.")
                 return
-            # Report recovery/cleanup first, then the first failure LAST.
+
+            # Report recovery and cleanup first; end on the original failure.
             print(f"Private phase receipts: {scratch}", file=sys.stderr)
             print(f"Recovery: {operation.recovery()}", file=sys.stderr)
+
             if cleanup:
                 for message in cleanup:
                     print(f"Cleanup unconfirmed: {message}", file=sys.stderr)
             else:
                 print("Cleanup: confirmed for owned resources.", file=sys.stderr)
+
             if failure is not None:
                 if isinstance(failure, KeyboardInterrupt):
                     detail = "Interrupted; inspect exact resource ownership."
@@ -609,6 +641,7 @@ def main():
                     detail = f"{type(failure).__name__}: unexpected failure; inspect private receipts."
                 if cleanup:
                     detail += " Cleanup is ALSO unconfirmed."
+
                 raise CampaignError(f"PayToPlay campaign failed: {detail}") from failure
             raise CampaignError("PayToPlay campaign completed but cleanup could not be confirmed.")
     except (CampaignError, FixtureError, OperationError, OSError, ValueError) as error:
