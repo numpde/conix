@@ -142,9 +142,14 @@ class SharedWheelhouseContracts(unittest.TestCase):
         self.assertIn("requirements/build.lock", selected)
         self.assertIn("src/conix/journal.py", selected)
         self.assertIn("tests/pay_to_play_integration.py", selected)
+        self.assertIn("tests/fixtures/abi/pay_to_play.json", selected)
+        self.assertIn("tests/fixtures/abi/support_matrix.json", selected)
         expected_tests = {
             path.relative_to(ROOT).as_posix()
             for path in (ROOT / "tests").rglob("*.py")
+        } | {
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "tests" / "fixtures" / "abi").glob("*.json")
         }
         selected_tests = {name for name in selected if name.startswith("tests/")}
         self.assertEqual(selected_tests, expected_tests)

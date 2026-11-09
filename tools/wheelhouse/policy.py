@@ -115,6 +115,10 @@ def source_allowlist(root=ROOT):
     test_directory = root / "tests"
     source_modules = tuple(sorted(file.relative_to(root).as_posix() for file in source_directory.rglob("*.py")))
     test_modules = tuple(sorted(file.relative_to(root).as_posix() for file in test_directory.rglob("*.py")))
+    abi_fixture_dir = test_directory / "fixtures" / "abi"
+    abi_fixtures = tuple(sorted(
+        file.relative_to(root).as_posix() for file in abi_fixture_dir.glob("*.json")
+    )))
 
     if "src/conix/__init__.py" not in source_modules or not test_modules:
         raise PoolError("Conix source package or executable test suite is absent from the build context.")
@@ -127,16 +131,17 @@ def source_allowlist(root=ROOT):
     except (OSError, UnicodeError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         raise PoolError("Cannot establish the declared Git source and test inventory.") from None
 
-    # Every test is included; no untracked or non-Python test input is admitted
-    # by this build path. New test fixtures require an explicit policy change.
-    captured_inputs = set((*source_modules, *test_modules))
+    # The only non-Python test inputs are the reviewed ABI JSON fixtures.
+    # Include all tracked fixture bytes in both the stream and its hash proof.
+    # A new directory or arbitrary file type still requires policy review.
+    captured_inputs = set((*source_modules, *test_modules, *abi_fixtures))
     if {path for path in tracked_paths if path} != captured_inputs:
         raise PoolError(
             "Conix source/test files differ from tracked Python inputs; "
             "do not omit tests or stream unreviewed files into a build."
         )
 
-    paths = (*fixed_inputs, *source_modules, *test_modules)
+    paths = (*fixed_inputs, *source_modules, *test_modules, *abi_fixtures)
     if len(paths) != len(set(paths)):
         raise PoolError("The curated image source list contains duplicates.")
 
