@@ -23,10 +23,11 @@ OWNER = 65532
 
 
 class InputError(ValueError):
-    pass
+    """Source-controlled staging failure whose text contains no credential bytes."""
 
 
 def decode(payload: bytes) -> tuple[bytes, bytes]:
+    """Validate a length-prefixed envelope without changing the secret bytes."""
     if not payload.startswith(MAGIC) or len(payload) < len(MAGIC) + 8:
         raise InputError("Staged input envelope has an invalid version or length.")
     config_size, dsn_size = struct.unpack_from("!II", payload, len(MAGIC))
@@ -55,6 +56,7 @@ def decode(payload: bytes) -> tuple[bytes, bytes]:
 
 
 def create_file(directory: int, filename: str, content: bytes):
+    """Create a private file exclusively within an already-open directory."""
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
     descriptor = os.open(filename, flags, 0o600, dir_fd=directory)
     try:
@@ -70,6 +72,7 @@ def create_file(directory: int, filename: str, content: bytes):
 def stage(payload: bytes, target: Path = TARGET):
     """Reject reusing an initialized volume; no overwrite or hot reload."""
     config, secret = decode(payload)
+
     if os.geteuid() != 0:
         raise InputError("Input staging must use the isolated provisioning identity.")
     if target.is_symlink() or not target.is_dir():
@@ -83,6 +86,7 @@ def stage(payload: bytes, target: Path = TARGET):
             raise InputError("Mounted input destination is not a directory.")
         create_file(fd, CONFIG, config)
         create_file(fd, DSN, secret)
+
         # Validate while the staging identity still owns both private files.
         # A uid-0 process with only CAP_CHOWN cannot bypass DAC checks after
         # ownership changes to the runtime uid.
@@ -91,6 +95,8 @@ def stage(payload: bytes, target: Path = TARGET):
         if parsed.database_dsn_file != target / DSN:
             raise InputError("Staged settings point outside the private credential file.")
         read_dsn(target / DSN)
+
+        # Do not widen mode bits to compensate for rootless UID mapping.
         os.chown(CONFIG, OWNER, OWNER, dir_fd=fd, follow_symlinks=False)
         os.chown(DSN, OWNER, OWNER, dir_fd=fd, follow_symlinks=False)
         # Let only the runtime uid traverse the directory and read its files.

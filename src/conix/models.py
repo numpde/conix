@@ -35,12 +35,16 @@ class Phase(IntEnum):
 
 @dataclass(frozen=True, slots=True)
 class Deployment:
+    """Chain and deployed contract identity, independent of RPC transport."""
+
     chain_id: int
     address: ChecksumAddress
 
 
 @dataclass(frozen=True, slots=True)
 class Block:
+    """Block identity and parent link, not a claim about financial finality."""
+
     number: int
     hash: bytes
     parent_hash: bytes
@@ -60,6 +64,8 @@ class Checkpoint:
 
 @dataclass(frozen=True, slots=True)
 class Position:
+    """Authoritative contract fields; no locally derived spending balance."""
+
     customer: ChecksumAddress
     channel_id: int
     payee: ChecksumAddress
@@ -84,6 +90,8 @@ class Position:
 
 @dataclass(frozen=True, slots=True)
 class PositionObservation:
+    """Contract state pinned to a checkpoint with its own observation time."""
+
     checkpoint: Checkpoint
     observed_at: datetime
     asset: ChecksumAddress

@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS conix.collections (
 CREATE INDEX IF NOT EXISTS collections_block_position ON conix.collections(block_number, log_index);
 """
 
+# This is the exact runtime grant boundary, not a general schema default.
 _TABLES = {
     "source_progress": "SELECT, UPDATE",
     "blocks": "SELECT, INSERT, DELETE",
@@ -83,12 +84,12 @@ async def initialize(owner_dsn: str, settings: Settings):
     async with await AsyncConnection.connect(
         owner_dsn, autocommit=True, row_factory=dict_row, connect_timeout=10
     ) as connection:
-        millis = max(1, int(settings.operation_timeout_seconds * 1000))
+        timeout_ms = max(1, int(settings.operation_timeout_seconds * 1000))
         await connection.execute(
-            "SELECT set_config('statement_timeout', %s, false)", (f"{millis}ms",)
+            "SELECT set_config('statement_timeout', %s, false)", (f"{timeout_ms}ms",)
         )
         await connection.execute(
-            "SELECT set_config('lock_timeout', %s, false)", (f"{min(millis, 5000)}ms",)
+            "SELECT set_config('lock_timeout', %s, false)", (f"{min(timeout_ms, 5000)}ms",)
         )
         role = await (await connection.execute(
             "SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
@@ -128,6 +129,8 @@ async def initialize(owner_dsn: str, settings: Settings):
             raise ConfigurationError(
                 "The runtime role must be a separate unprivileged login without schema-owner membership."
             )
+        # One lock excludes schema enrollment from a running writer without
+        # exposing owner credentials to the runtime process.
         key = advisory_key(settings)
         locked = await (await connection.execute(
             "SELECT pg_try_advisory_lock(%s) AS locked", (key,)
@@ -139,6 +142,8 @@ async def initialize(owner_dsn: str, settings: Settings):
                 for statement in SCHEMA.split(";"):
                     if statement.strip():
                         await connection.execute(statement)
+                # Repeated installation verifies rather than re-enrolling or
+                # resetting a source with existing collection history.
                 await connection.execute(
                     "INSERT INTO conix.source_progress "
                     "(id, schema_version, source_digest, chain_id, contract_address, "

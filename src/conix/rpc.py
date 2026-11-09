@@ -51,7 +51,7 @@ class RpcClient:
         self._max_response_bytes = max_response_bytes
 
     async def call(self, method: str, params: list) -> object:
-        """Return a matching result or fail explicitly, without retries or side-effect claims."""
+        """Return one bounded, matching response; never retry an unknown RPC effect."""
         if type(method) is not str or not method:
             raise TypeError("RPC method must be a nonempty string.")
         if type(params) is not list:
@@ -71,6 +71,8 @@ class RpcClient:
                     encoding = response.headers.get("content-encoding")
                     if encoding is not None and encoding != "identity":
                         raise RpcProtocolError(f"RPC {method} returned an unsupported compressed response.")
+                    # Enforce the byte limit before extending the buffer; a
+                    # dishonest or broken server cannot force unbounded reads.
                     body = bytearray()
                     async for chunk in response.aiter_raw():
                         if len(body) + len(chunk) > self._max_response_bytes:
@@ -96,6 +98,8 @@ class RpcClient:
         ):
             raise RpcProtocolError(f"RPC {method} returned an invalid response envelope.")
         if "error" in envelope:
+            # Upstream prose is untrusted and may contain sensitive data;
+            # preserve the numeric error code instead.
             error = envelope["error"]
             if type(error) is not dict or type(error.get("code")) is not int or type(error.get("message")) is not str:
                 raise RpcProtocolError(f"RPC {method} returned a malformed error envelope.")
@@ -104,6 +108,7 @@ class RpcClient:
 
 
 def _unique_object(pairs):
+    """Duplicate JSON names would make source interpretation ambiguous."""
     fields = {}
     for name, value in pairs:
         if name in fields:
@@ -117,6 +122,7 @@ def _nonfinite(_token):
 
 
 def _finite_float(token):
+    """Reject JSON values outside finite binary64 even when syntactically valid."""
     value = float(token)
     if not math.isfinite(value):
         raise ValueError("RPC JSON number exceeds the finite binary64 range.")

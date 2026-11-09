@@ -50,6 +50,7 @@ class Observer:
         self.chain = chain
 
     async def _checkpoint(self) -> Checkpoint:
+        """Select a complete, currently canonical prefix; reject invalidation."""
         state = await self.journal.basis()
         if state.blocked_reason:
             raise ObservationUnavailable(f"Indexed history blocked: {state.blocked_reason}")
@@ -63,7 +64,8 @@ class Observer:
         head = await self.chain.current_head()
         if head.number < state.checkpoint.number:
             raise ObservationUnavailable("Upstream head is behind the retained checkpoint.")
-        # Source may have changed while remote requests were underway.
+        # RPC cannot be part of the SQL snapshot. Re-read the durable basis
+        # afterward so repair or invalidation cannot authorize a stale result.
         current = await self.journal.basis()
         if current.blocked_reason or current.generation != state.generation:
             raise ObservationUnavailable("Indexed history was invalidated during observation.")
@@ -84,6 +86,8 @@ class Observer:
     @_operation_deadline
     async def latest_position(self, customer: ChecksumAddress, channel_id: int) -> PositionObservation:
         checkpoint = await self._checkpoint()
+        # The contract view is pinned to the same identified block as the
+        # checkpoint; using 'latest' would mix incompatible chain states.
         asset, position = await self.chain.contract.position(customer, channel_id, checkpoint.block)
         if not await self.chain.canonical(checkpoint.block):
             raise ObservationUnavailable("Position block was replaced during its block-pinned read.")
@@ -94,6 +98,7 @@ class Observer:
     async def voucher_collected_events(
         self, checkpoint: Checkpoint, *, cursor: CollectionCursor | None, limit: int,
     ) -> CollectionPage:
+        """Return one durable prefix page only while its generation is usable."""
         page = await self.journal.page(checkpoint, cursor, limit)
         if not await self.chain.canonical(checkpoint.block):
             raise HistoryUnavailable("Collection checkpoint changed canonical branch; resynchronize.")
@@ -104,6 +109,7 @@ class Observer:
     async def canonical_evidence(
         self, checkpoint: Checkpoint, block_numbers: tuple[int, ...], *, include_finalized: bool,
     ) -> CanonicalEvidence:
+        """Connect receipt and optional finality claims to the retained prefix."""
         if type(checkpoint) is not Checkpoint or checkpoint.deployment != self.journal.settings.deployment:
             raise HistoryUnavailable("Canonical evidence requires a checkpoint from this deployment.")
         if type(include_finalized) is not bool or type(block_numbers) is not tuple:
@@ -118,7 +124,8 @@ class Observer:
         if not await self.chain.canonical(checkpoint.block):
             raise ObservationUnavailable("Checkpoint is no longer canonical.")
 
-        # A complete published prefix already establishes intermediate links.
+        # The journal published every intermediate parent link. Load only
+        # requested retained headers; older external history needs fresh RPC.
         # Query only relevant retained identities, not every intervening block.
         start = self.journal.settings.start_block
         requested = set(block_numbers)
@@ -140,7 +147,8 @@ class Observer:
                 raise ObservationUnavailable("Earlier canonical headers do not join retained history.")
             recorded.update((block.number, block) for block in earlier)
 
-        # Check requested canonical identities independently against RPC.
+        # Retention proves local continuity, not that the upstream branch
+        # still has these identities. Compare the requested heights afresh.
         for number in (*block_numbers, checkpoint.block.number):
             actual = await self.chain.header(number)
             if actual != recorded[number]:

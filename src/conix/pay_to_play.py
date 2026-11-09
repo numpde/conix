@@ -50,6 +50,8 @@ COLLECTION_SIGNATURE = "VoucherCollected(address,uint256,address,uint256,uint256
 
 def _abi(types, raw, label):
     """Reject malformed or trailing ABI bytes rather than project a partial reply."""
+    # A decoder may accept noncanonical padding or trailing bytes; round-trip
+    # encoding is part of the contract's exact-byte interpretation.
     try:
         values = decode(types, raw, strict=True)
         if encode(types, values) != raw:
@@ -71,6 +73,7 @@ class PayToPlay:
         self.deployment = deployment
 
     async def _call(self, calldata: bytes, block: Block) -> bytes:
+        """Use EIP-1898 block-hash selection; no unpinned 'latest' fallback."""
         result = await self.rpc.call(
             "eth_call",
             [
@@ -84,6 +87,8 @@ class PayToPlay:
         """Read asset and position at the supplied block; actor zero supplies no UI identity."""
         if not is_checksum_address(customer):
             raise ValueError("Customer address must be a checksummed EVM address.")
+        # Both contract reads refer to the same block hash. Actor zero avoids
+        # substituting a UI caller's permissions for accounting facts.
         asset_raw = await self._call(keccak(text="asset()")[:4], block)
         asset = to_checksum_address(_abi(("address",), asset_raw, "asset")[0])
         calldata = keccak(text=POSITION_SIGNATURE)[:4] + encode(
@@ -160,10 +165,11 @@ class PayToPlay:
         )
         if type(result) is not list:
             raise RpcProtocolError("RPC collection log result must be an array.")
+        # Block-global log_index, not transaction hash, defines occurrence order.
         return tuple(sorted((self.collection(item, block) for item in result), key=lambda event: event.log_index))
 
     def collection(self, value: object, block: Block) -> Collection:
-        """Decode one positive transfer occurrence; its invoice reference is not allocation."""
+        """Decode an exact occurrence; invoice_hash does not allocate a payment."""
         if type(value) is not dict:
             raise RpcProtocolError("RPC collection log must be an object.")
         try:
