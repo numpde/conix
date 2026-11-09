@@ -16,6 +16,8 @@ import sys
 import tempfile
 from urllib.parse import urlsplit
 
+from tools.wheelhouse.policy import PoolError
+
 ROOT = Path(__file__).resolve().parents[2]
 CONTEXT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 IMAGE_ID = re.compile(r"sha256:[a-f0-9]{64}\Z")
@@ -720,8 +722,8 @@ def main():
                 target = args.action.split("/")[1]
                 from tools.wheelhouse.operations import SharedWheelhouse
                 print(SharedWheelhouse(docker, images, args.wheelhouse).build(target))
-    except (OperationError, OSError) as error:
-        raise SystemExit(f"Conix container operation refused or failed: {error}") from None
+    except (OperationError, PoolError, OSError) as error:
+        raise SystemExit(f"Conix container operation failed ({type(error).__name__}): {error}") from None
 
 
 if __name__ == "__main__":
