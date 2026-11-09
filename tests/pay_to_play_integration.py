@@ -212,8 +212,16 @@ async def _send(chain, sender, signature, types=(), arguments=(), *, value=0, er
                 f"Fixture {action} submission failed ({type(error).__name__}); "
                 "outcome unconfirmed; do not resubmit."
             ) from error
+        # Submission can succeed before the transaction is mined. Poll
+        # receipt *reads* briefly; never rebroadcast an accepted transaction.
+        mined = None
         try:
-            mined = await rpc.call("eth_getTransactionReceipt", ["0x" + tx_hash.hex()])
+            for attempt in range(10):
+                mined = await rpc.call("eth_getTransactionReceipt", ["0x" + tx_hash.hex()])
+                if mined is not None:
+                    break
+                if attempt != 9:
+                    await asyncio.sleep(0.2)
         except (RpcError, RpcProtocolError, RpcUnavailable, TimeoutError) as error:
             raise ScenarioFailure(
                 f"Fixture {action} receipt lookup failed ({type(error).__name__}); "
