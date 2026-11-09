@@ -108,8 +108,16 @@ def main():
     try:
         payload = sys.stdin.buffer.read(len(MAGIC) + 8 + MAX_CONFIG + MAX_DSN + 1)
         stage(payload)
-    except (InputError, OSError, ValueError) as error:
-        raise SystemExit(f"Conix input staging refused the private volume or input schema: {type(error).__name__}.") from None
+    except InputError as error:
+        # InputError messages are fixed by this source file: they never embed
+        # credential bytes, JSON payloads or arbitrary external exception text.
+        raise SystemExit(f"Conix input staging failed (InputError): {error}") from None
+    except (OSError, ValueError) as error:
+        # External exception messages may contain paths or credential contents.
+        raise SystemExit(
+            f"Conix input staging failed ({type(error).__name__}): "
+            "inspect volume permissions and the private configuration."
+        ) from None
 
 
 if __name__ == "__main__":
