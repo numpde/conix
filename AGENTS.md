@@ -31,7 +31,7 @@ Container and dependency authority
   reads literal exported values and constructs subprocess argument arrays.
 - Select one named local Docker Engine per operation, pin its Unix endpoint,
   and refuse host root for ordinary operator commands.
-- Production runtime/start requires a rootless daemon. Host CI image builds
+- Production deployment/apply requires a rootless daemon. Host CI image builds
   are not evidence of rootless deployment readiness.
 - No ambient Docker/Compose override, arbitrary host bind, Docker Engine socket,
   automatic image pull or privileged runtime.
@@ -41,7 +41,7 @@ Container and dependency authority
 - Private DSN bytes must never appear in image layers, argv, service logs or
   repository files. Staging is an explicit one-time confined operation.
 - Schema installation and upgrades use a separate non-superuser owner login and
-  the explicit one-shot schema/init path. Runtime sessions and observers use
+  the explicit one-shot database/schema/initialize path. Runtime sessions and observers use
   only conix_runtime DML. No owner credentials in the ordinary worker's volume.
 - Never add DDL to the concrete Journal/Writer. Evolve schema ownership and
   migration authorization outside the protected Tier-0 scanner and read guard.
@@ -52,7 +52,7 @@ Container and dependency authority
 
 Qualification
 -------------
-make check/container and make check/inputs require no Docker, credentials or
+make test/repository/run and make repository/inputs/check require no Docker, credentials or
 network. Other lanes require explicitly reviewed inputs. The installed package
 and real PostgreSQL tests run in a contained, disposable stack with a restricted
 runtime database role. The full Anvil and pay-to-play accounting scenario must
@@ -62,16 +62,16 @@ or container tests are green.
 
 Sibling-fixture campaign
 ------------------------
-The explicit tests/fixture lane consumes the public dapp32 repository's
+The explicit campaign/pay-to-play/run lane consumes the public dapp32 repository's
 supported fixture/up, fixture/info and fixture/down contract, never changes its
 source or starts a replacement Anvil implementation. The descriptor is a
 bounded private stdin handoff; its test keys cannot appear in output, Docker
 labels, environment variables, log messages or runtime image layers.
-The optional Foundry Cast binary belongs in the fixture image alone. Prefer
+The optional Foundry Cast binary belongs in the evm-test-runner image alone. Prefer
 the deployed contract's voucherDigest over a duplicate EIP-712 implementation.
 Only Conix-owned SQL and verified newly created producer fixtures may be
 retired automatically; preserve exact recovery records on uncertain outcomes.
-The real fixture campaign and the pay-to-play accounting acceptance gate are
+The borrowed test, owned fixture campaign and pay-to-play accounting acceptance gate are
 distinct qualifications and must be reported separately.
 
 Shared wheelhouse
@@ -102,3 +102,30 @@ bootstrap, shared pool/source policy, contained target selector, and offline
 image-build orchestration. Invoke operators with python -m via Make; avoid new
 top-level tools/*.py scripts or reintroducing manual Python path mutation.
 No operator module is packaged into the installed Conix runtime distribution.
+
+Operator API contract
+---------------------
+notes/002_make_operator_contract.txt is the public Make interface. Targets
+name a stable resource, role or subject, and precise action, not Python
+locations, implementation tiers or test mechanisms. Do not introduce aliases
+for retired names. Distinguish read-only check, explicit acquire, offline
+build, test run, owner initialize, retained resource create, deployment apply,
+status and remove. Config/check validates the concrete Compose graph but does
+not produce a rendered document. Deployment/remove deletes only its Conix
+Compose project, never external networks, PostgreSQL data or staged inputs.
+
+The standalone test/pay-to-play/run accepts a private owned mode-0600 JSON
+fixture descriptor and may alter the selected Anvil state through transactions,
+snapshots and reorganization. It has NO permission to invoke dapp32 up/info/down
+or retire producer resources. Campaign/pay-to-play/run creates and inspects its
+own producer fixture, runs exactly the same test and calls dapp32 down only
+after owned consumer retirement. These actions must remain separate in code,
+tests, Make, help text and recoverability diagnostics.
+
+IMAGE names the single image checked for its expected role; RUNNER_IMAGE names
+a composite test runner; INDEXER_IMAGE names the application image used by
+schema, inputs and deployment. Both selectors are immutable sha256 IDs and
+the image role is validated before any durable activity. WHEELHOUSE and
+DOCKER_CONTEXT stay explicit operator choices; source, test and build tooling
+must never change the selected engine implicitly. New test targets require
+separate source/admission tests and explicit granted resources.
