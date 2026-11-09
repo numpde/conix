@@ -145,7 +145,47 @@ async def _call_uint(chain, signature, types=(), arguments=()):
     return int.from_bytes(data(value, "contract view", size=32), "big")
 
 
-async def _send(chain, sender, signature, types=(), arguments=(), *, value=0):
+def _contract_errors(descriptor):
+    """Source-controlled names from the verified deployed contract ABI."""
+    mapping = {}
+    for item in descriptor["contracts"]["PayToPlay"]["abi"]:
+        if type(item) is not dict or item.get("type") != "error":
+            continue
+        name, inputs = item.get("name"), item.get("inputs")
+        if (type(name) is not str or not name.isascii() or not name.isidentifier()
+                or len(name) > 64 or type(inputs) is not list
+                or any(type(entry) is not dict or type(entry.get("type")) is not str
+                       for entry in inputs)):
+            continue
+        signature = name + "(" + ",".join(entry["type"] for entry in inputs) + ")"
+        mapping[keccak(text=signature)[:4].hex()] = name
+    return mapping
+
+
+async def _revert_reason(chain, tx, errors):
+    """Optional read-only Anvil diagnostic; never echo an untrusted trace."""
+    try:
+        trace = await chain.rpc.call("debug_traceTransaction", [
+            tx, {"tracer": "callTracer", "tracerConfig": {"onlyTopCall": True},
+                 "timeout": "5s"},
+        ])
+    except Exception:
+        return "trace unavailable"
+    if type(trace) is not dict:
+        return "trace unavailable"
+    output = trace.get("output")
+    if type(output) is str and output.startswith("0x") and len(output) >= 10:
+        selector = output[2:10].lower()
+        if selector in errors:
+            return "Solidity error " + errors[selector]
+        if all(char in "0123456789abcdef" for char in selector):
+            return "unknown Solidity error selector 0x" + selector
+    if trace.get("error") == "out of gas":
+        return "out of gas"
+    return "revert reason unavailable"
+
+
+async def _send(chain, sender, signature, types=(), arguments=(), *, value=0, errors=None):
     """Anvil-only transaction; require an actual successful mined receipt."""
     rpc = chain.rpc
     await rpc.call("anvil_impersonateAccount", [sender])
@@ -183,8 +223,10 @@ async def _send(chain, sender, signature, types=(), arguments=(), *, value=0):
             status = mined.get("status")
             outcome = "reverted" if status == "0x0" else "unknown receipt status"
             gas_detail = f"; gas used {gas} of {int(GAS, 16)}" if gas is not None else ""
+            reason = await _revert_reason(chain, "0x" + tx_hash.hex(), errors or {}) if status == "0x0" else ""
+            detail = f"; {reason}" if reason else ""
             raise ScenarioFailure(
-                f"Fixture {action} {outcome}{gas_detail}; do not resubmit."
+                f"Fixture {action} {outcome}{gas_detail}{detail}; do not resubmit."
             )
         return mined
     finally:
@@ -258,12 +300,13 @@ async def _collect(journal, chain, observer, descriptor, prior):
     collector = to_checksum_address(accounts["relayer"]["address"])
     payee = to_checksum_address(accounts["payee"]["address"])
     channel = await _call_uint(chain, "channelCount()")
+    errors = _contract_errors(descriptor)
     await _send(chain, admin, "createChannel(address,address,uint64)",
-                ("address", "address", "uint64"), (payee, collector, 3600))
+                ("address", "address", "uint64"), (payee, collector, 3600), errors=errors)
     await _send(chain, customer, "registerVoucherKey(uint256,address)",
-                ("uint256", "address"), (channel, customer))
+                ("uint256", "address"), (channel, customer), errors=errors)
     await _send(chain, customer, "fund(uint256,uint256)",
-                ("uint256", "uint256"), (channel, 100), value=100)
+                ("uint256", "uint256"), (channel, 100), value=100, errors=errors)
     invoices = (bytes.fromhex("61" * 32), bytes.fromhex("62" * 32))
     first_signature = await _voucher_signature(
         chain, accounts["customer"]["privateKey"], customer, channel, 40, invoices[0]
@@ -271,16 +314,16 @@ async def _collect(journal, chain, observer, descriptor, prior):
     first = await _send(chain, collector,
         "collect(address,uint256,uint256,bytes32,uint256,bytes)",
         ("address", "uint256", "uint256", "bytes32", "uint256", "bytes"),
-        (customer, channel, 40, invoices[0], 40, first_signature))
+        (customer, channel, 40, invoices[0], 40, first_signature), errors=errors)
     await _send(chain, admin, "setPayee(uint256,address)",
-                ("uint256", "address"), (channel, admin))
+                ("uint256", "address"), (channel, admin), errors=errors)
     second_signature = await _voucher_signature(
         chain, accounts["customer"]["privateKey"], customer, channel, 60, invoices[1]
     )
     second = await _send(chain, collector,
         "collect(address,uint256,uint256,bytes32,uint256,bytes)",
         ("address", "uint256", "uint256", "bytes32", "uint256", "bytes"),
-        (customer, channel, 60, invoices[1], 20, second_signature))
+        (customer, channel, 60, invoices[1], 20, second_signature), errors=errors)
     mined_head = await chain.current_head()
     await _follow(journal, chain, mined_head.number)
     checkpoint = await observer.latest_checkpoint()
