@@ -1,0 +1,343 @@
+Conix — candidate declarative EVM indexer design
+=================================================
+
+Date: 2026-11-09
+Status: DESIGN PROPOSAL; not implemented, qualified, or an API commitment.
+Branch: 20261108-tier0-executable-core
+Companions: 000_architecture_guidelines.txt, 001_implementation_plan.txt,
+002_make_operator_contract.txt.
+
+Purpose and change of direction
+-------------------------------
+
+Conix currently implements a concrete PayToPlay-specific Tier-0 observer:
+one contract, VoucherCollected, hand-written ABI interpretation, and
+checkpoint-bound collection history. The real dapp32/Anvil/PostgreSQL
+campaign has passed, including separate-session restart and checked
+manual reorganization repair. That validates important behavior, not the
+generality of its API.
+
+The intended baseline is instead a small, configuration-driven EVM
+indexer: configured event acquisition, complete durable block history,
+ABI-aware read-only contract calls, checkpoint-bound queries, and canonical
+evidence. The same installed program must work for PayToPlay and unrelated
+EVM contracts without writing contract-specific Conix code.
+
+This is a deliberate revision of the single-PayToPlay source and Observer
+API in notes 000/001. Preserve their correctness and concrete-delegation
+requirements wherever applicable, but DO NOT pretend the generic redesign
+can be delivered as a transparent wrapper around the existing engine,
+schema, and Observer. Review protected-core changes explicitly. Do not
+freeze a general-purpose Tier 0 until the new end-to-end gates pass.
+
+The configuration selects blockchain facts; it does not evaluate their
+business meaning. No adapter that retains the four PayToPlay-specific
+Observer methods is planned. PayToPlay must call the same generic API as
+other consumers; its financial policy stays in PayToPlay.
+
+Non-negotiable separation
+-------------------------
+
+Indexer authority:
+  - identify chain, selected contracts, event ABI declarations, history origin;
+  - acquire and validate bounded, block-identified RPC evidence;
+  - decode events according to their *complete* ABI declarations;
+  - record every selected event returned by the trusted source, including
+    ABI-valid events that look economically or semantically surprising;
+  - advance the complete block prefix transactionally, including empty blocks;
+  - return bounded, generation-bound event pages, block-pinned ABI calls, and
+    checked chain evidence; reject invalidated or unavailable observations;
+  - retain exclusive publication ownership and checked manual repair.
+
+Consumer authority:
+  - interpret event values, invoice references, payees and channel state;
+  - decide whether an event constitutes admissible payment evidence;
+  - apply confidence/finality policy, reconcile invoices and pay decisions;
+  - decide which contracts and ABIs it trusts for a financial purpose.
+
+The indexer must NOT reject or drop an otherwise valid log because amount=0,
+voucherPaid<amount, an unexpected payee, or an unknown invoiceHash.
+These are not indexer invariants. Retaining them would turn an accidental
+PayToPlay decoder restriction into a generic rule. PayToPlay must retain
+appropriate financial validation after migration; removing it from Conix
+must not silently remove it from the payment system.
+
+Conversely, malformed event encoding, wrong contract/topic identity, wrong
+block identity, duplicates, inconsistent ordering, incomplete responses,
+or exceeded resource bounds must fail the affected block without advancing
+coverage. Failure is not evidence of absence.
+
+Scope of first generic baseline
+-------------------------------
+
+  * One explicitly selected EVM chain and configured history origin per
+    instance; several fixed contracts and selected events on that chain.
+  * ABI-defined, nonanonymous events, with full indexed/nonindexed layouts.
+  * ABI-declared view/pure calls through eth_call pinned to checkpoint hash.
+  * Ordered events, equality filters over supported scalar ABI fields,
+    bounded pagination and checked canonical evidence.
+  * PostgreSQL history, manual repair/rebuild, explicit resource bounds,
+    source identity, private staged inputs and least-privilege operation.
+
+Out of scope for this baseline:
+  * Business-rule checks, validation expressions, $variable substitution,
+    application-specific materialized tables, arbitrary SQL transformations,
+    callbacks, subscriptions, streams, GraphQL, HTTP, transaction sending,
+    signing, automatic contract discovery, cross-chain queries or joins.
+  * Automatic recovery/retries (Tier 1), and speculative caching/prefetch or
+    other throughput work (Tier 2); keep their concrete-delegation obligations.
+  * Proving independent chain consensus, completeness against a dishonest
+    RPC server, or economic finality.
+
+Minimal declarative configuration
+---------------------------------
+
+TOML remains the configuration format. The ABI file is the only language
+used to describe event and function shapes; do not invent another grammar.
+
+ILLUSTRATIVE ONLY (not currently accepted by the loader):
+
+    version = 1
+
+    [chain]
+    chain_id = 31337
+    genesis_hash = "0x<32 bytes>"
+    rpc_url = "http://anvil:8545"
+    start_block = 1
+
+    [contracts.payment]
+    address = "0x<20-byte checksummed address>"
+    abi_file = "abi/PayToPlay.json"
+    events = [
+        "VoucherCollected(address,uint256,address,uint256,uint256,bytes32)",
+    ]
+
+The established database and limits configuration remains explicit; its
+credential and deployment-staging boundary must not be weakened. Relative
+ABI paths are resolved inside a bounded, staged input snapshot, never as
+runtime downloads. Capture the exact ABI bytes by digest; reject changes
+without a reviewed catalog decision. Whether an explicit abi_sha256 field
+is useful in TOML rather than only the staged catalog is undecided; do
+not redundantly require both without a reason.
+
+A contract's event selector must resolve to exactly one complete ABI event
+declaration (including indexed flags and types). An event signature by
+itself is NOT the decoding layout: ERC-20 and ERC-721 both have
+Transfer(address,address,uint256), but differ in which arguments are
+indexed. The same-signature/different-layout case must work side by side.
+
+Decode indexed dynamic values as the on-chain topic HASH, not as recovered
+original values. Preserve raw topics/data so that derivations can be
+reproduced. Unsupported anonymous/ambiguous layouts fail configuration
+admission rather than being guessed.
+
+ABI-defined view/pure functions require NO duplicate [views] declaration.
+The reader names the contract, canonical function signature and arguments;
+the ABI determines encoding/decoding and resulting named fields. Do not
+invent a grouped-call DSL, '$customer' bindings, or a declarative checks
+language. Applications compose several calls against one checkpoint.
+
+A bytecode-present-at-'latest' gate is not a prerequisite to historical
+event indexing: a contract can have valid historical events without
+currently deployed code. An ABI does not authenticate contract semantics.
+Contract-call availability must be checked when calling, at the requested
+block. Genesis-hash binding protects against some wrong-network mistakes
+but does not by itself prove a unique fork or source honesty.
+
+Public Python reader — proposed operations
+------------------------------------------
+
+ILLUSTRATIVE (not existing Conix signatures):
+
+    checkpoint = await reader.checkpoint()
+
+    asset = await reader.call(
+        checkpoint=checkpoint,
+        contract="payment",
+        function="asset()",
+        arguments=(),
+    )
+
+    position = await reader.call(
+        checkpoint=checkpoint,
+        contract="payment",
+        function="viewPosition(address,uint256,address)",
+        arguments=(customer, channel_id, actor),
+    )
+
+    page = await reader.events(
+        checkpoint=checkpoint,
+        contract="payment",
+        event="VoucherCollected(address,uint256,address,uint256,uint256,bytes32)",
+        where={"customer": customer, "channelId": channel_id},
+        cursor=None,
+        limit=100,
+    )
+
+    evidence = await reader.evidence(
+        checkpoint=checkpoint,
+        block_numbers=(100, 105, 110),
+        include_finalized=True,
+    )
+
+'where' means only ABI-typed equality over supported scalar fields. It is
+an API argument, not a user-defined expression grammar. If a field is not
+queryable, reject explicitly. Query cost must be bounded, including when
+few events match; do not promise arbitrary scan performance.
+
+Every result identifies the selected checkpoint and source. Checkpoints
+carry the complete indexed block, an invalidatable history generation,
+the source/catalog identity, and independently observed upstream-head
+information. The reader must distinguish 'indexed through X' from
+'upstream head currently Y' and from 'X is finalized'. The indexer
+does not define financial confirmation policy.
+
+All calls use the SAME supplied checkpoint block hash (EIP-1898-style
+blockHash/requireCanonical when supported), never independently changing
+'latest'. Reject unsupported historical state rather than downgrading.
+Check that the checkpoint/generation remains usable after external RPC;
+a verified result can still be invalidated by a future reorganization.
+
+An event exposes common occurrence metadata (block hash, height and time,
+contract, transaction hash/index, log index) and ABI-typed fields. Preserve
+uint256 exactly; no lossy JSON numbers. Event identity is based on chain
+occurrence, not a generated SQL row ID. Allow the same ABI signature on
+different contracts with different argument layouts.
+
+Event page semantics are stronger than 'SQL returned some rows':
+  - fixed source, selection/filter and checkpoint;
+  - declared history_start and full-block coverage through checkpoint;
+  - deterministic chain occurrence order;
+  - cursor identifies the source, history generation, query and next global
+    event position (or equivalent stable continuation identity);
+  - complete means all matching events through THIS checkpoint are supplied;
+  - mismatch, invalidated history, or changed filter explicitly fails.
+
+A sparse filtered result must not advance by matching-row OFFSET alone or
+silently skip intervening events. A cursor MAY be continued at a newer
+checkpoint in the same uninterrupted generation if its prefix remains
+valid; this is a capability to prove, not to assume.
+
+Canonical evidence returns requested identified block facts and optional
+source-reported finalized ancestry. Unknown/unavailable is distinct from
+confirmed replacement. The bound on ancestry work is explicit. Neither
+the checkpoint nor source-reported finality establishes independent consensus.
+
+Ingestion, persistence and configuration evolution
+--------------------------------------------------
+
+One writer publishes EXACTLY one complete block per transaction, including
+all selected events from all configured contracts; no source can be omitted
+because its RPC query failed. A fixed global origin and checkpoint make
+coverage simple. One slow/broken configured source stalls the shared prefix;
+accept this initial trade-off, rather than inventing per-contract recovery.
+
+Retain the existing explicit writer lock, no RPC inside SQL transactions,
+generation/revision fences, an unanswered-COMMIT stop/restart protocol, and
+repair that atomically deletes only Conix-owned suffix history. A writer
+never acquires schema-owner privileges. Owner-only migrations must be
+explicit, not automatic at startup. Uncertain cleanup must be reported.
+
+Proposed storage concepts:
+  source_progress — chain/catalog identity, completed prefix, generation,
+                    revision, blocked status, independently observed head;
+  blocks          — contiguous height/hash/parent/timestamp;
+  events          — globally ordered selected occurrences, original topics
+                    and data, decoded/queryable scalar facts.
+
+This does NOT yet decide the physical representation of typed fields.
+A single generic event table with immutable raw logs and lossless decoded
+scalars is the candidate. JSONB+GIN is one candidate query strategy,
+NOT an accepted performance conclusion. Compare storage volume, ingest
+cost, indexed equality filtering and cursor performance against other
+simple physical layouts before selecting. No generated application tables
+or exposed SQL grammar are justified at present.
+
+Indexing catalog identity must include chain identification, origin,
+selected contract addresses, selected events and complete event ABI
+layouts. A changed event selection cannot reuse old coverage silently;
+first version may require explicit rebuild. Read-only functions/query
+ABI may change without reindexing event history when their identity is
+kept separate. Whether multiple contracts need independently enrolled
+start blocks is deferred; the first version uses one explicit origin.
+
+The input staging path presently contains only TOML and private DSN;
+it must be extended safely for pinned ABI bytes. Maintain the operator's
+original permissions, immutable snapshots, no ambient network/pip or
+uncontrolled file access, explicit Docker context and rootless constraints.
+Give read consumers a distinct least-privilege PostgreSQL identity. Avoid
+an HTTP/GraphQL server or remote-access protocol until actually required.
+
+Proof obligations, not merely examples
+--------------------------------------
+
+1. PayToPlay: index actual signed VoucherCollected logs; query customer/
+   channel history and read asset()/viewPosition() at one checkpoint;
+   complete the REAL accounting acceptance/collection/payment/restart
+   scenario using the generic API, with no old LocalObserver fallback.
+2. ERC-20: same installed code and a different ABI/config, Transfer
+   filtering and block-pinned balanceOf().
+3. ERC-721: same Transfer(address,address,uint256) signature as ERC-20,
+   different indexed flags; prove correct decoding and independent queries.
+4. Multi-contract reorg: publish full empty/nonempty blocks, fail closed
+   when one source fails, reject stale generations/cursors, repair checked
+   suffix and resume with one correct event stream.
+5. Adversarial: malformed/wrong-source logs, duplicate/out-of-order logs,
+   indexed dynamic hashes, ABI-valid domain-surprising events retained,
+   unknown contract code at latest, absent historical eth_call, unsupported
+   finality, an unanswered PostgreSQL COMMIT, reads concurrent with repair,
+   changed configuration and old-checkpoint/new-accounting reconciliation.
+6. Delegation: higher-tier wrappers must invoke the SAME concrete
+   publication, validation, observation and repair operations; no second
+   scanner or publisher may appear under a supposedly equivalent facade.
+7. Measurements: quantify actual event storage, filtered-query latency and
+   large-history catch-up before selecting a physical index strategy or
+   committing to throughput optimizations.
+
+No work is considered qualified by a mock decoder or a rewritten
+PayToPlay-only test disguised as generic. Validate both the real-contract
+campaign and at least one materially unrelated ABI without source changes.
+
+Outstanding decisions
+---------------------
+
+A. Physical event-field representation and indexes: benchmark before freeze.
+B. Meaningful query-work limits and the supported set of equality-filterable
+   ABI field types: decide from measurable bounded behavior.
+C. ABI-file identity and staged-catalog packaging: retain one authoritative
+   byte source, avoid duplicated checks and accidental operator defaults.
+D. Exact chain identity and genesis handling for development forks: pin
+   source, then recheck checkpoint ancestry; do not claim genesis alone proves
+   provider correctness.
+E. Historical catalog evolution: first rebuild safely, consider incremental
+   enrollment only when needed and without falsely broadening coverage.
+F. Consumer access: first a local Python reader with independent DB/RPC
+   privileges. A remote API is a separate decision, not silently implied.
+G. Protected-core freeze: rewrite the Tier-0 notes and acceptance matrix
+   once the generic design and actual financial integration are qualified.
+
+Rejected shortcuts
+------------------
+
+- Do not add a 'checks' DSL or domain validation to configuration.
+- Do not copy rindexer's table mutation language, callbacks or GraphQL
+  merely because those systems exist.
+- Do not build a named 'views' grammar to invoke functions the ABI already
+  describes.
+- Do not treat ABI signature hashes as complete event layouts.
+- Do not treat a stored event row as proof of complete indexing or canonicality.
+- Do not conflate event-history identity with ABI view availability.
+- Do not replace the existing core behind compatibility adapters: migrate
+  PayToPlay directly and test the actual accounting behavior.
+- Do not declare SQL/JSONB, automatic recovery, batching or a new public
+  transport 'done' before measuring or validating them.
+
+Decision threshold
+------------------
+
+The intended first generic release is successful when a supported EVM ABI,
+contract address, selected events and history origin suffice to index and
+query PayToPlay, ERC-20 and ERC-721 using one installed Conix package,
+while existing durable publication, recovery and observation guarantees
+remain demonstrably intact. This note records the candidate direction;
+it authorizes no implementation or premature Tier-0 freeze.
