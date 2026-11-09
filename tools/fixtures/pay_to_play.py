@@ -353,10 +353,11 @@ class PayToPlayTest:
         except CampaignError as error:
             # Admit only a bounded phase failure from the installed script,
             # not arbitrary Docker stderr, Cast output or fixture secrets.
-            reason = parse_phase_failure(
-                self._file("conix-" + phase + ".err").read_bytes()[-16384:],
-                phase=phase,
-            )
+            try:
+                captured = self._file("conix-" + phase + ".err").read_bytes()[-16384:]
+            except OSError:
+                captured = b""
+            reason = parse_phase_failure(captured, phase=phase)
             if reason is not None:
                 raise CampaignError(f"Conix phase/{phase} failed: {reason}.") from error
             # On timeout, a daemon-side one-shot process may still be running.
@@ -539,7 +540,14 @@ def main():
                 operation.execute()
             except BaseException as error:
                 failure = error
-            cleanup = operation.cleanup()
+            try:
+                cleanup = operation.cleanup()
+            except BaseException as error:
+                # Even a cleanup implementation error cannot hide the first
+                # test failure or imply that upstream resources were retired.
+                cleanup = [f"Cleanup operation raised {type(error).__name__}; owned resources require inspection."]
+                if failure is None:
+                    failure = error
             if failure is None and not cleanup:
                 shutil.rmtree(scratch)
                 print("PASS: PayToPlay collections, durable Conix indexing, "
