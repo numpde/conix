@@ -83,7 +83,7 @@ class FixtureRunnerTests(unittest.TestCase):
             selected = SimpleNamespace(
                 endpoint="unix:///tmp/selected-engine.sock",
                 config_dir=Path(folder),
-                env={"DOCKER_CONFIG": folder, "COMPOSE_DISABLE_ENV_FILE": "1"},
+                docker_environment={"DOCKER_CONFIG": folder, "COMPOSE_DISABLE_ENV_FILE": "1"},
             )
             commands = []
             def controlled(argv, **kwargs):
