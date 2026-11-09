@@ -17,6 +17,7 @@ from conix.models import HistoryUnavailable, ObservationProtocolError, Observati
 from conix.rpc import RpcError, RpcProtocolError, RpcUnavailable
 from conix.schema import initialize
 
+
 def _target(value: str) -> tuple[int, bytes]:
     """Require the operator's exact height/hash selection for checked repair."""
     try:
@@ -27,6 +28,7 @@ def _target(value: str) -> tuple[int, bytes]:
             or not encoded.startswith("0x") or len(encoded) != 66
         ):
             raise ValueError
+
         return int(number), bytes.fromhex(encoded[2:])
     except (ValueError, OverflowError) as error:
         raise argparse.ArgumentTypeError(
@@ -35,20 +37,20 @@ def _target(value: str) -> tuple[int, bytes]:
 
 
 def _parse(argv):
-    """Keep schema installation, observation and repair explicit."""
-    parser = argparse.ArgumentParser(
-        prog="conix", description="Follow exactly one configured PayToPlay collection stream."
-    )
+    parser = argparse.ArgumentParser(prog="conix", description="Follow exactly one configured PayToPlay collection stream.")
     subcommands = parser.add_subparsers(dest="command", required=True)
     for command in ("init", "run", "status", "repair", "rebuild"):
         entry = subcommands.add_parser(command)
         entry.add_argument("--config", required=True, type=Path)
         if command == "init":
             entry.add_argument("--owner-dsn-file", type=Path, required=True)
+
         if command == "repair":
             entry.add_argument("--to", type=_target, required=True)
+
         if command == "rebuild":
             entry.add_argument("--from-configured-origin", action="store_true", required=True)
+
     return parser.parse_args(argv)
 
 
@@ -57,13 +59,14 @@ async def _execute(arguments):
     settings = load_settings(arguments.config)
     if arguments.command == "init":
         if arguments.owner_dsn_file == settings.database_dsn_file:
-            raise ConfigurationError(
-                "Owner and runtime credential paths must be different; no schema writes with the worker credential."
-            )
+            raise ConfigurationError("Owner and runtime credential paths must be different; no schema writes with the worker credential.")
+
         await initialize(read_dsn(arguments.owner_dsn_file), settings)
         print("Verified owner-installed Conix schema and restricted runtime grants.")
         return
-    # Owner credentials are unavailable to the runtime journal by design.
+
+    # Only the owner command receives the owner credential; all other paths
+    # open the restricted runtime login.
     journal = Journal(read_dsn(settings.database_dsn_file), settings)
 
     if arguments.command == "status":
@@ -97,15 +100,15 @@ async def _execute(arguments):
                 await chain.assert_source()
                 target = None
                 if arguments.command == "repair":
-                    number, block_hash = arguments.to
+                    (number, block_hash) = arguments.to
                     target = await chain.header(number)
                     if target.hash != block_hash:
-                        raise BranchConflict(
-                            f"Selected repair target {number}:0x{block_hash.hex()} is not the source's canonical block."
-                        )
-                # Manual and future automatic controllers invoke the same
-                # checked repair mutation; an ancestor suggestion is not authority.
+                        raise BranchConflict(f"Selected repair target {number}:0x{block_hash.hex()} is not the source's canonical block.")
+
+                # A chosen ancestor is a request; the writer validates and
+                # applies repair atomically under its exclusive lock.
                 await writer.repair_to(basis, target, chain)
+
             print("Conix history repaired; a fresh normal worker session must reindex the remaining blocks.")
             return
 
@@ -118,14 +121,13 @@ async def _execute(arguments):
                 loop.add_signal_handler(name, stop.set)
             except NotImplementedError:
                 pass
+
         await run_session(journal, chain, stop)
 
 
 def main(argv=None):
     arguments = _parse(sys.argv[1:] if argv is None else argv)
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     try:
         asyncio.run(_execute(arguments))
     except (ConfigurationError, CorruptStore, StateChanged, Blocked, BranchConflict,
@@ -139,6 +141,7 @@ def main(argv=None):
             detail = f"{type(error).__name__}; inspect configured file, database and permissions."
         else:
             detail = str(error)
+
         raise SystemExit(f"conix {arguments.command} failed ({type(error).__name__}): {detail}") from None
 
 

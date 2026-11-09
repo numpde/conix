@@ -1,4 +1,4 @@
-"""Tier-0 execution path; no extension hooks or recovery branches."""
+"""Publish one complete canonical block at a time; never retry or repair implicitly."""
 
 import asyncio
 from dataclasses import dataclass
@@ -11,40 +11,43 @@ from conix.models import ObservationProtocolError, ObservationUnavailable
 
 @dataclass(frozen=True, slots=True)
 class AdvanceResult:
-    """Distinguish publication from tip validation without inventing progress."""
-
     block_number: int | None
     changed: bool
 
 
 async def _invalidate(writer, basis, message: str):
-    """Persist a branch contradiction before making the session fail closed."""
+    """Persist a contradiction before refusing further observations."""
     await writer.invalidate(basis, message)
     raise BranchConflict(message)
 
 
 async def advance_one(writer, chain: Chain) -> AdvanceResult:
-    """Validate and publish exactly one complete next block, or validate the tip."""
+    """Check the tip or commit exactly one next block, including empty blocks."""
     basis = await writer.basis()
     if basis.blocked_reason is not None:
         raise Blocked(f"Source history is blocked: {basis.blocked_reason}; run conix repair or rebuild.")
+
     await chain.assert_source()
     head = await chain.current_head()
-    # Recheck stored progress even at the tip: a reorg can replace the last
-    # completed block without increasing chain height.
+
+    # Check the last published block even at the tip: a reorg need not advance
+    # the head to invalidate already stored history.
     previous = basis.checkpoint
     if previous is not None:
         if head.number < previous.number:
             raise ObservationUnavailable(
                 f"RPC head {head.number} is behind completed checkpoint {previous.number}; no progress published."
             )
+
         observed = await chain.header(previous.number)
         if observed.hash != previous.hash or observed.parent_hash != previous.parent_hash:
             await _invalidate(writer, basis, f"Canonical block changed at completed height {previous.number}.")
+
     next_height = chain.settings.start_block if previous is None else previous.number + 1
     if next_height > head.number:
         await writer.note_head(basis, head, datetime.now(UTC))
         return AdvanceResult(previous.number if previous else None, False)
+
     block = await chain.header(next_height)
     if previous is not None:
         if block.parent_hash != previous.hash:
@@ -53,43 +56,46 @@ async def advance_one(writer, chain: Chain) -> AdvanceResult:
         predecessor = await chain.header(next_height - 1)
         if block.parent_hash != predecessor.hash:
             raise ObservationUnavailable("Initial block is not connected to its canonical predecessor.")
-    # Even a block without collections advances a complete journal prefix;
-    # event order defines the durable pagination sequence.
+
     events = await chain.contract.voucher_collected_events(block)
     if type(events) is not tuple:
         raise ObservationProtocolError("Decoded collection events must be an immutable tuple.")
+
     if len({event.log_index for event in events}) != len(events):
         raise ObservationProtocolError("Duplicate log index in one block.")
-    if tuple(sorted(events, key=lambda e: (e.transaction_index, e.log_index))) != events:
+
+    if tuple(sorted(events, key=lambda event: (event.transaction_index, event.log_index))) != events:
         raise ObservationProtocolError("Collection events are not in transaction/log order.")
-    # Prefetched data cannot satisfy these fresh canonicality checks.
+
+    # Recheck after reading logs; earlier header responses do not certify that
+    # the branch remained canonical while the block was assembled.
     if not await chain.canonical(block):
         raise ObservationUnavailable("Candidate block changed branch before publication; retry from durable progress.")
+
     if previous is not None and not await chain.canonical(previous):
         await _invalidate(writer, basis, f"Completed checkpoint {previous.number} changed during acquisition.")
+
     await writer.publish_block(basis, block, events, head, datetime.now(UTC))
     return AdvanceResult(block.number, True)
 
 
 async def run_session(journal, chain: Chain, stop: asyncio.Event):
-    """One real writer session; errors terminate rather than invoke hidden retry."""
+    """Hold one writer session; failures exit for a fresh durable-state check."""
     async with journal.writer() as writer:
         basis = await writer.basis()
         if basis.blocked_reason:
             raise Blocked(f"Indexed history is blocked: {basis.blocked_reason}")
+
         await chain.assert_source()
         if basis.checkpoint is not None and not await chain.canonical(basis.checkpoint):
-            await _invalidate(
-                writer, basis,
-                f"Stored checkpoint at block {basis.checkpoint.number} is no longer canonical.",
-            )
-        # A later supervisor may start a new session, but cannot reuse this
-        # Writer or bypass startup's durable-state check.
+            await _invalidate(writer, basis, f"Stored checkpoint at block {basis.checkpoint.number} is no longer canonical.")
+
         while not stop.is_set():
-            # Bound the entire one-block operation, not only each individual
-            # RPC request. Cancellation still unwinds the owned writer session.
+            # The deadline covers the whole block operation, not just each RPC;
+            # cancellation releases the PostgreSQL writer session.
             async with asyncio.timeout(chain.settings.operation_timeout_seconds):
                 result = await advance_one(writer, chain)
+
             if not result.changed:
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=chain.settings.poll_seconds)
