@@ -246,6 +246,37 @@ class FixtureReceiptContracts(unittest.IsolatedAsyncioTestCase):
         self.assertIn("debug_traceTransaction", calls)
         self.assertEqual(calls[-1], "anvil_stopImpersonatingAccount")
 
+    async def test_receipt_may_arrive_after_submission_without_a_second_send(self):
+        from pay_to_play_integration import _send
+
+        class DelayedReceipt:
+            def __init__(self):
+                self.calls = []
+                self.lookups = 0
+
+            async def call(self, method, params):
+                self.calls.append(method)
+                if method == "eth_sendTransaction":
+                    return "0x" + "ab" * 32
+                if method == "eth_getTransactionReceipt":
+                    self.lookups += 1
+                    if self.lookups == 1:
+                        return None
+                    return {"transactionHash": "0x" + "ab" * 32,
+                            "status": "0x1", "gasUsed": "0x5208"}
+                return None
+
+        rpc = DelayedReceipt()
+        chain = SimpleNamespace(
+            rpc=rpc,
+            settings=SimpleNamespace(deployment=SimpleNamespace(address=ADDR)),
+        )
+        result = await _send(chain, CUSTOMER, "collect()")
+        self.assertEqual(result["status"], "0x1")
+        self.assertEqual(rpc.calls.count("eth_sendTransaction"), 1)
+        self.assertEqual(rpc.lookups, 2)
+        self.assertNotIn("debug_traceTransaction", rpc.calls)
+
     async def test_missing_receipt_keeps_outcome_unknown_without_resubmission(self):
         message, calls = await self._run(None)
         self.assertIn("no mined receipt", message)
