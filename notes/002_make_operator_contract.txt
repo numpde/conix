@@ -1,0 +1,96 @@
+Conix Make operator interface — 9 November 2026
+================================================
+
+A public target is <resource>[/<role-or-subject>]/<action>.
+Resource, not code location, owns the path. Concrete identities are parameters,
+never Make target suffixes. A target is an operator API contract, not an
+invitation to prepare whatever happens to be missing. No silent aliases.
+
+Actions
+-------
+acquire    Explicit remote artifact retrieval; reviewed pins only. May use
+           network, only for named artifacts; a warm cache is reused.
+build      Construct a local image from admitted prepared inputs; no pulls,
+           package indexes or dependency downloads. Returns immutable image ID.
+check      Verify an existing resource, no substantive mutation or repair.
+run        Execute a named suite/workflow and state its lifecycle effects.
+create     Create a retained resource, report its identity; never adopt.
+apply      Reconcile a selected deployment (may replace its running worker).
+status     Inspect the selected deployment; no mutation.
+remove     Retire the exact owned resource. Retained external database, RPC
+           networks, fixtures and staged inputs remain external.
+initialize Idempotently establish approved database structures and identity.
+
+Resource roles
+--------------
+indexer           Production Conix application and explicit administration CLI.
+test-runner       Installed package and disposable PostgreSQL test runner.
+evm-test-runner   Real-contract test runner (test-only Foundry Cast); not Anvil.
+python-base       Pinned Python base image.
+postgres          Pinned PostgreSQL image.
+dockerfile-frontend Pinned BuildKit Dockerfile frontend.
+foundry           Pinned test-only external Foundry image.
+
+Target contracts
+----------------
+test/repository/run                 Host-only repository tests, no Docker.
+repository/inputs/check             Read-only lock/build-context admission.
+image/{python-base,postgres,dockerfile-frontend,foundry}/acquire
+                                    Explicit reviewed image acquisition.
+wheelhouse/{check,acquire}          Shared cache: warm offline or explicit cold.
+image/{indexer,test-runner,evm-test-runner}/build
+                                    Stream checked wheels; offline image build.
+image/{indexer,evm-test-runner}/check
+                                    Verify existing role-labelled image and
+                                    networkless executable smoke behavior.
+test/postgres/run                   Fresh private PG; run installed package;
+                                    clean owned SQL resources on termination.
+test/input-staging/run              Create, verify and retire fresh private
+                                    input volume; no network.
+database/schema/initialize          Restricted owner-only schema lifecycle;
+                                    no retained owner credential.
+deployment/inputs/create            Stage and retain only selected input volume.
+deployment/inputs/remove            Retire one ownership-checked input volume.
+deployment/config/check             Validate constrained Compose graph, no
+                                    deployment mutation (does not render text).
+deployment/apply                    May stop/recreate the named indexer;
+                                    independently prepared inputs required.
+deployment/status                   Read state even if image/inputs are gone.
+deployment/remove                   Stop and remove only Conix Compose project;
+                                    retain external source/data and input volume.
+test/pay-to-play/run                Consume one explicit, private verified
+                                    dapp32 fixture JSON. Mutates Anvil state
+                                    through test transactions and reorgs; does
+                                    not create, adopt or destroy that fixture.
+                                    Only Conix's disposable SQL is owned.
+campaign/pay-to-play/run            Obtain dapp32 fixture using its supported
+                                    up/info API, execute exactly the same test,
+                                    retire Conix SQL, then call dapp32 down
+                                    only for a verified fixture we created.
+
+Selectors
+---------
+DOCKER_CONTEXT             Explicit local Docker context, pinned across calls.
+WHEELHOUSE                 Existing shared host-local wheel pool.
+IMAGE                      Immutable image ID for single-image check.
+RUNNER_IMAGE               Immutable test image for composite test/campaign.
+INDEXER_IMAGE              Immutable app image for deployment/schema/inputs.
+FIXTURE_DESCRIPTOR          Absolute owner-only (0600) descriptor JSON file.
+DAPP32_DIR                  Explicit absolute checkout for owned campaign.
+DEPLOYMENT                  Selected Conix instance name.
+INPUT_VOLUME                Selected ownership-labelled Conix inputs.
+CONFIG_FILE, DSN_FILE       Explicit operator-owned input files.
+OWNER_DSN_FILE              Separate owner-only credential path.
+DATABASE_NETWORK, RPC_NETWORK  Explicit pre-existing network names.
+
+The dapp32 fixture descriptor is a source of verified deployment facts, not
+cleanup authority. An external test must never call sibling up/info/down.
+Creation is authoritative only when the owning producer confirms it.
+Production indexer and real-contract test-runner image roles must not mix.
+A test requiring two images or new secrets must declare their independent roles,
+not inherit credentials or increase worker privileges silently.
+
+Post-cutover the former targets and CONIX_* public variables cease to be
+accepted. Keep Make command-line text literal via $(value) capture. New
+variants are introduced only for truly different resource or lifecycle
+contracts; do not create tier0/tier1/tier2 target forests.
