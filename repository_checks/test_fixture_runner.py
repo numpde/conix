@@ -6,7 +6,6 @@ privileges and teardown order without inventing a fake indexer or signed logs.
 import io
 import json
 import os
-import re
 import shutil
 from pathlib import Path
 import sys
@@ -406,9 +405,9 @@ class FixtureRunnerTests(unittest.TestCase):
             output = terminal.getvalue()
             self.assertIn("Cleanup unconfirmed", output)
             self.assertIn("Recovery:", output)
-            match = re.search(r"Private phase receipts: ([^\\n]+)", output)
-            self.assertIsNotNone(match)
-            shutil.rmtree(match.group(1))
+            records = [line for line in output.splitlines() if line.startswith("Private phase receipts: ")]
+            self.assertEqual(len(records), 1)
+            shutil.rmtree(records[0].removeprefix("Private phase receipts: "))
 
     def test_timed_out_owned_process_is_reaped_before_retirement(self):
         import time
