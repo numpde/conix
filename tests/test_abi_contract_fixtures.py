@@ -5,7 +5,7 @@ from pathlib import Path
 import unittest
 
 from eth_abi import decode, encode
-from eth_utils import keccak
+from eth_utils import keccak, to_checksum_address
 
 from abi_golden_vectors import EVENT_VECTORS
 from abi_contract_vectors import (
@@ -30,8 +30,12 @@ class AbiFixtureContracts(unittest.TestCase):
         self.assertEqual(PAY_TO_PLAY.topics[0], keccak(text=VOUCHER_SIGNATURE))
         self.assertEqual(len(PAY_TO_PLAY.topics), 4)
         self.assertEqual(PAY_TO_PLAY.data[-32:], PAY_TO_PLAY.expected[-1])
+        encoded_values = decode(
+            ("address", "uint256", "address"), b"".join(PAY_TO_PLAY.topics[1:]),
+        )
         self.assertEqual(
-            decode(("address", "uint256", "address"), b"".join(PAY_TO_PLAY.topics[1:])),
+            (to_checksum_address(encoded_values[0]), encoded_values[1],
+             to_checksum_address(encoded_values[2])),
             PAY_TO_PLAY.expected[:3],
         )
         self.assertEqual(
@@ -63,11 +67,22 @@ class AbiFixtureContracts(unittest.TestCase):
             tuple((item["name"], item["type"]) for item in position["outputs"][0]["components"]),
             POSITION_FIELDS,
         )
-        self.assertEqual(decode((POSITION_ABI_TYPE,), POSITION_RETURN), (POSITION_SAMPLE,))
+        returned_position = decode((POSITION_ABI_TYPE,), POSITION_RETURN)[0]
+        address_fields = {
+            index for index, (_, abi_type) in enumerate(POSITION_FIELDS)
+            if abi_type == "address"
+        }
+        returned_position = tuple(
+            to_checksum_address(value) if index in address_fields else value
+            for index, value in enumerate(returned_position)
+        )
+        self.assertEqual(returned_position, POSITION_SAMPLE)
         self.assertEqual(encode((POSITION_ABI_TYPE,), (POSITION_SAMPLE,)), POSITION_RETURN)
         self.assertEqual(POSITION_CALL[:4], keccak(text=POSITION_SIGNATURE)[:4])
+        called_arguments = decode(("address", "uint256", "address"), POSITION_CALL[4:])
         self.assertEqual(
-            decode(("address", "uint256", "address"), POSITION_CALL[4:]),
+            (to_checksum_address(called_arguments[0]), called_arguments[1],
+             to_checksum_address(called_arguments[2])),
             (POSITION_SAMPLE[0], (1 << 256) - 1, POSITION_SAMPLE[2]),
         )
 
