@@ -193,6 +193,92 @@ class OperationDeadlineContracts(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(observer.latest_checkpoint(), timeout=0.6)
 
 
+class FixtureReceiptContracts(unittest.IsolatedAsyncioTestCase):
+    """Prove that the disposable EVM runner retains actual failure evidence."""
+
+    async def _run(self, receipt, *, trace=None, cleanup_error=None):
+        from pay_to_play_integration import _send
+
+        class Source:
+            def __init__(self):
+                self.calls = []
+
+            async def call(self, method, params):
+                self.calls.append(method)
+                if method == "eth_sendTransaction":
+                    return "0x" + "ab" * 32
+                if method == "eth_getTransactionReceipt":
+                    return receipt
+                if method == "debug_traceTransaction":
+                    return trace
+                if method == "anvil_stopImpersonatingAccount" and cleanup_error:
+                    raise cleanup_error
+                return None
+
+        source = Source()
+        chain = SimpleNamespace(
+            rpc=source,
+            settings=SimpleNamespace(deployment=SimpleNamespace(address=ADDR)),
+        )
+        from fixture_protocol import ScenarioFailure
+        from eth_utils import keccak
+        error_name = "InvalidVoucherSignature"
+        selector = keccak(text=error_name + "()")[:4].hex()
+        with self.assertRaises(ScenarioFailure) as failure:
+            await _send(
+                chain, CUSTOMER, "collect()",
+                errors={selector: error_name},
+            )
+        return str(failure.exception), source.calls
+
+    async def test_mined_revert_identifies_operation_gas_and_checked_error(self):
+        from eth_utils import keccak
+        selector = keccak(text="InvalidVoucherSignature()")[:4].hex()
+        message, calls = await self._run(
+            {"transactionHash": "0x" + "ab" * 32, "status": "0x0",
+             "gasUsed": "0x5208"},
+            trace={"output": "0x" + selector, "error": "execution reverted"},
+        )
+        self.assertIn("Fixture collect reverted", message)
+        self.assertIn("gas used 21000", message)
+        self.assertIn("Solidity error InvalidVoucherSignature", message)
+        self.assertEqual(calls.count("eth_sendTransaction"), 1)
+        self.assertIn("debug_traceTransaction", calls)
+        self.assertEqual(calls[-1], "anvil_stopImpersonatingAccount")
+
+    async def test_missing_receipt_keeps_outcome_unknown_without_resubmission(self):
+        message, calls = await self._run(None)
+        self.assertIn("no mined receipt", message)
+        self.assertIn("outcome unknown", message)
+        self.assertEqual(calls.count("eth_sendTransaction"), 1)
+        self.assertNotIn("debug_traceTransaction", calls)
+
+    async def test_cleanup_does_not_erase_mined_revert_reason(self):
+        from conix.rpc import RpcUnavailable
+        message, calls = await self._run(
+            {"transactionHash": "0x" + "ab" * 32, "status": "0x0",
+             "gasUsed": "0x5208"},
+            trace=None,
+            cleanup_error=RpcUnavailable("local test cleanup failed"),
+        )
+        self.assertIn("Fixture collect reverted", message)
+        self.assertIn("trace unavailable", message)
+        self.assertIn("impersonation cleanup also failed", message)
+        self.assertEqual(calls.count("eth_sendTransaction"), 1)
+
+    def test_revert_error_names_come_from_deployed_abi(self):
+        from eth_utils import keccak
+        from pay_to_play_integration import _contract_errors
+        errors = _contract_errors({"contracts": {"PayToPlay": {"abi": [
+            {"type": "error", "name": "InvalidVoucherSignature", "inputs": []},
+            {"type": "function", "name": "collect", "inputs": []},
+        ]}}})
+        self.assertEqual(
+            errors[keccak(text="InvalidVoucherSignature()")[:4].hex()],
+            "InvalidVoucherSignature",
+        )
+
+
 @unittest.skipUnless(os.getenv("CONIX_TEST_DSN"), "Set CONIX_TEST_DSN for isolated PostgreSQL integration")
 class PostgreSQLContracts(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
