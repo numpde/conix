@@ -14,7 +14,7 @@ import re
 import stat
 import subprocess
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\Z")
 WHEEL = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+-]*\.whl\Z")

@@ -15,7 +15,7 @@ import tempfile
 import tomllib
 
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 # Modern setuptools includes the wheel build command; no extra wheel package.
 BUILD = ("setuptools==82.0.1",)
 
@@ -53,7 +53,7 @@ def inventory(requirements, temp: Path, label: str) -> str:
         entries.append(f"{project}=={version} --hash=sha256:{digest}")
     header = [
         "# Target: CPython 3.12 / Linux x86_64, binary wheels only.",
-        "# Regenerate explicitly with: python tools/lock_wheels.py --write",
+        "# Regenerate explicitly with: python3 -m tools.wheelhouse.locks --write",
         "# Acquisition may use the network. Runtime image build MUST use no-index.",
     ]
     return "\n".join(header + sorted(entries) + [""])

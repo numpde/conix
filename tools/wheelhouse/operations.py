@@ -13,12 +13,12 @@ import subprocess
 import sys
 import tempfile
 
-from shared_wheelhouse import (
+from tools.wheelhouse.policy import (
     PoolError, admit_pool, has_tool, release_record, selection_manifest,
     source_allowlist, worker_grants, project_issuer_lock,
 )
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class SharedWheelhouse:
@@ -76,7 +76,7 @@ class SharedWheelhouse:
             "--pool", "/wheelhouse", "--release", "/input/release.json",
             "--runtime", "/input/runtime.lock", "--build", "/input/build.lock",
             extra_mounts=(
-                "--mount", f"type=bind,src={ROOT / 'tools/wheelhouse_worker.py'},dst=/input/check.py,readonly",
+                "--mount", f"type=bind,src={ROOT / 'tools/wheelhouse/selector.py'},dst=/input/check.py,readonly",
             ), capture=True,
         )
         return selection_manifest(raw.encode("utf-8"))
@@ -88,7 +88,7 @@ class SharedWheelhouse:
             self.run(
                 "/input/bootstrap.py", "/wheelhouse", "/input/release.json",
                 extra_mounts=(
-                    "--mount", f"type=bind,src={ROOT / 'tools/acquire_wheelhouse_tool.py'},dst=/input/bootstrap.py,readonly",
+                    "--mount", f"type=bind,src={ROOT / 'tools/wheelhouse/acquire_tool.py'},dst=/input/bootstrap.py,readonly",
                 ), network=True, write=True, timeout=390,
             )
             if not has_tool(self.pool, self.pin):

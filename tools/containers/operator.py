@@ -16,7 +16,7 @@ import sys
 import tempfile
 from urllib.parse import urlsplit
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 CONTEXT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 IMAGE_ID = re.compile(r"sha256:[a-f0-9]{64}\Z")
 
@@ -640,7 +640,7 @@ def main():
             elif args.action == "deps/fixture-image/prepare":
                 docker.prepare_fixture_tool(images)
             elif args.action in ("deps/wheelhouse/check", "deps/wheelhouse/acquire"):
-                from wheelhouse_operations import SharedWheelhouse
+                from tools.wheelhouse.operations import SharedWheelhouse
                 pool = SharedWheelhouse(docker, images, args.wheelhouse)
                 selected = pool.check() if args.action.endswith("/check") else pool.acquire()
                 print(f"Verified {len(selected)} hash-locked artifacts in the selected shared WHEELHOUSE.",
@@ -674,7 +674,7 @@ def main():
                     "tests/image/build": "tests",
                     "tests/fixture/image/build": "fixture",
                 }[args.action]
-                from wheelhouse_operations import SharedWheelhouse
+                from tools.wheelhouse.operations import SharedWheelhouse
                 print(SharedWheelhouse(docker, images, args.wheelhouse).build(target))
     except (OperationError, OSError) as error:
         raise SystemExit(f"Conix container operation refused or failed: {error}") from None

@@ -18,7 +18,7 @@ import subprocess
 import sys
 import tempfile
 
-from container import (
+from tools.containers.operator import (
     CONTEXT_NAME, Docker, IMAGE_ID, OperationError, ROOT, pinned_images, select_endpoint,
 )
 
@@ -404,7 +404,6 @@ def main():
             )
         endpoint = select_endpoint(args.context, args.origin)
         with tempfile.TemporaryDirectory(prefix="conix-fixture-client-") as directory:
-            from container import environment
             config = Path(directory)
             (config / "config.json").write_text('{"auths":{},"proxies":{}}\n')
             docker = Docker(endpoint, config)
