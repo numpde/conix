@@ -1,0 +1,76 @@
+[
+  {
+    "type": "event",
+    "name": "Complex",
+    "anonymous": false,
+    "inputs": [
+      {
+        "name": "source",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "entries",
+        "type": "tuple[]",
+        "indexed": false,
+        "components": [
+          {
+            "name": "code",
+            "type": "uint16"
+          },
+          {
+            "name": "marker",
+            "type": "bytes8"
+          }
+        ]
+      },
+      {
+        "name": "labels",
+        "type": "string[]",
+        "indexed": false
+      },
+      {
+        "name": "payload",
+        "type": "bytes",
+        "indexed": false
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "echo",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "entries",
+        "type": "tuple[]",
+        "components": [
+          {
+            "name": "code",
+            "type": "uint16"
+          },
+          {
+            "name": "marker",
+            "type": "bytes8"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "result",
+        "type": "tuple[]",
+        "components": [
+          {
+            "name": "code",
+            "type": "uint16"
+          },
+          {
+            "name": "marker",
+            "type": "bytes8"
+          }
+        ]
+      }
+    ]
+  }
+]

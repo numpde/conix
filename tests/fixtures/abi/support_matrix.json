@@ -1,0 +1,152 @@
+{
+  "schema": "conix.abi.support.v1",
+  "description": "Prospective generic Tier-0 admission/codec contract. These fixture tests alone do not qualify a codec.",
+  "indexed_note": "Dynamic, tuple and array event topics are stored as hash values, never decoded preimages or equality-filtered.",
+  "families": [
+    {
+      "family": "uintM",
+      "range": "8..256 step 8",
+      "indexed_event": "scalar",
+      "nonindexed_event": true,
+      "indexed_equality": true,
+      "call_input": true,
+      "call_output": true,
+      "python": "int_exact_no_bool"
+    },
+    {
+      "family": "intM",
+      "range": "8..256 step 8",
+      "indexed_event": "scalar",
+      "nonindexed_event": true,
+      "indexed_equality": true,
+      "call_input": true,
+      "call_output": true,
+      "python": "int_exact_no_bool"
+    },
+    {
+      "family": "address",
+      "indexed_event": "scalar",
+      "nonindexed_event": true,
+      "indexed_equality": true,
+      "call_input": true,
+      "call_output": true,
+      "python": "eip55_address"
+    },
+    {
+      "family": "bool",
+      "indexed_event": "scalar",
+      "nonindexed_event": true,
+      "indexed_equality": true,
+      "call_input": true,
+      "call_output": true,
+      "python": "bool_exact"
+    },
+    {
+      "family": "bytesN",
+      "range": "1..32",
+      "indexed_event": "scalar",
+      "nonindexed_event": true,
+      "indexed_equality": true,
+      "call_input": true,
+      "call_output": true,
+      "python": "bytes_exact_width"
+    },
+    {
+      "family": "bytes",
+      "indexed_event": "hash",
+      "nonindexed_event": true,
+      "indexed_equality": false,
+      "call_input": true,
+      "call_output": true,
+      "python": "bytes"
+    },
+    {
+      "family": "string",
+      "indexed_event": "hash",
+      "nonindexed_event": true,
+      "indexed_equality": false,
+      "call_input": true,
+      "call_output": true,
+      "python": "utf8_str"
+    },
+    {
+      "family": "array",
+      "indexed_event": "hash",
+      "nonindexed_event": true,
+      "indexed_equality": false,
+      "call_input": true,
+      "call_output": true,
+      "python": "tuple_shape"
+    },
+    {
+      "family": "tuple",
+      "indexed_event": "hash",
+      "nonindexed_event": true,
+      "indexed_equality": false,
+      "call_input": true,
+      "call_output": true,
+      "python": "tuple_shape"
+    }
+  ],
+  "rejected": [
+    {
+      "case": "anonymous event",
+      "reason": "topic0 is absent"
+    },
+    {
+      "case": "same topic0 incompatible indexed layout within one contract",
+      "reason": "ambiguous event descriptor"
+    },
+    {
+      "case": "duplicate selected event",
+      "reason": "overlapping acquisition"
+    },
+    {
+      "case": "unsupported ABI scalar",
+      "examples": [
+        "fixed128x18",
+        "ufixed128x18",
+        "function",
+        "uint7",
+        "bytes33"
+      ]
+    },
+    {
+      "case": "tuple without components",
+      "reason": "incomplete layout"
+    },
+    {
+      "case": "zero-length fixed array",
+      "reason": "unsupported bounds"
+    },
+    {
+      "case": "filter on nonindexed/dynamic/hashed argument",
+      "reason": "no exact topic equality"
+    },
+    {
+      "case": "filter on duplicate/unnamed argument",
+      "reason": "ambiguous public field name"
+    },
+    {
+      "case": "noncanonical values",
+      "examples": [
+        "bool encoded as 2",
+        "uint8 overflow",
+        "int8 bad sign extension",
+        "bytes4 nonzero right padding",
+        "malformed dynamic offsets",
+        "invalid UTF-8"
+      ]
+    },
+    {
+      "case": "caller type mismatch",
+      "examples": [
+        "bool for uint256",
+        "float for int",
+        "hex text for bytes32",
+        "negative uint",
+        "incorrect tuple shape"
+      ]
+    }
+  ]
+}

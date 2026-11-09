@@ -1,0 +1,162 @@
+[
+  {
+    "type": "event",
+    "name": "VoucherCollected",
+    "anonymous": false,
+    "inputs": [
+      {
+        "name": "customer",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "channelId",
+        "type": "uint256",
+        "indexed": true
+      },
+      {
+        "name": "payee",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false
+      },
+      {
+        "name": "voucherPaid",
+        "type": "uint256",
+        "indexed": false
+      },
+      {
+        "name": "invoiceHash",
+        "type": "bytes32",
+        "indexed": false
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "asset",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "viewPosition",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "customer",
+        "type": "address"
+      },
+      {
+        "name": "channelId",
+        "type": "uint256"
+      },
+      {
+        "name": "actor",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "view_",
+        "type": "tuple",
+        "components": [
+          {
+            "name": "customer",
+            "type": "address"
+          },
+          {
+            "name": "channelId",
+            "type": "uint256"
+          },
+          {
+            "name": "payee",
+            "type": "address"
+          },
+          {
+            "name": "claimPeriod",
+            "type": "uint64"
+          },
+          {
+            "name": "channelCount",
+            "type": "uint256"
+          },
+          {
+            "name": "admin",
+            "type": "address"
+          },
+          {
+            "name": "collector",
+            "type": "address"
+          },
+          {
+            "name": "balance",
+            "type": "uint256"
+          },
+          {
+            "name": "voucherPaid",
+            "type": "uint256"
+          },
+          {
+            "name": "requestedAmount",
+            "type": "uint256"
+          },
+          {
+            "name": "readyAt",
+            "type": "uint256"
+          },
+          {
+            "name": "effectiveBalance",
+            "type": "uint256"
+          },
+          {
+            "name": "voucherKey",
+            "type": "address"
+          },
+          {
+            "name": "scheduledRefundAt",
+            "type": "uint256"
+          },
+          {
+            "name": "refundAt",
+            "type": "uint256"
+          },
+          {
+            "name": "settleAt",
+            "type": "uint256"
+          },
+          {
+            "name": "closeAt",
+            "type": "uint256"
+          },
+          {
+            "name": "escrowTotal",
+            "type": "uint256"
+          },
+          {
+            "name": "refundRecipient",
+            "type": "address"
+          },
+          {
+            "name": "phase",
+            "type": "uint8"
+          },
+          {
+            "name": "actions",
+            "type": "string[]"
+          }
+        ]
+      }
+    ]
+  }
+]
