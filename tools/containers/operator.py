@@ -346,6 +346,7 @@ class Docker:
             data = os.read(fd, max_size + 1)
         finally:
             os.close(fd)
+
         if not 0 < len(data) <= max_size:
             raise OperationError("Staged input file is empty or exceeds its size limit.")
 
@@ -357,6 +358,7 @@ class Docker:
             raise OperationError("INDEXER_IMAGE must select a prebuilt immutable indexer image.")
 
         self.require_role(image, "indexer")
+
         # No operator input becomes a bind mount into the runtime. Stage a
         # one-time snapshot and then prove access as the actual runtime UID.
         config = self.private_bytes(config_path, 64 * 1024, secret=False)
@@ -366,9 +368,8 @@ class Docker:
             if settings_document["database"]["dsn_file"] != "/run/conix/connection.dsn":
                 raise ValueError
         except (UnicodeError, KeyError, TypeError, ValueError) as error:
-            raise OperationError(
-                "Stage settings with database.dsn_file=/run/conix/connection.dsn; no host path is mounted."
-            ) from error
+            raise OperationError("Stage settings with database.dsn_file=/run/conix/connection.dsn; no host path is mounted.") from error
+
         envelope = b"CONIX-INPUTS-V1\n" + struct.pack("!II", len(config), len(dsn)) + config + dsn
         token = secrets.token_hex(12)
         volume = "conix-inputs-" + token
@@ -392,15 +393,17 @@ class Docker:
                 "--mount", f"type=volume,source={volume},target=/run/conix",
                 "--entrypoint", "python", image, "-m", "conix.input_staging",
             ]
-            staging_result = subprocess.run(argv, input=envelope, capture_output=True,
-                                    cwd=ROOT, env=self.env, timeout=40, check=False)
+            staging_result = subprocess.run(
+                argv, input=envelope, capture_output=True, cwd=ROOT,
+                env=self.env, timeout=40, check=False,
+            )
             if staging_result.returncode:
                 cause = _staging_failure(staging_result.stderr)
                 detail = cause or "no admitted nonsecret diagnostic returned"
-                raise OperationError(
-                    f"Conix input staging failed (exit {staging_result.returncode}): {detail}."
-                )
+                raise OperationError(f"Conix input staging failed (exit {staging_result.returncode}): {detail}.")
+
             self.verify_inputs(image, volume)
+
             if not proof:
                 remove = False
                 if announce:
@@ -502,11 +505,13 @@ class Docker:
             )
         except Exception as error:
             failure = error
+
         cleanup_failure = None
         try:
             self.remove_inputs(volume)
         except Exception as error:
             cleanup_failure = error
+
         if cleanup_failure is not None:
             first = (
                 f" Original schema init failed: {failure}."
@@ -518,12 +523,14 @@ class Docker:
                 f"Schema init input-volume cleanup is unconfirmed for {volume} "
                 f"on selected Engine {self.base[-1]}.{first} Inspect exact volume ownership."
             ) from cleanup_failure
+
         if failure is not None:
             detail = str(failure) if isinstance(failure, OperationError) else type(failure).__name__
             raise OperationError(
                 f"Conix schema init failed: {detail}. Check durable source identity "
                 "before retrying the explicit idempotent owner operation."
             ) from failure
+
         print("Conix schema installed/verified through a separate owner-only session.")
 
     def deployment(self, *, operation, name, image, volume, database, rpc):
@@ -546,6 +553,7 @@ class Docker:
         if operation == "apply":
             self.require_rootless_engine()
             self.require_role(image, "indexer")
+
         # An input volume's identity and ownership label must agree before a
         # command can reuse it. The label is not a credential or permission.
         if not re.fullmatch(r"conix-inputs-[a-f0-9]{24}", volume or ""):
@@ -557,6 +565,7 @@ class Docker:
                 or rows[0].get("Labels", {}).get("io.conix.input-token")
                     != volume.removeprefix("conix-inputs-")):
                 raise OperationError("Selected input volume does not match its stage label.")
+
             for selected in (database, rpc):
                 actual = self.run(
                     "network", "inspect", "--format", "{{.Name}}", selected,
@@ -616,14 +625,17 @@ class Docker:
         if operation == "config/check":
             print(f"Verified constrained runtime Compose graph for {project} on selected Engine.")
             return
+
         if operation == "status":
             self.run(*compose, "ps", "--all", env=env, timeout=20)
             return
+
         if operation == "remove":
             self.run(*compose, "stop", "--timeout", "90", "indexer", env=env, timeout=105)
             self.run(*compose, "down", "--remove-orphans", env=env, timeout=60)
             print(f"Removed conix deployment project {project}; external inputs and networks were retained.")
             return
+
         if operation != "apply":
             raise OperationError("Deployment operation must be apply, remove, status or config/check.")
 
@@ -639,6 +651,7 @@ class Docker:
                 "Inspect the selected Engine and use deployment/status or "
                 "deployment/remove with the same exact settings; inputs were retained."
             ) from error
+
         print(
             f"Applied conix project {project}; a running container is not evidence "
             "of chain freshness or payment readiness."
@@ -684,6 +697,7 @@ class Docker:
                 raise OperationError("Rendered test services violate selected images, no-bind, network or confinement rules.")
         except (KeyError, ValueError) as error:
             raise OperationError("Cannot validate rendered test deployment.") from error
+
         failure = None
         try:
             # A successful, terminating bootstrap is deliberate; do not use
@@ -700,6 +714,7 @@ class Docker:
                      "never", "tests", env=env, timeout=240)
         except Exception as error:
             failure = error
+
             # Capture bounded diagnostics before teardown, not after the
             # disposable container has been removed. These are fixture-only
             # services; never use this on a deployment with private inputs.
@@ -759,6 +774,7 @@ def main():
     parser.add_argument("--database-network")
     parser.add_argument("--rpc-network")
     args = parser.parse_args()
+
     try:
         if args.from_make:
             # Make exports simple, literally captured values via $(value VAR).
@@ -769,6 +785,7 @@ def main():
                 "OWNER_DSN_FILE", "INPUT_VOLUME", "DEPLOYMENT",
                 "DATABASE_NETWORK", "RPC_NETWORK",
             )}
+
             args.context = raw["DOCKER_CONTEXT"]
             args.wheelhouse = raw["WHEELHOUSE"]
             args.image = raw["IMAGE"]
@@ -781,36 +798,46 @@ def main():
             args.deployment = raw["DEPLOYMENT"]
             args.database_network = raw["DATABASE_NETWORK"]
             args.rpc_network = raw["RPC_NETWORK"]
+
         endpoint = select_endpoint(args.context, args.origin)
         with tempfile.TemporaryDirectory(prefix="conix-docker-client-") as directory:
             config = Path(directory)
             (config / "config.json").write_text('{"auths":{},"proxies":{}}\n', encoding="utf-8")
             docker = Docker(endpoint, config)
             images = pinned_images()
+
             if args.action.startswith("image/") and args.action.endswith("/acquire"):
                 docker.acquire_image(args.action.split("/")[1], images)
+
             elif args.action in ("wheelhouse/check", "wheelhouse/acquire"):
                 from tools.wheelhouse.operations import SharedWheelhouse
                 pool = SharedWheelhouse(docker, images, args.wheelhouse)
                 selected = pool.check() if args.action.endswith("/check") else pool.acquire()
                 print(f"Verified {len(selected)} hash-locked artifacts in WHEELHOUSE.",
                       file=sys.stderr)
+
             elif args.action == "test/postgres/run":
                 docker.test(args.runner_image or "", images)
+
             elif args.action == "image/indexer/check":
                 docker.check_indexer(args.image)
+
             elif args.action == "image/evm-test-runner/check":
                 docker.check_evm_test_runner(args.image)
+
             elif args.action in ("deployment/inputs/create", "test/input-staging/run"):
                 docker.stage_inputs(args.indexer_image, args.config_file, args.dsn_file,
                                     proof=args.action == "test/input-staging/run")
+
             elif args.action == "deployment/inputs/remove":
                 docker.remove_inputs(args.volume)
+
             elif args.action == "database/schema/initialize":
                 docker.initialize_schema(
                     args.indexer_image, args.config_file, args.owner_dsn_file,
                     args.database_network,
                 )
+
             elif args.action.startswith("deployment/"):
                 docker.deployment(
                     operation=args.action.removeprefix("deployment/"),
@@ -818,6 +845,7 @@ def main():
                     volume=args.volume, database=args.database_network,
                     rpc=args.rpc_network,
                 )
+
             else:
                 target = args.action.split("/")[1]
                 from tools.wheelhouse.operations import SharedWheelhouse
