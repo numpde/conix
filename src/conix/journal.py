@@ -65,7 +65,7 @@ def _block(block_row) -> Block:
 
 
 async def _state(connection: AsyncConnection, settings: Settings) -> Basis:
-    """Read source_progress_row and reject a mismatched or structurally incomplete source."""
+    """Read stored progress and reject a mismatched or incomplete source."""
     source_progress_row = await (await connection.execute("SELECT * FROM conix.source_progress WHERE id = 1")).fetchone()
     if source_progress_row is None:
         raise ConfigurationError("conix schema is not initialized. Run conix init.")
@@ -87,7 +87,7 @@ async def _state(connection: AsyncConnection, settings: Settings) -> Basis:
             "SELECT * FROM conix.blocks WHERE number = %s", (source_progress_row["completed_height"],)
         )).fetchone()
         if checkpoint_block_row is None or bytes(checkpoint_block_row["hash"]) != bytes(source_progress_row["completed_hash"]):
-            raise CorruptStore("Completed completed_block has no matching stored block.")
+            raise CorruptStore("Completed checkpoint has no matching stored block.")
 
         completed_block = _block(checkpoint_block_row)
     elif int(source_progress_row["collection_count"]) != 0:
@@ -241,8 +241,8 @@ class Journal:
             if checkpoint_block_row is None or _block(checkpoint_block_row) != checkpoint.block:
                 raise HistoryUnavailable("Checkpoint block was replaced or is not retained.")
 
-            # The exact event collection_count_row makes a retained block into a complete
-            # prefix, not merely a matching block height and hash.
+            # Matching block identity alone does not certify the complete event
+            # prefix. Require its collection count to agree as well.
             collection_count_row = await (await connection.execute(
                 "SELECT COUNT(*) AS n FROM conix.collections WHERE block_number <= %s",
                 (checkpoint.block.number,),
@@ -292,7 +292,7 @@ class Journal:
                 "ORDER BY sequence LIMIT %s",
                 (starting_sequence, checkpoint.collection_count, limit),
             )).fetchall()
-            # A missing starting_sequence is corruption, not a permissible pagination gap.
+            # Missing sequence numbers are corruption, not permissible pagination gaps.
             next_sequence = starting_sequence + len(collection_rows)
             if [int(collection_row["sequence"]) for collection_row in collection_rows] != list(range(starting_sequence, next_sequence)):
                 raise CorruptStore("Collection history has a missing or duplicate sequence.")
@@ -309,10 +309,9 @@ class Journal:
             )
 
     async def headers_at(self, checkpoint: Checkpoint, numbers: tuple[int, ...]) -> tuple[Block, ...]:
-        """Read selected retained headers from one snapshot of a completed chain prefix.
+        """Read selected retained headers without loading intermediate blocks.
 
-        The writer has already validated and published every intermediate parent
-        link. A reader need not load millions of unchanged intermediate header_rows.
+        The writer has already verified and published every parent link.
         """
         if (
             type(checkpoint) is not Checkpoint
@@ -338,7 +337,7 @@ class Journal:
             ):
                 raise HistoryUnavailable("Requested chain generation/checkpoint is no longer usable.")
             header_rows = await (await connection.execute(
-                "SELECT * FROM conix.headers_by_number WHERE number = ANY(%s::bigint[])",
+                "SELECT * FROM conix.blocks WHERE number = ANY(%s::bigint[])",
                 (list(numbers),),
             )).fetchall()
             headers_by_number = {int(header_row["number"]): _block(header_row) for header_row in header_rows}
@@ -364,7 +363,7 @@ class Journal:
                 raise HistoryUnavailable("Requested ancestry is not covered by usable stored history.")
 
             stored_block_rows = await (await connection.execute(
-                "SELECT * FROM conix.stored_blocks WHERE number BETWEEN %s AND %s ORDER BY number",
+                "SELECT * FROM conix.blocks WHERE number BETWEEN %s AND %s ORDER BY number",
                 (first, last),
             )).fetchall()
             stored_blocks = tuple(map(_block, stored_block_rows))
