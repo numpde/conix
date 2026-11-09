@@ -341,3 +341,270 @@ query PayToPlay, ERC-20 and ERC-721 using one installed Conix package,
 while existing durable publication, recovery and observation guarantees
 remain demonstrably intact. This note records the candidate direction;
 it authorizes no implementation or premature Tier-0 freeze.
+
+Type safety: release-blocking qualification programme
+-----------------------------------------------------
+
+Added 2026-11-09. STATUS: mandatory design requirements / TEST PLAN,
+NOT implemented tests and NOT evidence that the proposed storage is safe.
+
+Rationale
+~~~~~~~~~
+
+The rindexer fork has concrete regressions concerning unsigned/signed
+encodings, PostgreSQL NUMERIC/BIGINT bind types, fixed and dynamic bytes,
+nested tuples/arrays, normalized ABI-name collisions, and typed values
+under recovery. See these exact upstream files (fork-of-rindexer@master
+as inspected on 2026-11-09):
+
+  core/src/database/unsigned_integer_tests.rs
+  core/src/database/signed_integer_tests.rs
+  core/src/database/array_shape_tests.rs
+  core/src/database/fixed_bytes_tests.rs
+  core/src/database/dynamic_bytes_array_tests.rs
+  core/src/database/nested_tuple_tests.rs
+  core/src/abi_column_identity_tests.rs
+  core/src/indexer/table_scalar.rs
+  core/src/indexer/predicate_recovery_tests.rs
+
+Conix avoids rindexer's derived-table arithmetic and inverse predicates,
+but that does NOT make its own ABI -> SQL -> filter -> Python round trip
+safe by construction. The design must treat silent type changes as data
+corruption, not as presentation defects.
+
+Core property for every SUPPORTED field type T and ABI-valid value v:
+
+  decode_abi_T(encode_abi_T(v)) == v
+  read_db_T(write_db_T(v)) == v
+  query_equal_T(v) selects exactly the matching typed occurrences
+  decode_event_from_db_T(raw_log) == decode_event_directly_T(raw_log)
+
+Equivalence is semantic and exact: preserve sign, width constraints,
+bytes and array shape, positional identity, name identity and special
+indexed-hash identity. No float intermediary and no lossy JSON number.
+The ABI original value and an indexed dynamic argument's topic hash are
+NOT the same type and must not be equated by this property.
+
+Runtime type safety is mandatory even though the no-code Python reader
+cannot statically know ABI-defined field types. Type hints alone and
+ordinary Python str/int/bytes annotations do not provide the guarantee.
+One validated ABI type descriptor must govern decoding, storage encoding,
+filter-argument validation, database retrieval and final value conversion.
+For caller-supplied values, reject type mismatches before SQL/RPC. In
+particular reject bool as uint/int, float as integer, inappropriate str
+as bytes, wrong-width bytes, negative uint, and overflowing int.
+Do not silently truncate, cast, clamp, stringify, or interpret signed
+values via unsigned twos-complement without the declared ABI type.
+
+Test strategy: four independent kinds of evidence
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+1. Hand-authored boundary vectors whose expected values are literal
+   specifications, not produced by the codec being tested. Test all
+   supported integer widths (8,16,...,256 for uint/int) and bytesN
+   widths (1,...,32), plus bool, address, bytes, string, tuples,
+   fixed/dynamic arrays and nested combinations where supported.
+
+2. Property-based tests with reproducible saved seeds and shrunk
+   counterexamples. Generate valid type/value/ABI triples with bounded
+   recursion, lengths and total response size; also mutate valid
+   encodings into invalid specimens. Preserve a permanent regression
+   vector for each discovered failure. Deterministic boundary cases
+   always run, regardless of randomized sampling.
+
+3. Differential tests against an implementation not sharing Conix's
+   decoder/serializer. Use on-chain Solidity/Foundry/Anvil emission
+   and block receipts, and (where appropriate) a separately maintained
+   EVM ABI encoder/decoder. Self-encoding followed by self-decoding is
+   insufficient proof of correctness. Disagreements stop qualification.
+
+4. Real PostgreSQL and real chain tests using the installed Conix image.
+   Exercise actual INSERT, SELECT, exact equality filtering, pagination,
+   restart, reorg, repair and replay. In-memory and mocked SQL tests
+   cannot substitute for database driver and server round trips.
+
+The testing oracle is the ABI and actual emitted log bytes; stored
+decoded fields and stored raw log bytes must agree. An ABI-valid but
+economically surprising value must survive unchanged. Financial
+interpretation belongs only to the PayToPlay consumer.
+
+Required ABI type matrix
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Integers:
+  - Every supported width and both signs; 0, 1, 2^(n-1)-1,
+    2^(n-1), 2^n-1 for uint where in range; signed minimum,
+    minimum+1, -1, 0, 1, maximum-1, maximum.
+  - Explicit notorious boundaries: uint16 32767/32768/65535;
+    uint32 2147483647/2147483648/4294967295;
+    uint64 2^63-1/2^63/2^64-1; uint128 >2^64;
+    uint256 2^255 and 2^256-1; int256 -2^255 and 2^255-1.
+  - No NUMERIC vs BIGINT binary-parameter mismatch; no implicit
+    reinterpretation, nonintegral NUMERIC, decimal rounding, exponent
+    normalization changing equality, or precision loss.
+  - SQL/JSON/query encoding remains exact for extreme values.
+    Verify PostgreSQL server types and driver bind codecs, not merely
+    Python values before insertion.
+
+Bytes, addresses, strings and bool:
+  - bytes1..bytes32 with leading/trailing zero bytes, all-zero and
+    all-0xff payloads; distinguish logical bytesN contents from ABI
+    right padding; dynamic bytes length 0, 1, 31, 32, 33 and caps.
+  - 20-byte addresses with leading zeros, mixed-case checksummed
+    display, comparison canonicalization and malformed lengths/case.
+  - bool true/false only, reject encoded bool other than 0 or 1;
+    distinguish Python bool from integer 0/1.
+  - Empty, ASCII, multibyte UTF-8, Unicode combining marks, embedded
+    NUL where supported, invalid UTF-8 and length/offset extremes.
+  - NULL vs missing vs empty string/bytes/array must never collapse.
+    ABI nonnullable fields cannot become SQL NULL without explicit
+    corruption detection.
+
+Compound types:
+  - Empty and nonempty fixed/dynamic arrays, fixed lengths 1,2,3,
+    and boundary maximums; arrays of uint/int, bytesN, addresses,
+    tuples; nested fixed/dynamic arrays with unequal inner lengths.
+  - Positional tuple components, named nested tuples, repeated
+    component names, unnamed fields, and tuple arrays.
+  - Strict dimensions and length checks; no flattening that changes
+    identity or order. ABI component names are metadata, not a reason
+    to reinterpret the ABI layout or invent field values.
+  - Reject unsupported structures at config admission, not only after
+    a live block has been partially processed.
+
+ABI identity and event topics:
+  - Same Transfer(address,address,uint256) signature but ERC-20
+    versus ERC-721 indexed layouts; distinguish by contract + full
+    ABI definition, not only topic0.
+  - Indexed static values decoded from correct 32-byte topics,
+    indexed dynamic/array/tuple values exposed explicitly as topic
+    HASHES, never as reconstructed source values.
+  - Overloads, same event names, duplicate declarations, anonymous
+    events (initially unsupported), malformed topic counts, wrong
+    topic0, malformed nonindexed data, missing indexed flags.
+  - Wrong address, chain, block hash, tx hash, log index or log order;
+    duplicate occurrences and overlapping selected event sets.
+  - Exact raw log retention: topics/data re-read byte-for-byte,
+    including logical zeros and nonindexed dynamic contents.
+
+Names and query identity:
+  - Distinct ABI names that collide under snake_case, lowercase,
+    digit splitting, Unicode normalization or PostgreSQL's 63-byte
+    identifier limit; reserved SQL names; names containing dots,
+    brackets or JSON path syntax; duplicate tuple member names.
+  - Never derive physical column identity from a lossy normalized
+    field name. Prefer an unambiguous stable event/argument ordinal
+    or exact validated ABI descriptor internally; reject ambiguous
+    public name selection rather than choosing the first match.
+  - Exact query-parameter types and widths; reject false == 0,
+    bytes32 == hex text, uint256 == decimal string, and address
+    format mismatches unless a single documented normalization
+    exists for ALL write/read/query paths.
+  - Type-aware equality over indexed and unindexed supported scalar
+    values; mixed event types and same-named fields in different
+    ABIs must not alias.
+  - Filtered cursor continuation with sparse matches, no offset
+    drift, changed filters, wrong generation, retired or replaced
+    checkpoints, same-height A -> B -> A; empty pages and boundary
+    limits. A cursor belongs to the original query identity.
+  - Check that index acceleration and fallback scanning produce
+    exactly the same results, including no-match and high-cardinality
+    cases. Do not claim bounded queries without bounded work.
+
+Malformed and hostile data:
+  - Truncated words, noncanonical integer sign extension or padding,
+    offset overflows, offsets into heads, overlapping/invalid tails,
+    excess trailing bytes, nested array length bombs, recursion depth,
+    duplicate/mismatched log metadata, invalid RPC hex or JSON types,
+    excessive response bytes and malformed UTF-8.
+  - Demand precise failure category/context without echoing untrusted
+    byte payloads or private credentials.
+  - Rejection occurs before publication. The completed checkpoint and
+    prior canonical events remain unchanged; no half-indexed block,
+    missing log silently treated as empty, or fabricated completeness.
+  - Budget exhaustion is unavailability/unsupported input, not proof
+    that the offending event or block did not exist.
+
+Persistence, restart, repair and evolution:
+  - Every supported ABI value survives INSERT -> SELECT and any
+    implemented bulk/COPY path. No second SQL encoding path may be
+    added without identical tests for it. Include supported PostgreSQL
+    server versions and actual deployment roles/permissions.
+  - Read API results equal stored source facts after process restart,
+    fresh connection, rebuilding from origin and rolling back an
+    orphaned suffix; same canonical log must reappear identically.
+  - On reorg, orphaned raw logs and derived query values disappear
+    together; invalidated handles never rebind to a new generation.
+    Retained PayToPlay accounting evidence is managed by PayToPlay,
+    not silently rewritten by the indexer.
+  - Simulate connection loss before commit, after commit, and unknown
+    commit outcome. Recovery must decide from durable state, not
+    replay submitted values on an assumption.
+  - Changed ABI file contents, indexed flags, event selection, or
+    contract address cannot reuse old history under the old catalog
+    fingerprint. Read-only function additions must not cause a
+    needless rebuild of already indexed events.
+  - The same test suite qualifies every physical event-store backend
+    candidate; reject JSONB+GIN or any alternative failing a value,
+    type or query-equivalence test even when it appears faster.
+
+Function-call qualification:
+  - Full ABI type matrix for view/pure arguments and returns, including
+    nested tuple/array returns like PayToPlay.viewPosition's tuple
+    and string[] UI field.
+  - Block-hash-pinned calls and generation rechecks; do not fall back
+    to 'latest'. Different calls at one checkpoint cannot silently
+    observe different blocks.
+  - Missing historical state, reverted eth_call, missing code at the
+    selected block, ABI mismatch or malformed return data must fail
+    without manufacturing an empty/default typed result.
+  - Verify returned identities (as PayToPlay policy, not a generic
+    Conix check) where accounting requires them.
+
+Release gates and execution organization
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Gate 0: Maintain a public, machine-readable supported-type matrix:
+        each ABI kind and operation has an explicit supported/rejected
+        status. Never advertise 'all ABI types' if arrays/tuples/hash
+        semantics have not been implemented and tested.
+
+Gate 1: No-code host checks exercise the compiler, type descriptor,
+        encoding/decoding and malformed-value corpus. Use property
+        generation plus fixed boundary vectors. Fast per-change tests.
+
+Gate 2: Contained PostgreSQL integration for all supported scalar and
+        compound types, real indexes, query bind paths, empty and sparse
+        pagination, read-only credentials, and identical results after
+        restart. Run the same behavioral suite on every claimed storage
+        strategy and supported PostgreSQL version.
+
+Gate 3: Independent EVM/Anvil/Foundry fixtures: actual event logs and
+        block-pinned contract calls; PayToPlay, ERC-20 and ERC-721
+        (especially identical Transfer signatures / different topic
+        layouts), plus a fixture deliberately exercising extreme/nested
+        ABI types. No contract-specific Conix code.
+
+Gate 4: Adversarial lifecycle: hostile RPC, partial responses, ambiguous
+        COMMIT, concurrent readers, reorg A -> B -> A, manual repair,
+        input-catalog mutation and restarted workers. Assert durable
+        effects and evidence, not literal diagnostic prose.
+
+Gate 5: Actual PayToPlay consumer: event records are faithful even when
+        contract-semantic checks fail; accounting independently rejects
+        unusable evidence and still reconciles invoices correctly after
+        restart and reorg. No legacy LocalObserver fallback.
+
+Per-change CI must run fixed boundary vectors and a bounded, reproducible
+property corpus; a more extensive scheduled campaign should increase
+random samples, ABI nesting, DB version coverage and fault schedules.
+Do not invent passing counts or claim completion from unexecuted tests.
+Persist generated failure seeds as permanent named regressions. Favor
+independent evidence over matching mocks and avoid tests that only
+assert exact text, indentation or implementation call counts.
+
+A single silent truncation, sign change, bytes-padding difference,
+field-identity collision, value-filter mismatch, missing event,
+partial publication or inconsistent recovery disqualifies the release.
+If a type cannot be demonstrated safe across all required boundaries,
+fail its configuration admission and explicitly leave it unsupported.
