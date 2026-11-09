@@ -39,7 +39,8 @@ help:
 	  '  image/postgres/acquire                      Pull reviewed PostgreSQL base' \
 	  '  image/dockerfile-frontend/acquire           Pull reviewed BuildKit frontend' \
 	  '  image/foundry/acquire                       Pull reviewed test-only Foundry' \
-	  '  wheelhouse/check|acquire                    DOCKER_CONTEXT=agentic WHEELHOUSE=/absolute/pool' \
+	  '  wheelhouse/check                            DOCKER_CONTEXT=agentic WHEELHOUSE=/absolute/pool' \
+	  '  wheelhouse/acquire                          DOCKER_CONTEXT=agentic WHEELHOUSE=/absolute/pool' \
 	  '  image/indexer/build                         DOCKER_CONTEXT=agentic WHEELHOUSE=/absolute/pool' \
 	  '  image/test-runner/build                     DOCKER_CONTEXT=agentic WHEELHOUSE=/absolute/pool' \
 	  '  image/evm-test-runner/build                 DOCKER_CONTEXT=agentic WHEELHOUSE=/absolute/pool' \
@@ -58,7 +59,10 @@ help:
 	  '  database/schema/initialize                  DOCKER_CONTEXT=agentic INDEXER_IMAGE=sha256:<id>' \
 	  '                                                CONFIG_FILE=/absolute/config.toml OWNER_DSN_FILE=/absolute/secret' \
 	  '                                                DATABASE_NETWORK=<selected-network>' \
-	  '  deployment/config/check|apply|status|remove DOCKER_CONTEXT=agentic DEPLOYMENT=<name>' \
+	  '  deployment/config/check                     DOCKER_CONTEXT=agentic DEPLOYMENT=<name>' \
+	  '  deployment/apply                            DOCKER_CONTEXT=agentic DEPLOYMENT=<name>' \
+	  '  deployment/status                           DOCKER_CONTEXT=agentic DEPLOYMENT=<name>' \
+	  '  deployment/remove                           DOCKER_CONTEXT=agentic DEPLOYMENT=<name>' \
 	  '                                                INDEXER_IMAGE=sha256:<id> INPUT_VOLUME=<volume>' \
 	  '                                                DATABASE_NETWORK=<name> RPC_NETWORK=<name>'
 
