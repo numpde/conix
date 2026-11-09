@@ -10,9 +10,9 @@ import argparse
 import asyncio
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fixture_protocol import (
@@ -48,8 +48,9 @@ def _input():
             request_bytes.decode("utf-8"), object_pairs_hook=_pairs,
             parse_constant=_bad_constant,
         )
-    except (ValueError, UnicodeError) as error:
+    except (ValueError, UnicodeError):
         raise FixtureError("Contained fixture request is invalid JSON.") from None
+
     if type(content) is not dict or set(content) != {"descriptor", "state"}:
         raise FixtureError("Contained fixture request must include descriptor and prior phase state.")
 
@@ -58,13 +59,13 @@ def _input():
         raise FixtureError("Contained fixture descriptor is missing.")
 
     fixture_id = os.environ.get("CONIX_FIXTURE_ID", "")
-    descriptor = decode(
-        (json.dumps(description, separators=(",", ":")) + "\n").encode(),
-        fixture_id=fixture_id,
-    )
+    descriptor = decode((json.dumps(description, separators=(",", ":")) + "\n").encode(),
+                        fixture_id=fixture_id)
+
     previous = content["state"]
     if previous is not None:
         previous = receipt((json.dumps(previous, separators=(",", ":")) + "\n").encode())
+
     return descriptor, previous
 
 
@@ -98,6 +99,7 @@ def _summary(phase, checkpoint, snapshot):
         "snapshot": snapshot,
     }
     receipt((json.dumps(summary) + "\n").encode())
+
     return summary
 
 
@@ -116,12 +118,14 @@ async def _follow(journal, chain, height):
     """Wait for the genuine Tier-0 run_session, never scan/publish ourselves."""
     stop = asyncio.Event()
     task = asyncio.create_task(run_session(journal, chain, stop))
+
     try:
         async with asyncio.timeout(80):
             while True:
                 if task.done():
                     await task
                     raise ScenarioFailure("Tier-0 session ended without producing requested complete coverage.")
+
                 state = await journal.basis()
                 if state.checkpoint is not None and state.checkpoint.number >= height:
                     break
@@ -169,6 +173,7 @@ def _contract_errors(descriptor):
             continue
         signature = name + "(" + ",".join(entry["type"] for entry in inputs) + ")"
         mapping[keccak(text=signature)[:4].hex()] = name
+
     return mapping
 
 
@@ -181,6 +186,7 @@ async def _revert_reason(chain, tx, errors):
         ])
     except Exception:
         return "trace unavailable"
+
     if type(trace) is not dict:
         return "trace unavailable"
 
@@ -212,6 +218,7 @@ async def _send(chain, sender, signature, types=(), arguments=(), *, value=0, er
         }
         if value:
             transaction["value"] = hex(value)
+
         action = signature.split("(", 1)[0]
         try:
             tx_hash = data(await rpc.call("eth_sendTransaction", [transaction]),
@@ -221,14 +228,17 @@ async def _send(chain, sender, signature, types=(), arguments=(), *, value=0, er
                 f"Fixture {action} submission returned RPC code {error.code}; "
                 "outcome unconfirmed; do not resubmit."
             ) from error
+
         except (RpcProtocolError, RpcUnavailable, TimeoutError) as error:
             raise ScenarioFailure(
                 f"Fixture {action} submission failed ({type(error).__name__}); "
                 "outcome unconfirmed; do not resubmit."
             ) from error
-        # Submission can succeed before the transaction is mined. Poll
-        # receipt *reads* briefly; never rebroadcast an accepted transaction.
+
+        # A successful submission can precede mining. Poll receipt reads, but
+        # never submit the transaction again after an uncertain outcome.
         mined = None
+
         try:
             for attempt in range(10):
                 mined = await rpc.call("eth_getTransactionReceipt", ["0x" + tx_hash.hex()])
@@ -242,6 +252,7 @@ async def _send(chain, sender, signature, types=(), arguments=(), *, value=0, er
                 f"Fixture {action} receipt lookup failed ({type(error).__name__}); "
                 "transaction outcome unconfirmed; do not resubmit."
             ) from error
+
         if mined is None:
             raise ScenarioFailure(
                 f"Fixture {action} has no mined receipt after submission; "
@@ -267,14 +278,14 @@ async def _send(chain, sender, signature, types=(), arguments=(), *, value=0, er
                 gas = quantity(used, "receipt gas used")
             except RpcProtocolError:
                 gas = None
+
             status = mined.get("status")
             outcome = "reverted" if status == "0x0" else "unknown receipt status"
             gas_detail = f"; gas used {gas} of {int(GAS, 16)}" if gas is not None else ""
             reason = await _revert_reason(chain, "0x" + tx_hash.hex(), errors or {}) if status == "0x0" else ""
             detail = f"; {reason}" if reason else ""
-            raise ScenarioFailure(
-                f"Fixture {action} {outcome}{gas_detail}{detail}; do not resubmit."
-            )
+            raise ScenarioFailure(f"Fixture {action} {outcome}{gas_detail}{detail}; do not resubmit.")
+
         return mined
     finally:
         prior = sys.exc_info()[1]
@@ -302,8 +313,6 @@ async def _send(chain, sender, signature, types=(), arguments=(), *, value=0, er
 
 async def _voucher_signature(chain, key, customer, channel, cumulative, invoice):
     """Sign the contract-computed EIP-712 digest with the fixture-only Cast."""
-    # The real deployed contract, not a second Python EIP-712 implementation,
-    # defines the domain and voucher digest.
     digest = data(await chain.rpc.call("eth_call", [
         {"to": chain.settings.deployment.address,
          "data": _calldata(
@@ -312,14 +321,16 @@ async def _voucher_signature(chain, key, customer, channel, cumulative, invoice)
              (customer, channel, cumulative, invoice),
          )}, "latest",
     ]), "voucher digest", size=32)
+
     try:
         signed = subprocess.run(
             ["cast", "wallet", "sign", "--no-hash", "0x" + digest.hex(),
              "--private-key", key],
             capture_output=True, text=True, timeout=15, check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as error:
+    except (OSError, subprocess.TimeoutExpired):
         raise ScenarioFailure("Pinned test-only Cast signing operation failed.") from None
+
     signature = signed.stdout.strip()
     if signed.returncode != 0 or len(signature) != 132 or not signature.startswith("0x"):
         raise ScenarioFailure("Pinned test-only Cast returned no valid voucher signature.")
@@ -344,6 +355,7 @@ async def _events(observer, checkpoint):
                 raise ScenarioFailure("Collection pages do not cover exactly the checkpoint count.")
 
             return tuple(observed)
+
     raise ScenarioFailure("Collection pagination failed to terminate within the known complete count.")
 
 
@@ -355,6 +367,7 @@ async def _baseline(journal, chain, observer, _descriptor, prior):
     head = await chain.current_head()
     await _follow(journal, chain, head.number)
     checkpoint = await observer.latest_checkpoint()
+
     if checkpoint.block != head or checkpoint.collection_count != 0:
         raise ScenarioFailure("Fresh dapp32 base deployment should have complete, collection-free coverage.")
 
@@ -372,6 +385,7 @@ async def _collect(journal, chain, observer, descriptor, prior):
 
     starting = await observer.latest_checkpoint()
     _confirm(starting, prior)
+
     accounts = descriptor["publicFixtureAccounts"]
     admin = to_checksum_address(accounts["admin"]["address"])
     customer = to_checksum_address(accounts["customer"]["address"])
@@ -379,44 +393,51 @@ async def _collect(journal, chain, observer, descriptor, prior):
     payee = to_checksum_address(accounts["payee"]["address"])
     channel = await _call_uint(chain, "channelCount()")
     errors = _contract_errors(descriptor)
+
+    # Establish a funded position and an authorized signer before collection.
     await _send(chain, admin, "createChannel(address,address,uint64)",
                 ("address", "address", "uint64"), (payee, collector, 3600), errors=errors)
     await _send(chain, customer, "registerVoucherKey(uint256,address)",
                 ("uint256", "address"), (channel, customer), errors=errors)
     await _send(chain, customer, "fund(uint256,uint256)",
                 ("uint256", "uint256"), (channel, 100), value=100, errors=errors)
+
     invoices = (bytes.fromhex("61" * 32), bytes.fromhex("62" * 32))
-    first_signature = await _voucher_signature(
-        chain, accounts["customer"]["privateKey"], customer, channel, 40, invoices[0]
-    )
-    first = await _send(chain, collector,
+    first_signature = await _voucher_signature(chain, accounts["customer"]["privateKey"],
+                                               customer, channel, 40, invoices[0])
+    first_receipt = await _send(chain, collector,
         "collect(address,uint256,uint256,bytes32,uint256,bytes)",
         ("address", "uint256", "uint256", "bytes32", "uint256", "bytes"),
         (customer, channel, 40, invoices[0], 40, first_signature), errors=errors)
+    # The second collection must retain the payee at its own block, not the
+    # payee currently recorded by the contract.
     await _send(chain, admin, "setPayee(uint256,address)",
                 ("uint256", "address"), (channel, admin), errors=errors)
-    second_signature = await _voucher_signature(
-        chain, accounts["customer"]["privateKey"], customer, channel, 60, invoices[1]
-    )
-    second = await _send(chain, collector,
+    second_signature = await _voucher_signature(chain, accounts["customer"]["privateKey"],
+                                                customer, channel, 60, invoices[1])
+    second_receipt = await _send(chain, collector,
         "collect(address,uint256,uint256,bytes32,uint256,bytes)",
         ("address", "uint256", "uint256", "bytes32", "uint256", "bytes"),
         (customer, channel, 60, invoices[1], 20, second_signature), errors=errors)
+
     mined_head = await chain.current_head()
     await _follow(journal, chain, mined_head.number)
     checkpoint = await observer.latest_checkpoint()
     observed = await _events(observer, checkpoint)
+
     if len(observed) != 2:
         raise ScenarioFailure("Real signed collections did not produce exactly two indexed events.")
 
-    for index, (item, raw, amount, paid, recipient) in enumerate(
-        zip(observed, (first, second), (40, 20), (40, 60), (payee, admin))
+    for (index, (event, mined_receipt, amount, cumulative_paid, recipient)) in enumerate(
+        zip(observed, (first_receipt, second_receipt), (40, 20), (40, 60), (payee, admin))
     ):
-        tx = data(raw["transactionHash"], "receipt transaction", size=32)
-        if (item.transaction_hash != tx or item.customer != customer or item.channel_id != channel
-            or item.amount != amount or item.voucher_paid != paid or item.payee != recipient
-            or item.invoice_hash != invoices[index]):
+        transaction_hash = data(mined_receipt["transactionHash"], "receipt transaction", size=32)
+        if (event.transaction_hash != transaction_hash or event.customer != customer
+            or event.channel_id != channel or event.amount != amount
+            or event.voucher_paid != cumulative_paid or event.payee != recipient
+            or event.invoice_hash != invoices[index]):
             raise ScenarioFailure("Indexed collection differs from the real receipt/typed voucher/payee.")
+
     observation = await observer.latest_position(customer, channel)
     if (observation.checkpoint.block != checkpoint.block
         or observation.position.voucher_paid != 60
@@ -424,6 +445,7 @@ async def _collect(journal, chain, observer, descriptor, prior):
         or observation.position.payee != admin
         or observation.position.voucher_key != customer):
         raise ScenarioFailure("Block-pinned position disagrees with collected contract state.")
+
     evidence = await observer.canonical_evidence(
         checkpoint, tuple(item.block_number for item in observed), include_finalized=False
     )
@@ -449,6 +471,7 @@ async def _restart(journal, chain, observer, _descriptor, prior):
 
     state = await observer.latest_checkpoint()
     _confirm(state, prior)
+
     # Mine a new empty block to require an actual publication after restart;
     # merely reading the old checkpoint would not exercise resumption.
     await chain.rpc.call("evm_mine", [])
@@ -465,6 +488,7 @@ async def _restart(journal, chain, observer, _descriptor, prior):
         or len(await _events(observer, after)) != 2
     ):
         raise ScenarioFailure("Restart did not scan the new empty block without duplicate financial events.")
+
     return _summary("restart", after, prior["snapshot"])
 
 
@@ -479,6 +503,7 @@ async def _reorg(journal, chain, observer, _descriptor, prior):
         raise ScenarioFailure("Reorg fixture lacks the two actual indexed collection events.")
 
     before = await journal.stored_headers(chain.settings.start_block, old.block.number)
+
     # The baseline snapshot predates both collections. The retained prefix
     # through that snapshot is the only eligible repair ancestry.
     snapshot = prior["snapshot"]
@@ -505,6 +530,7 @@ async def _reorg(journal, chain, observer, _descriptor, prior):
         pass
     else:
         raise ScenarioFailure("Concrete Tier-0 scan did not reject the replaced checkpoint.")
+
     state = await journal.basis()
     if not state.blocked_reason:
         raise ScenarioFailure("Canonical contradiction was not durably invalidated.")
@@ -515,6 +541,7 @@ async def _reorg(journal, chain, observer, _descriptor, prior):
         pass
     else:
         raise ScenarioFailure("Invalidated collection generation remained available.")
+
     # Select an exact retained ancestor still canonical in the restored branch.
     # No direct extension SQL or replacement scanner is permitted.
     survivors = [block for block in before if await chain.canonical(block)]
@@ -522,8 +549,10 @@ async def _reorg(journal, chain, observer, _descriptor, prior):
         raise ScenarioFailure("No retained canonical ancestor remains for checked manual repair.")
 
     anchor = survivors[-1]
+
     async with journal.writer() as writer:
         await writer.repair_to(await writer.basis(), anchor, chain)
+
     await _follow(journal, chain, head.number)
     recovered = await observer.latest_checkpoint()
     if (recovered.generation == old.generation
@@ -531,6 +560,7 @@ async def _reorg(journal, chain, observer, _descriptor, prior):
         or recovered.collection_count != 0
         or await _events(observer, recovered)):
         raise ScenarioFailure("Repaired branch did not reject orphaned collections or rotate generation.")
+
     return _summary("reorg", recovered, snapshot)
 
 
@@ -538,6 +568,7 @@ async def execute(phase):
     """Dispatch one phase against the installed, unchanged Tier-0 package."""
     descriptor, prior = _input()
     settings = _settings(descriptor)
+
     if phase == "initialize":
         if prior is not None:
             raise FixtureError("Owner preparation is not a resume operation.")
@@ -545,6 +576,7 @@ async def execute(phase):
         await initialize(os.environ["CONIX_TEST_OWNER_DSN"], settings)
         await initialize(os.environ["CONIX_TEST_OWNER_DSN"], settings)
         return None
+
     journal = Journal(os.environ["CONIX_TEST_DSN"], settings)
     async with open_chain(settings) as contract:
         chain = Chain(contract, settings)
@@ -563,6 +595,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=("initialize", "baseline", "collected", "restart", "reorg"))
     selected = parser.parse_args()
+
     try:
         summary = asyncio.run(execute(selected.phase))
     except Exception as error:
