@@ -331,7 +331,7 @@ def _json_request(descriptor, prior_phase_receipt):
 
 
 class PayToPlayTest:
-    """Only owned disposable SQL/test resources; never dapp32 lifecycle."""
+    """Borrow the producer's Anvil; own only the disposable SQL/consumer project."""
 
     def __init__(self, docker, runner_image, scratch, descriptor):
         self.docker = docker
@@ -345,142 +345,167 @@ class PayToPlayTest:
         self.consumer_retired = True
         self.compose_environment = None
 
-    def _file(self, name):
-        return self.scratch_dir / name
+    def _file(self, receipt_filename):
+        return self.scratch_dir / receipt_filename
 
     def check_new_sql_project(self):
-        """Refuse to adopt or destroy any pre-existing Compose project assets."""
-        for kind in ("container", "network", "volume"):
-            args = [kind, "ls", "--quiet", "--filter",
-                    "label=com.docker.compose.project=" + self.sql_project]
-            if kind == "container":
-                args.insert(2, "--all")
+        """Never adopt or delete a pre-existing Compose project."""
+        for resource_kind in ("container", "network", "volume"):
+            docker_argv = [
+                resource_kind, "ls", "--quiet", "--filter",
+                "label=com.docker.compose.project=" + self.sql_project,
+            ]
 
-            if self.docker.run(*args, timeout=15, capture=True).strip():
+            if resource_kind == "container":
+                docker_argv.insert(2, "--all")
+
+            if self.docker.run(*docker_argv, timeout=15, capture=True).strip():
                 raise CampaignError(
                     "The generated Conix SQL project already has resources; "
                     "inspect ownership before starting or removing anything."
                 )
 
-    def sql(self):
-        """Prepare isolated SQL, owner enrollment and the restricted test user."""
-        images = pinned_images()
+    def prepare_sql(self):
+        """Enroll the owner schema and restricted consumer in isolated PostgreSQL."""
+        image_manifest = pinned_images()
         self.docker.require_role(self.runner_image, "evm-test-runner")
-        self.docker.require_image(images["postgres"])
+        self.docker.require_image(image_manifest["postgres"])
 
         self.compose_environment = self.docker.docker_environment.copy()
         self.compose_environment.update(
             CONIX_EVM_TEST_RUNNER_IMAGE=self.runner_image,
-            CONIX_POSTGRES_IMAGE=images["postgres"],
+            CONIX_POSTGRES_IMAGE=image_manifest["postgres"],
             CONIX_FIXTURE_ID=self.fixture_id,
             CONIX_RPC_NETWORK=self.fixture_descriptor["dockerNetwork"],
         )
-        compose = _compose(self.docker, self.sql_project)
-        rendered_json = self.docker.run(*compose, "config", "--format", "json",
-                                        capture=True, timeout=20, env=self.compose_environment)
+
+        compose_argv = _compose(self.docker, self.sql_project)
+        rendered_compose_json = self.docker.run(
+            *compose_argv, "config", "--format", "json",
+            capture=True, timeout=20, env=self.compose_environment,
+        )
+
         try:
-            rendered = json.loads(rendered_json)
+            rendered_graph = json.loads(rendered_compose_json)
         except ValueError:
             raise CampaignError("Compose returned invalid rendered fixture JSON.") from None
 
         admit(
-            rendered, runner_image=self.runner_image,
-            postgres_image=images["postgres"], rpc_network=self.fixture_descriptor["dockerNetwork"],
+            rendered_graph,
+            runner_image=self.runner_image,
+            postgres_image=image_manifest["postgres"],
+            rpc_network=self.fixture_descriptor["dockerNetwork"],
         )
         self.check_new_sql_project()
 
+        # Once creation is attempted, teardown ownership persists even if
+        # Docker returns an error before confirming startup.
         self.sql_retired = False
         self.sql_started = True
         _progress("Disposable PostgreSQL: starting")
-        self.docker.run(*compose, "up", "--detach", "--no-build", "--pull", "never",
-                        "--wait", "--wait-timeout", "60", "postgres",
-                        env=self.compose_environment, timeout=90)
+
+        self.docker.run(
+            *compose_argv, "up", "--detach", "--no-build", "--pull", "never",
+            "--wait", "--wait-timeout", "60", "postgres",
+            env=self.compose_environment, timeout=90,
+        )
         _progress("Disposable PostgreSQL: ready")
 
-        self._phase("bootstrap", "bootstrap", state=None, need_receipt=False)
-        self._phase("initialize", "initialize", state=None, need_receipt=False)
+        self._phase("bootstrap", "bootstrap", prior_receipt=None, expect_receipt=False)
+        self._phase("initialize", "initialize", prior_receipt=None, expect_receipt=False)
 
-    def _phase(self, service, phase, *, state, need_receipt):
-        """Run the installed fixture phase and admit only its checked receipt."""
-        argv = list(self.docker.docker_command_prefix) + list(_compose(self.docker, self.sql_project)) + [
+    def _phase(self, service_name, phase, *, prior_receipt, expect_receipt):
+        """Run one installed fixture phase and admit its checked public receipt."""
+        phase_argv = list(self.docker.docker_command_prefix) + list(_compose(self.docker, self.sql_project)) + [
             "run", "--rm", "--no-deps", "--pull", "never", "-T",
-            service, *([] if phase == "bootstrap" else [phase]),
+            service_name, *([] if phase == "bootstrap" else [phase]),
         ]
-        payload = _json_request(self.fixture_descriptor, state) if phase != "bootstrap" else None
+        phase_payload = _json_request(self.fixture_descriptor, prior_receipt) if phase != "bootstrap" else None
         self.consumer_retired = False
 
         try:
-            phase_output = owned_command(
-                argv,
+            phase_stdout = owned_command(
+                phase_argv,
                 output=self._file("conix-" + phase + ".out"),
                 error_file=self._file("conix-" + phase + ".err"),
-                env=self.compose_environment, timeout=180 if phase in ("collected", "reorg") else 75,
-                payload=payload, label=f"Conix phase/{phase}",
+                env=self.compose_environment,
+                timeout=180 if phase in ("collected", "reorg") else 75,
+                payload=phase_payload,
+                label=f"Conix phase/{phase}",
             )
             self.consumer_retired = True
         except CampaignError as error:
-            # Admit only a bounded phase failure from the installed script,
-            # not arbitrary Docker stderr, Cast output or fixture secrets.
+            # A child may include wallet bytes in stderr; admit only its
+            # source-controlled, phase-bound failure record.
             try:
-                stderr_tail = self._file("conix-" + phase + ".err").read_bytes()[-16384:]
+                phase_stderr_tail = self._file("conix-" + phase + ".err").read_bytes()[-16384:]
             except OSError:
-                stderr_tail = b""
+                phase_stderr_tail = b""
 
-            reason = parse_phase_failure(stderr_tail, phase=phase)
-            if reason is not None:
-                raise CampaignError(f"Conix phase/{phase} failed: {reason}.") from error
+            verified_failure_reason = parse_phase_failure(phase_stderr_tail, phase=phase)
 
-            # On timeout, a daemon-side one-shot process may still be running.
+            if verified_failure_reason is not None:
+                raise CampaignError(f"Conix phase/{phase} failed: {verified_failure_reason}.") from error
+
+            # A timed-out CLI is not proof that daemon-side work has stopped.
             raise CampaignError(f"Conix phase/{phase} failed: {error}") from error
 
-        if not need_receipt:
+        if not expect_receipt:
             return None
 
-        phase_receipt = receipt(phase_output)
+        phase_receipt = receipt(phase_stdout)
+
         if phase_receipt["phase"] != phase:
             raise CampaignError("Contained fixture returned the wrong phase result.")
 
         return phase_receipt
 
     def execute(self):
-        """Run all phases without acquiring or retiring the dapp32 fixture."""
-        # The fixture is borrowed, but its chain state is changed deliberately
-        # by the scenario's transactions and reorganization tests.
+        """Run the four phases without acquiring or retiring the producer fixture."""
+        # This borrowed chain is intentionally modified with signed test
+        # transactions, then with a controlled reorganization.
         verify_network(self.docker, self.fixture_descriptor)
-        self.sql()
+        self.prepare_sql()
 
-        previous_receipt = None
+        prior_receipt = None
+
         for phase in ("baseline", "collected", "restart", "reorg"):
-            previous_receipt = self._phase("consumer", phase, state=previous_receipt, need_receipt=True)
-            if phase == "baseline" and previous_receipt["collection_count"] != 0:
+            prior_receipt = self._phase("consumer", phase, prior_receipt=prior_receipt, expect_receipt=True)
+
+            if phase == "baseline" and prior_receipt["collection_count"] != 0:
                 raise CampaignError("Baseline unexpectedly contains collection events.")
 
-            if phase in ("collected", "restart") and previous_receipt["collection_count"] != 2:
+            if phase in ("collected", "restart") and prior_receipt["collection_count"] != 2:
                 raise CampaignError("Expected two real indexed collection events.")
 
-            if phase == "reorg" and previous_receipt["collection_count"] != 0:
+            if phase == "reorg" and prior_receipt["collection_count"] != 0:
                 raise CampaignError("Orphaned collections remain after checked reorganization repair.")
 
     def cleanup(self):
-        """Retire only this test's owned SQL project, regardless of outcome."""
+        """Retire only the owned SQL/consumer project, regardless of outcome."""
         if not self.sql_started:
             return []
 
         try:
-            self.docker.run(*_compose(self.docker, self.sql_project),
+            self.docker.run(
+                *_compose(self.docker, self.sql_project),
                 "down", "--volumes", "--remove-orphans", "--timeout", "30",
-                env=self.compose_environment, timeout=100)
+                env=self.compose_environment, timeout=100,
+            )
             self.sql_retired = True
             self.consumer_retired = True
+
             return []
         except Exception as error:
-            detail = str(error) if isinstance(error, OperationError) else type(error).__name__
-            return [f"Conix SQL/consumer teardown failed: {detail}; ownership unconfirmed."]
+            safe_failure_detail = str(error) if isinstance(error, OperationError) else type(error).__name__
+            return [f"Conix SQL/consumer teardown failed: {safe_failure_detail}; ownership unconfirmed."]
 
     def recovery(self):
-        return (f"Borrowed fixture ID={self.fixture_id}; Conix project={self.sql_project}; "
-                "no rights to remove or replace the producer fixture; "
-                f"selected Engine={self.docker.endpoint}.")
+        return (
+            f"Borrowed fixture ID={self.fixture_id}; Conix project={self.sql_project}; "
+            "no rights to remove or replace the producer fixture; "
+            f"selected Engine={self.docker.endpoint}."
+        )
 
 
 class Campaign:

@@ -286,11 +286,11 @@ class FixtureRunnerTests(unittest.TestCase):
                                        Path(directory), descriptor)
             count = {"baseline": 0, "collected": 2, "restart": 2, "reorg": 0}
             phases = []
-            def phase(_service, name, *, state, need_receipt):
-                phases.append((name, state["phase"] if state else None))
+            def phase(_service, name, *, prior_receipt, expect_receipt):
+                phases.append((name, prior_receipt["phase"] if prior_receipt else None))
                 return {"phase": name, "collection_count": count[name]}
             with patch.object(runner, "verify_network") as validate, patch.object(
-                run, "sql"
+                run, "prepare_sql"
             ), patch.object(run, "_phase", side_effect=phase):
                 run.execute()
             validate.assert_called_once_with(docker, descriptor)
@@ -361,7 +361,7 @@ class FixtureRunnerTests(unittest.TestCase):
 
             with patch.object(runner, "owned_command", side_effect=failed):
                 with self.assertRaises(runner.CampaignError) as raised:
-                    fixture._phase("consumer", "collected", state=None, need_receipt=True)
+                    fixture._phase("consumer", "collected", prior_receipt=None, expect_receipt=True)
             self.assertIn("phase/collected", str(raised.exception))
             self.assertIn("Indexed collection differs", str(raised.exception))
             self.assertFalse(fixture.consumer_retired)
