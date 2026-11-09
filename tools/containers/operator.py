@@ -55,9 +55,7 @@ def local_socket(endpoint):
 
 
 def environment(client_config=None):
-    """Remove ambient Docker, Compose and proxy selection before execution."""
-    # Ambient client/Compose overrides are not authority to select an Engine,
-    # Compose file, project, profile or build path.
+    """Ignore ambient Docker, Compose and proxy overrides when selecting authority."""
     result = {k: v for (k, v) in os.environ.items()
               if not k.startswith(("DOCKER_", "COMPOSE_", "BUILDX_", "BUILDKIT_"))
               and k not in ("CONTAINER_HOST", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",

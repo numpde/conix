@@ -1,6 +1,6 @@
 # Adapted from numpde/pay-to-play@2a1adb00b2eba9a18b49c92ca39a69ecf59bb110
 # src/local_observer/models.py; shared protocol/ABI semantics.
-"""Immutable chain facts and a replaceable observation API, without RPC or ABI.
+"""Immutable chain facts and a consumer-facing observation contract, without RPC or ABI.
 
 Checkpoints and cursors identify one backend generation. They are read handles,
 not durable accounting records, proof of finality, or authorization to spend.

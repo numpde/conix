@@ -1,4 +1,4 @@
-"""Explicit owner-only schema installation; never imported by Tier-0 runtime.
+"""Explicit owner-only schema installation; never invoked by the Tier-0 worker.
 
 The database operator first creates a dedicated, non-superuser owner login,
 a separate runtime login, and a schema owned by the former. This module owns
