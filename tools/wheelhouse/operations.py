@@ -6,6 +6,7 @@ tar context directly to BuildKit; host pip never installs packages or wheels.
 """
 import hashlib
 import json
+import re
 import os
 from pathlib import Path
 import signal
@@ -69,7 +70,7 @@ class SharedWheelhouse:
     def check(self):
         if not has_tool(self.pool, self.pin):
             raise PoolError(
-                "Pinned NMR wheelhouse-tool is missing from WHEELHOUSE; run explicit deps/wheelhouse/acquire."
+                "Pinned NMR wheelhouse-tool is missing from WHEELHOUSE; run explicit wheelhouse/acquire."
             )
         raw = self.run(
             "/input/check.py",
@@ -206,17 +207,25 @@ class SharedWheelhouse:
                 try:
                     status = build.wait(timeout=600)
                     selected_status = producer.wait(timeout=60)
-                except BaseException:
+                except BaseException as error:
                     _retire(build)
                     _retire(producer)
+                    if isinstance(error, KeyboardInterrupt):
+                        raise
                     raise PoolError(
-                        "BuildKit stream or builder did not confirm retirement; "
-                        "reconcile selected Engine before reusing intermediate artifacts."
-                    ) from None
+                        f"Offline BuildKit or wheel-stream wait failed ({type(error).__name__}); "
+                        "processes were signalled for retirement. Reconcile selected "
+                        "Engine before reusing intermediate artifacts."
+                    ) from error
             if status or selected_status:
+                # Only the reviewed local wheel streamer produces this log.
+                # Never print arbitrary BuildKit output or credential-shaped
+                # substrings as a supposedly safe failure explanation.
+                reason = _public_stream_diagnostic(diagnostics) if selected_status else None
+                extra = f" Shared stream: {reason}." if reason else ""
                 raise PoolError(
                     f"Offline build rejected: BuildKit exit={status}, shared stream exit={selected_status}; "
-                    "no image tag was changed."
+                    f"no image tag was changed.{extra}"
                 )
             raw = iid.read_text().strip() if iid.is_file() else ""
             if len(raw) != 71 or not raw.startswith("sha256:") or any(
@@ -231,6 +240,26 @@ class SharedWheelhouse:
         self.docker.run("image", "tag", raw, f"conix-{target}:local", timeout=20)
         return raw
 
+
+
+def _public_stream_diagnostic(path):
+    """Admit one short, nonsecret diagnostic from the pinned wheel streamer."""
+    try:
+        tail = path.read_bytes()[-4096:].decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in reversed(tail.splitlines()):
+        value = line.strip()
+        if (
+            1 <= len(value) <= 240
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.,:/()\[\]@+-]*", value)
+            and not any(marker in value.lower() for marker in (
+                "password", "private", "secret", "token", "://",
+            ))
+            and re.search(r"(?:0x)?[0-9a-fA-F]{64}", value) is None
+        ):
+            return value
+    return None
 
 def _retire(process):
     try:
