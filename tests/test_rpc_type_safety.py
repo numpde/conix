@@ -90,7 +90,7 @@ class RpcEnvelopeTypeContracts(unittest.IsolatedAsyncioTestCase):
         transport = httpx.MockTransport(
             lambda request: httpx.Response(
                 200,
-                content=body,
+                stream=httpx.ByteStream(body),
                 headers=response_headers or {},
             )
         )
