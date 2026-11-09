@@ -57,6 +57,7 @@ def _abi(types, raw, label):
             raise RpcProtocolError(f"PayToPlay {label} returned noncanonical or trailing ABI bytes.")
     except (DecodingError, ValueError, OverflowError) as error:
         raise RpcProtocolError(f"PayToPlay {label} returned malformed ABI bytes.") from error
+
     return values
 
 
@@ -191,6 +192,7 @@ class PayToPlay:
                 or to_checksum_address(data(value["address"], "log address", size=20)) != self.deployment.address
             ):
                 raise RpcProtocolError("RPC returned a removed log or another contract's log.")
+
             if (
                 quantity(value["blockNumber"], "log block") != block.number
                 or data(value["blockHash"], "log block hash", size=32) != block.hash
