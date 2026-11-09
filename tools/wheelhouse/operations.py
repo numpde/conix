@@ -223,7 +223,7 @@ class SharedWheelhouse:
                     stream_status = streamer.wait(timeout=60)
                 except BaseException as error:
                     _retire(builder)
-                    _retire(producer)
+                    _retire(streamer)
                     if isinstance(error, KeyboardInterrupt):
                         raise
 
