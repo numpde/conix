@@ -25,6 +25,26 @@ Implementation discipline
 - Keep financial state and policy out of the observer, including test-only
   substitutes presented as a real payment workflow.
 
+Error transparency and recovery reporting
+----------------------------------------
+- Do not discard an informative failure merely to label it CampaignError,
+  OperationError or a generic test failure. Preserve the first cause, its
+  category and the operation/phase that failed across subprocess boundaries.
+- Cleanup has an independent outcome. Attempt owned-resource retirement,
+  report unconfirmed cleanup separately, and print the primary failure LAST.
+  A cleanup failure must not erase a preceding mutation/transaction failure.
+- Only source-controlled diagnostic text or a validated bounded diagnostic
+  record may reach the terminal. Never print raw fixture JSON, captured
+  producer stderr, wallet keys, DB credentials, arbitrary RPC error prose,
+  untrusted exception values or full subprocess argv.
+- Unexpected errors still expose their type, phase, and a safe source location.
+  Do not invent a more specific explanation than the available evidence.
+  Retain private receipts for inspection, but do not make ordinary failure
+  analysis depend on searching private files.
+- Long-running acquisition, build and test actions report start, bounded
+  liveness, completion and exact failure. Test cause/context/effects and
+  secret non-disclosure, not exact error prose.
+
 Container and dependency authority
 ----------------------------------
 - Never interpolate operator text into Make recipes. Only the Python operator
