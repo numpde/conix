@@ -80,6 +80,7 @@ class Contract:
         self.calls.append(("position", header.number))
         if (customer, channel_id) != (CUSTOMER, 12):
             raise ValueError("Unexpected test position.")
+
         return ADDR, position()
 
 
@@ -106,6 +107,7 @@ class Chain:
     async def header(self, number):
         if number not in self.blocks:
             raise ObservationUnavailable(f"Missing test block {number}.")
+
         return self.blocks[number]
 
     async def canonical(self, header):
@@ -214,12 +216,16 @@ class FixtureReceiptContracts(unittest.IsolatedAsyncioTestCase):
                 self.calls.append(method)
                 if method == "eth_sendTransaction":
                     return "0x" + "ab" * 32
+
                 if method == "eth_getTransactionReceipt":
                     return receipt
+
                 if method == "debug_traceTransaction":
                     return trace
+
                 if method == "anvil_stopImpersonatingAccount" and cleanup_error:
                     raise cleanup_error
+
                 return None
 
         source = Source()
@@ -265,10 +271,12 @@ class FixtureReceiptContracts(unittest.IsolatedAsyncioTestCase):
                 self.calls.append(method)
                 if method == "eth_sendTransaction":
                     return "0x" + "ab" * 32
+
                 if method == "eth_getTransactionReceipt":
                     self.lookups += 1
                     if self.lookups == 1:
                         return None
+
                     return {"transactionHash": "0x" + "ab" * 32,
                             "status": "0x1", "gasUsed": "0x5208"}
                 return None

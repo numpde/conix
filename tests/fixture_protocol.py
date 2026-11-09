@@ -43,6 +43,7 @@ def _pairs(rows):
     for (name, value) in rows:
         if name in result:
             raise FixtureError("Fixture JSON contains duplicate object members.")
+
         result[name] = value
     return result
 
@@ -63,8 +64,10 @@ def decode(raw: bytes, *, fixture_id: str):
     """Admit one complete dapp32 descriptor, including ABI and test accounts."""
     if type(fixture_id) is not str or IDENTITY.fullmatch(fixture_id) is None:
         raise FixtureError("Fixture identity must use the dapp32 supported lowercase name format.")
+
     if type(raw) is not bytes or not 0 < len(raw) <= LIMIT or len(raw.splitlines()) != 1:
         raise FixtureError("Fixture descriptor must be exactly one bounded UTF-8 JSON line.")
+
     try:
         document = json.loads(
             raw.decode("utf-8"), object_pairs_hook=_pairs,
@@ -93,6 +96,7 @@ def decode(raw: bytes, *, fixture_id: str):
     contracts = document["contracts"]
     if type(contracts) is not dict or set(contracts) != REQUIRED_CONTRACTS:
         raise FixtureError("Fixture must declare exactly the verified base deployment contracts.")
+
     for (name, item) in contracts.items():
         required = {"address", "deploymentBlock", "creationTransaction"}
         if name == "PayToPlay":
@@ -106,6 +110,7 @@ def decode(raw: bytes, *, fixture_id: str):
     abi = pay_to_play["abi"]
     if type(abi) is not list or not 0 < len(abi) <= 256 or any(type(row) is not dict for row in abi):
         raise FixtureError("Fixture PayToPlay ABI must be a bounded list of entries.")
+
     event = [
         row for row in abi if row.get("type") == "event" and row.get("name") == "VoucherCollected"
     ]
@@ -121,9 +126,11 @@ def decode(raw: bytes, *, fixture_id: str):
         ]
         if len(matches) != 1:
             raise FixtureError("Fixture PayToPlay method signatures differ from the tested deployment.")
+
     accounts = document["publicFixtureAccounts"]
     if type(accounts) is not dict or set(accounts) != REQUIRED_ACCOUNTS:
         raise FixtureError("Fixture must provide exactly the four public test accounts.")
+
     for item in accounts.values():
         if (type(item) is not dict or set(item) != {"address", "privateKey"}
             or not _address(item["address"]) or type(item["privateKey"]) is not str
@@ -131,6 +138,7 @@ def decode(raw: bytes, *, fixture_id: str):
             raise FixtureError("Fixture test-account coordinates are malformed.")
     if len({value["address"].lower() for value in accounts.values()}) != 4:
         raise FixtureError("Fixture test-account addresses must be distinct.")
+
     return document
 
 
@@ -138,6 +146,7 @@ def receipt(raw: bytes):
     """Read only a nonsecret, exact phase-result JSON object."""
     if type(raw) is not bytes or not 0 < len(raw) <= 16 * 1024 or len(raw.splitlines()) != 1:
         raise FixtureError("Phase receipt is not a bounded single JSON line.")
+
     try:
         result = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs)
     except (ValueError, UnicodeError) as error:
@@ -189,6 +198,7 @@ def phase_failure_record(phase: str, error: Exception) -> bytes:
     """
     if phase not in _PHASES:
         raise ValueError("Unknown fixture phase.")
+
     category = type(error).__name__
     if type(error) in (ScenarioFailure, FixtureError) and _public_reason(str(error)):
         reason = str(error)
@@ -214,9 +224,11 @@ def parse_phase_failure(stderr: bytes, *, phase: str) -> str | None:
     """Admit only the bounded, validated failure record for this exact phase."""
     if phase not in _PHASES or type(stderr) is not bytes:
         return None
+
     for line in reversed(stderr[-16384:].splitlines()):
         if not line.startswith(_FAILURE_PREFIX):
             continue
+
         try:
             record = json.loads(line[len(_FAILURE_PREFIX):])
         except (ValueError, UnicodeError):

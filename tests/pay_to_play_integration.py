@@ -42,6 +42,7 @@ def _input():
     request_bytes = sys.stdin.buffer.read(ONE_MIB + 1)
     if len(request_bytes) > ONE_MIB:
         raise FixtureError("Contained fixture request exceeded 1 MiB.")
+
     try:
         content = json.loads(
             request_bytes.decode("utf-8"), object_pairs_hook=_pairs,
@@ -51,9 +52,11 @@ def _input():
         raise FixtureError("Contained fixture request is invalid JSON.") from None
     if type(content) is not dict or set(content) != {"descriptor", "state"}:
         raise FixtureError("Contained fixture request must include descriptor and prior phase state.")
+
     description = content["descriptor"]
     if type(description) is not dict:
         raise FixtureError("Contained fixture descriptor is missing.")
+
     fixture_id = os.environ.get("CONIX_FIXTURE_ID", "")
     descriptor = decode(
         (json.dumps(description, separators=(",", ":")) + "\n").encode(),
@@ -122,6 +125,7 @@ async def _follow(journal, chain, height):
                 state = await journal.basis()
                 if state.checkpoint is not None and state.checkpoint.number >= height:
                     break
+
                 await asyncio.sleep(0.05)
     finally:
         stop.set()
@@ -156,6 +160,7 @@ def _contract_errors(descriptor):
     for item in descriptor["contracts"]["PayToPlay"]["abi"]:
         if type(item) is not dict or item.get("type") != "error":
             continue
+
         name, inputs = item.get("name"), item.get("inputs")
         if (type(name) is not str or not name.isascii() or not name.isidentifier()
                 or len(name) > 64 or type(inputs) is not list
@@ -178,15 +183,19 @@ async def _revert_reason(chain, tx, errors):
         return "trace unavailable"
     if type(trace) is not dict:
         return "trace unavailable"
+
     output = trace.get("output")
     if type(output) is str and output.startswith("0x") and len(output) >= 10:
         selector = output[2:10].lower()
         if selector in errors:
             return "Solidity error " + errors[selector]
+
         if all(char in "0123456789abcdef" for char in selector):
             return "unknown Solidity error selector 0x" + selector
+
     if trace.get("error") == "out of gas":
         return "out of gas"
+
     return "revert reason unavailable"
 
 
@@ -225,6 +234,7 @@ async def _send(chain, sender, signature, types=(), arguments=(), *, value=0, er
                 mined = await rpc.call("eth_getTransactionReceipt", ["0x" + tx_hash.hex()])
                 if mined is not None:
                     break
+
                 if attempt != 9:
                     await asyncio.sleep(0.2)
         except (RpcError, RpcProtocolError, RpcUnavailable, TimeoutError) as error:
@@ -237,17 +247,20 @@ async def _send(chain, sender, signature, types=(), arguments=(), *, value=0, er
                 f"Fixture {action} has no mined receipt after submission; "
                 "outcome unknown; do not resubmit."
             )
+
         if type(mined) is not dict:
             raise ScenarioFailure(
                 f"Fixture {action} receipt has an invalid shape; "
                 "outcome unknown; do not resubmit."
             )
+
         receipt_hash = mined.get("transactionHash")
         if type(receipt_hash) is not str or receipt_hash.lower() != ("0x" + tx_hash.hex()):
             raise ScenarioFailure(
                 f"Fixture {action} receipt names a different transaction; "
                 "outcome unknown; do not resubmit."
             )
+
         if mined.get("status") != "0x1":
             used = mined.get("gasUsed")
             try:
@@ -274,11 +287,13 @@ async def _send(chain, sender, signature, types=(), arguments=(), *, value=0, er
                     f"{prior} Anvil impersonation cleanup also failed "
                     f"({type(cleanup).__name__})."
                 ) from prior
+
             if prior is not None:
                 raise ScenarioFailure(
                     f"Fixture {action} failed ({type(prior).__name__}); "
                     f"Anvil impersonation cleanup also failed ({type(cleanup).__name__})."
                 ) from prior
+
             raise ScenarioFailure(
                 f"Fixture {action} succeeded but Anvil impersonation cleanup failed "
                 f"({type(cleanup).__name__}); fixture state requires inspection."
@@ -308,9 +323,11 @@ async def _voucher_signature(chain, key, customer, channel, cumulative, invoice)
     signature = signed.stdout.strip()
     if signed.returncode != 0 or len(signature) != 132 or not signature.startswith("0x"):
         raise ScenarioFailure("Pinned test-only Cast returned no valid voucher signature.")
+
     result = bytes.fromhex(signature[2:])
     if len(result) != 65 or result[64] not in (27, 28):
         raise ScenarioFailure("Test-only voucher signature lacks a recoverable ECDSA identifier.")
+
     return result
 
 
@@ -325,6 +342,7 @@ async def _events(observer, checkpoint):
         if page.complete:
             if len(observed) != checkpoint.collection_count:
                 raise ScenarioFailure("Collection pages do not cover exactly the checkpoint count.")
+
             return tuple(observed)
     raise ScenarioFailure("Collection pagination failed to terminate within the known complete count.")
 
@@ -333,14 +351,17 @@ async def _baseline(journal, chain, observer, _descriptor, prior):
     """Establish collection-free coverage and a pre-payment Anvil snapshot."""
     if prior is not None:
         raise FixtureError("Baseline has no earlier fixture phase.")
+
     head = await chain.current_head()
     await _follow(journal, chain, head.number)
     checkpoint = await observer.latest_checkpoint()
     if checkpoint.block != head or checkpoint.collection_count != 0:
         raise ScenarioFailure("Fresh dapp32 base deployment should have complete, collection-free coverage.")
+
     snapshot = await chain.rpc.call("evm_snapshot", [])
     if type(snapshot) is not str or not 0 < len(snapshot) <= 80:
         raise ScenarioFailure("Anvil did not confirm a bounded snapshot identity.")
+
     return _summary("baseline", checkpoint, snapshot)
 
 
@@ -348,6 +369,7 @@ async def _collect(journal, chain, observer, descriptor, prior):
     """Check real signed collections, historical payees and an empty block."""
     if prior is None or prior["phase"] != "baseline":
         raise FixtureError("Collection requires a verified baseline receipt.")
+
     starting = await observer.latest_checkpoint()
     _confirm(starting, prior)
     accounts = descriptor["publicFixtureAccounts"]
@@ -386,6 +408,7 @@ async def _collect(journal, chain, observer, descriptor, prior):
     observed = await _events(observer, checkpoint)
     if len(observed) != 2:
         raise ScenarioFailure("Real signed collections did not produce exactly two indexed events.")
+
     for index, (item, raw, amount, paid, recipient) in enumerate(
         zip(observed, (first, second), (40, 20), (40, 60), (payee, admin))
     ):
@@ -406,6 +429,7 @@ async def _collect(journal, chain, observer, descriptor, prior):
     )
     if tuple(item.hash for item in evidence.blocks) != tuple(item.block_hash for item in observed):
         raise ScenarioFailure("Collection evidence is inconsistent with the indexed branch.")
+
     # Empty blocks still advance coverage. The ordinary Tier-0 session must
     # publish that height without inventing a collection.
     await chain.rpc.call("evm_mine", [])
@@ -414,6 +438,7 @@ async def _collect(journal, chain, observer, descriptor, prior):
     checkpoint = await observer.latest_checkpoint()
     if checkpoint.block != head or checkpoint.collection_count != 2:
         raise ScenarioFailure("Empty block did not advance coverage while retaining exactly two collections.")
+
     return _summary("collected", checkpoint, prior["snapshot"])
 
 
@@ -421,6 +446,7 @@ async def _restart(journal, chain, observer, _descriptor, prior):
     """Resume from the same PostgreSQL volume in a separate process."""
     if prior is None or prior["phase"] != "collected":
         raise FixtureError("Restart must follow a completed real collection scan.")
+
     state = await observer.latest_checkpoint()
     _confirm(state, prior)
     # Mine a new empty block to require an actual publication after restart;
@@ -429,6 +455,7 @@ async def _restart(journal, chain, observer, _descriptor, prior):
     head = await chain.current_head()
     if head.number <= state.block.number:
         raise ScenarioFailure("Restart fixture did not mine a new source block.")
+
     await _follow(journal, chain, head.number)
     after = await observer.latest_checkpoint()
     if (
@@ -445,16 +472,19 @@ async def _reorg(journal, chain, observer, _descriptor, prior):
     """Replace the collected branch and invoke the concrete manual repair."""
     if prior is None or prior["phase"] != "restart":
         raise FixtureError("Reorganization must follow the successful separate-session restart.")
+
     old = await observer.latest_checkpoint()
     _confirm(old, prior)
     if old.collection_count != 2:
         raise ScenarioFailure("Reorg fixture lacks the two actual indexed collection events.")
+
     before = await journal.stored_headers(chain.settings.start_block, old.block.number)
     # The baseline snapshot predates both collections. The retained prefix
     # through that snapshot is the only eligible repair ancestry.
     snapshot = prior["snapshot"]
     if await chain.rpc.call("evm_revert", [snapshot]) is not True:
         raise ScenarioFailure("Anvil did not confirm fixture snapshot restoration.")
+
     # Deliberately create a *different* branch at the old height before
     # expecting Tier-0 contradiction detection. Depth alone is not evidence.
     await chain.rpc.call("evm_increaseTime", [3600])
@@ -462,11 +492,13 @@ async def _reorg(journal, chain, observer, _descriptor, prior):
         head = await chain.current_head()
         if head.number >= old.block.number:
             break
+
         await chain.rpc.call("evm_mine", [])
     else:
         raise ScenarioFailure("Replacement branch exceeded the bounded reorg fixture depth.")
     if await chain.canonical(old.block):
         raise ScenarioFailure("Fixture did not produce a different canonical block at the old height.")
+
     try:
         await _follow(journal, chain, head.number)
     except BranchConflict:
@@ -476,6 +508,7 @@ async def _reorg(journal, chain, observer, _descriptor, prior):
     state = await journal.basis()
     if not state.blocked_reason:
         raise ScenarioFailure("Canonical contradiction was not durably invalidated.")
+
     try:
         await observer.voucher_collected_events(old, cursor=None, limit=1)
     except HistoryUnavailable:
@@ -487,6 +520,7 @@ async def _reorg(journal, chain, observer, _descriptor, prior):
     survivors = [block for block in before if await chain.canonical(block)]
     if not survivors:
         raise ScenarioFailure("No retained canonical ancestor remains for checked manual repair.")
+
     anchor = survivors[-1]
     async with journal.writer() as writer:
         await writer.repair_to(await writer.basis(), anchor, chain)
@@ -507,6 +541,7 @@ async def execute(phase):
     if phase == "initialize":
         if prior is not None:
             raise FixtureError("Owner preparation is not a resume operation.")
+
         await initialize(os.environ["CONIX_TEST_OWNER_DSN"], settings)
         await initialize(os.environ["CONIX_TEST_OWNER_DSN"], settings)
         return None

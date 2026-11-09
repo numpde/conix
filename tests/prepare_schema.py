@@ -60,6 +60,7 @@ async def main():
         )).fetchone()
         if not observed["acquired"]:
             raise AssertionError("Test preparation could not acquire its isolated writer lock.")
+
         try:
             try:
                 await initialize(owner, source)
