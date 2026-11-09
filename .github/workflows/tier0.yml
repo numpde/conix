@@ -17,24 +17,26 @@ jobs:
       - name: Compile source (no acquisition)
         run: python -m compileall -q src tests tools repository_checks
       - name: Qualify host-side Docker context and teardown contracts
-        run: make check/container
+        run: make test/repository/run
       - name: Acquire pinned images and hashed wheelhouse; build and test offline
         run: |
-          make deps/images/prepare DOCKER_CONTEXT=default
+          make image/python-base/acquire DOCKER_CONTEXT=default
+          make image/postgres/acquire DOCKER_CONTEXT=default
+          make image/dockerfile-frontend/acquire DOCKER_CONTEXT=default
           # A fresh, operator-owned pool; the published tool and wheels are
           # shared flat files. Every selector/build uses the same Docker context.
           pool="$RUNNER_TEMP/conix-shared-wheelhouse"
           mkdir -m 700 "$pool"
-          make deps/wheelhouse/acquire DOCKER_CONTEXT=default WHEELHOUSE="$pool"
+          make wheelhouse/acquire DOCKER_CONTEXT=default WHEELHOUSE="$pool"
           # A second warm check MUST use no network, no downloads.
-          make deps/wheelhouse/check DOCKER_CONTEXT=default WHEELHOUSE="$pool"
-          runtime="$(make -s image/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
-          make image/smoke DOCKER_CONTEXT=default CONIX_IMAGE="$runtime"
-          test_image="$(make -s tests/image/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
-          make tests/container DOCKER_CONTEXT=default CONIX_TEST_IMAGE="$test_image"
-          make deps/fixture-image/prepare DOCKER_CONTEXT=default
-          fixture_image="$(make -s tests/fixture/image/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
-          make tests/fixture/image/smoke DOCKER_CONTEXT=default CONIX_FIXTURE_IMAGE="$fixture_image"
+          make wheelhouse/check DOCKER_CONTEXT=default WHEELHOUSE="$pool"
+          runtime="$(make -s image/indexer/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
+          make image/indexer/check DOCKER_CONTEXT=default IMAGE="$runtime"
+          test_image="$(make -s image/test-runner/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
+          make test/postgres/run DOCKER_CONTEXT=default RUNNER_IMAGE="$test_image"
+          make image/foundry/acquire DOCKER_CONTEXT=default
+          fixture_image="$(make -s image/evm-test-runner/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
+          make image/evm-test-runner/check DOCKER_CONTEXT=default IMAGE="$fixture_image"
           # Stage the real distribution's fixed inputs in a private engine volume.
           # A second, unprivileged, read-only container proves readability.
           candidate="$(mktemp)"
@@ -42,10 +44,10 @@ jobs:
           trap 'rm -f -- "$candidate" "$dsn"' EXIT
           cp examples/conix.toml "$candidate"
           printf '%s\n' 'postgresql://fixture:disposable@postgres:5432/conix_test' > "$dsn"
-          make inputs/proof DOCKER_CONTEXT=default CONIX_IMAGE="$runtime" \
-            CONIX_CONFIG_FILE="$candidate" CONIX_DSN_FILE="$dsn"
+          make test/input-staging/run DOCKER_CONTEXT=default INDEXER_IMAGE="$runtime" \
+            CONFIG_FILE="$candidate" DSN_FILE="$dsn"
           # Render the actual production profile without creating resources.
-          make runtime/render DOCKER_CONTEXT=default \
-            CONIX_DEPLOYMENT=ci CONIX_IMAGE="$runtime" \
-            CONIX_INPUT_VOLUME="conix-inputs-aaaaaaaaaaaaaaaaaaaaaaaa" \
-            CONIX_DATABASE_NETWORK="payment-db" CONIX_RPC_NETWORK="payment-rpc"
+          make deployment/config/check DOCKER_CONTEXT=default \
+            DEPLOYMENT=ci INDEXER_IMAGE="$runtime" \
+            INPUT_VOLUME="conix-inputs-aaaaaaaaaaaaaaaaaaaaaaaa" \
+            DATABASE_NETWORK="payment-db" RPC_NETWORK="payment-rpc"

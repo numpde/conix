@@ -15,23 +15,28 @@ import unittest
 ROOT = Path(__file__).resolve().parent.parent
 
 PARAMETERS = {
-    "deps/images/prepare": "DOCKER_CONTEXT",
-    "deps/wheelhouse/check": "WHEELHOUSE",
-    "deps/wheelhouse/acquire": "WHEELHOUSE",
-    "image/build": "WHEELHOUSE",
-    "tests/image/build": "WHEELHOUSE",
-    "tests/fixture/image/build": "WHEELHOUSE",
-    "image/smoke": "CONIX_IMAGE",
-    "tests/container": "CONIX_TEST_IMAGE",
-    "tests/fixture/image/smoke": "CONIX_FIXTURE_IMAGE",
-    "tests/fixture": "DAPP32_DIR",
-    "inputs/stage": "CONIX_CONFIG_FILE",
-    "inputs/proof": "CONIX_DSN_FILE",
-    "inputs/remove": "CONIX_INPUT_VOLUME",
-    "schema/init": "CONIX_OWNER_DSN_FILE",
-    "runtime/start": "CONIX_DEPLOYMENT",
-    "runtime/stop": "CONIX_DATABASE_NETWORK",
-    "runtime/status": "CONIX_RPC_NETWORK",
+    "image/python-base/acquire": "DOCKER_CONTEXT",
+    "image/postgres/acquire": "DOCKER_CONTEXT",
+    "image/dockerfile-frontend/acquire": "DOCKER_CONTEXT",
+    "image/foundry/acquire": "DOCKER_CONTEXT",
+    "wheelhouse/check": "WHEELHOUSE",
+    "wheelhouse/acquire": "WHEELHOUSE",
+    "image/indexer/build": "WHEELHOUSE",
+    "image/test-runner/build": "WHEELHOUSE",
+    "image/evm-test-runner/build": "WHEELHOUSE",
+    "image/indexer/check": "IMAGE",
+    "image/evm-test-runner/check": "IMAGE",
+    "test/postgres/run": "RUNNER_IMAGE",
+    "test/input-staging/run": "DSN_FILE",
+    "test/pay-to-play/run": "FIXTURE_DESCRIPTOR",
+    "campaign/pay-to-play/run": "DAPP32_DIR",
+    "deployment/inputs/create": "CONFIG_FILE",
+    "deployment/inputs/remove": "INPUT_VOLUME",
+    "database/schema/initialize": "OWNER_DSN_FILE",
+    "deployment/config/check": "DEPLOYMENT",
+    "deployment/apply": "DATABASE_NETWORK",
+    "deployment/status": "RPC_NETWORK",
+    "deployment/remove": "INDEXER_IMAGE",
 }
 
 
@@ -96,11 +101,11 @@ class MakeInputSafety(unittest.TestCase):
                         record = json.loads(trace.read_text(encoding="utf-8"))
                         self.assertEqual(record["vars"]["CONIX_MAKE_" + key], value)
                         expected = (
-                            "tools.fixtures.pay_to_play" if target == "tests/fixture"
+                            "tools.fixtures.pay_to_play" if target in ("test/pay-to-play/run", "campaign/pay-to-play/run")
                             else "tools.containers.operator"
                         )
                         self.assertEqual(record["argv"][:2], ["-m", expected])
-                        if target == "tests/fixture":
+                        if target in ("test/pay-to-play/run", "campaign/pay-to-play/run"):
                             self.assertIn("--from-make", record["argv"])
                         else:
                             self.assertIn(target, record["argv"])
