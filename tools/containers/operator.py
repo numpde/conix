@@ -255,57 +255,65 @@ class Docker:
         self.docker_environment = environment(config_dir)
 
     def run(self, *args, timeout=60, capture=False, env=None, progress_to_stderr=False, public_diagnostic=False):
-        return command(self.docker_command_prefix + list(args), env=self.docker_environment if env is None else env,
-                       timeout=timeout, capture=capture,
-                       progress_to_stderr=progress_to_stderr, public_diagnostic=public_diagnostic)
+        return command(
+            self.docker_command_prefix + list(args),
+            env=self.docker_environment if env is None else env,
+            timeout=timeout,
+            capture=capture,
+            progress_to_stderr=progress_to_stderr,
+            public_diagnostic=public_diagnostic,
+        )
 
     def require_image(self, reference):
-        """Check exact local image identity without printing JSON into Make output."""
-        identity = self.run(
+        """Check the exact local image ID without publishing the image metadata."""
+        actual_image_id = self.run(
             "image", "inspect", "--format", "{{.Id}}", reference,
             timeout=10, capture=True,
         ).strip()
-        if not IMAGE_ID.fullmatch(identity):
+
+        if not IMAGE_ID.fullmatch(actual_image_id):
             raise OperationError("Selected image is not a valid local image ID.")
 
-        return identity
+        return actual_image_id
 
     def require_rootless_engine(self):
-        """A local socket is not proof that the selected daemon is rootless."""
+        """The local socket alone does not establish rootless daemon identity."""
         try:
-            options = json.loads(self.run(
+            security_options = json.loads(self.run(
                 "info", "--format", "{{json .SecurityOptions}}",
                 timeout=10, capture=True,
             ))
         except (ValueError, TypeError) as error:
-            raise OperationError(
-                "Cannot establish selected Docker Engine rootless status from daemon security options."
-            ) from error
-        if type(options) is not list or not all(type(value) is str for value in options):
+            raise OperationError("Cannot establish selected Docker Engine rootless status from daemon security options.") from error
+
+        if type(security_options) is not list or not all(type(option) is str for option in security_options):
             raise OperationError("Selected Docker Engine returned malformed security options.")
 
-        if "name=rootless" not in options:
+        if "name=rootless" not in security_options:
             raise OperationError(
                 "Runtime start requires a verified rootless Docker Engine; "
                 "a local Unix socket alone does not qualify a rootful daemon."
             )
 
     def acquire_image(self, role, images):
-        """Acquire exactly one reviewed component; no implicit companions."""
-        source = {
+        """Pull only the selected, digest-pinned component image."""
+        image_key_by_role = {
             "python-base": "python_base",
             "postgres": "postgres",
             "dockerfile-frontend": "dockerfile_frontend",
             "foundry": "foundry",
         }
-        if role not in source:
+
+        if role not in image_key_by_role:
             raise OperationError("Image acquisition requires an explicitly declared component role.")
 
-        self.run("pull", "--platform", "linux/amd64",
-                 images[source[role]], timeout=240 if role == "foundry" else 180)
+        self.run(
+            "pull", "--platform", "linux/amd64", images[image_key_by_role[role]],
+            timeout=240 if role == "foundry" else 180,
+        )
 
     def require_role(self, image, role):
-        """Bind a concrete image ID to its recorded purpose before use."""
+        """Check the local image's immutable identity and declared runtime role."""
         if role not in ("indexer", "test-runner", "evm-test-runner"):
             raise OperationError("An image role must be one of the reviewed Conix roles.")
 
@@ -315,10 +323,12 @@ class Docker:
         if self.require_image(image) != image:
             raise OperationError("The requested immutable image ID changed.")
 
-        observed = self.run("image", "inspect",
-                            "--format", '{{index .Config.Labels "io.conix.image-role"}}',
-                            image, capture=True, timeout=10).strip()
-        if observed != role:
+        actual_image_role = self.run(
+            "image", "inspect", "--format", '{{index .Config.Labels "io.conix.image-role"}}',
+            image, capture=True, timeout=10,
+        ).strip()
+
+        if actual_image_role != role:
             raise OperationError(f"Selected image does not have the required {role} role.")
 
     def check_indexer(self, image):
@@ -330,61 +340,68 @@ class Docker:
         print("Verified offline indexer image and installed command.", file=sys.stderr)
 
     def check_evm_test_runner(self, image):
-        """Check a test-only EVM runner without network or fixture secrets."""
+        """Verify offline test-runner Python and Cast without fixture secrets."""
         self.require_role(image, "evm-test-runner")
-        grants = (
+
+        confinement_args = (
             "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
             "--user", "65532:65532", "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges:true",
             "--pids-limit", "64", "--memory", "256m",
         )
-        self.run(*grants, "--entrypoint", "cast", image, "--version", timeout=20, capture=True)
-        self.run(*grants, "--entrypoint", "python", image,
-                 "-I", "/tests/pay_to_play_integration.py", "--help", timeout=20, capture=True)
-        # Qualify the precise digest-signing interface used by the contained
-        # campaign, without touching a wallet service or a live RPC endpoint.
-        check = (
+        self.run(*confinement_args, "--entrypoint", "cast", image, "--version", timeout=20, capture=True)
+        self.run(
+            *confinement_args, "--entrypoint", "python", image,
+            "-I", "/tests/pay_to_play_integration.py", "--help", timeout=20, capture=True,
+        )
+
+        # Exercise the exact digest-signing command without contacting a live
+        # RPC source or sending a private fixture key into logs.
+        signing_check_script = (
             "import subprocess;"
-            "digest='0x'+'ab'*32;"
-            "key='0x'+'00'*31+'01';"
-            "p=subprocess.run(['cast','wallet','sign','--no-hash',digest,"
-            "'--private-key',key],capture_output=True,text=True,timeout=10);"
-            "signature=p.stdout.strip();"
-            "assert p.returncode==0 and len(signature)==132 and signature[:2]=='0x';"
+            "test_digest='0x'+'ab'*32;"
+            "test_key='0x'+'00'*31+'01';"
+            "signing_result=subprocess.run(['cast','wallet','sign','--no-hash',test_digest,"
+            "'--private-key',test_key],capture_output=True,text=True,timeout=10);"
+            "signature=signing_result.stdout.strip();"
+            "assert signing_result.returncode==0 and len(signature)==132 and signature[:2]=='0x';"
             "assert bytes.fromhex(signature[2:])[-1] in (27,28)"
         )
-        self.run(*grants, "--entrypoint", "python", image,
-                 "-I", "-c", check, timeout=20)
-        print("Verified offline EVM test-runner image, Cast signing and scenario entry point.",
-              file=sys.stderr)
+        self.run(*confinement_args, "--entrypoint", "python", image,
+                 "-I", "-c", signing_check_script, timeout=20)
+
+        print("Verified offline EVM test-runner image, Cast signing and scenario entry point.", file=sys.stderr)
 
     def private_bytes(self, value, max_size, *, secret):
-        """Read operator-owned source bytes without following the final link."""
-        path = Path(value)
-        if not path.is_absolute():
+        """Read an operator-owned regular file without following its final symlink."""
+        source_path = Path(value)
+
+        if not source_path.is_absolute():
             raise OperationError("Staged input files must use absolute host paths.")
 
-        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
-        fd = os.open(path, flags)
+        open_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+        source_fd = os.open(source_path, open_flags)
+
         try:
-            info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            file_stat = os.fstat(source_fd)
+
+            if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_uid != os.getuid():
                 raise OperationError("Staged input must be an operator-owned regular file.")
 
-            if secret and info.st_mode & 0o077:
+            if secret and file_stat.st_mode & 0o077:
                 raise OperationError("Database credential source must have no group/other permissions.")
 
-            if not secret and info.st_mode & 0o022:
+            if not secret and file_stat.st_mode & 0o022:
                 raise OperationError("Conix settings source must not be group/other writable.")
 
-            data = os.read(fd, max_size + 1)
+            input_bytes = os.read(source_fd, max_size + 1)
         finally:
-            os.close(fd)
+            os.close(source_fd)
 
-        if not 0 < len(data) <= max_size:
+        if not 0 < len(input_bytes) <= max_size:
             raise OperationError("Staged input file is empty or exceeds its size limit.")
 
-        return data
+        return input_bytes
 
     def stage_inputs(self, image, config_path, dsn_path, *, proof=False, announce=True):
         """Create and own a unique input volume, with no host bind mounts."""
