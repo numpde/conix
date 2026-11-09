@@ -394,18 +394,27 @@ class Docker:
             )
         except Exception as error:
             failure = error
-        finally:
-            try:
-                self.remove_inputs(volume)
-            except Exception as error:
-                raise OperationError(
-                    f"Schema init input-volume cleanup is unconfirmed for {volume} "
-                    f"on selected Engine {self.base[-1]}; inspect exact volume ownership."
-                ) from error
-        if failure is not None:
+        cleanup_failure = None
+        try:
+            self.remove_inputs(volume)
+        except Exception as error:
+            cleanup_failure = error
+        if cleanup_failure is not None:
+            first = (
+                f" Original schema init failed: {failure}."
+                if isinstance(failure, OperationError) else
+                f" Original schema init failed ({type(failure).__name__})."
+                if failure is not None else ""
+            )
             raise OperationError(
-                "Conix schema init did not confirm completion; verify durable source "
-                "identity before retrying the explicit idempotent owner operation."
+                f"Schema init input-volume cleanup is unconfirmed for {volume} "
+                f"on selected Engine {self.base[-1]}.{first} Inspect exact volume ownership."
+            ) from cleanup_failure
+        if failure is not None:
+            detail = str(failure) if isinstance(failure, OperationError) else type(failure).__name__
+            raise OperationError(
+                f"Conix schema init failed: {detail}. Check durable source identity "
+                "before retrying the explicit idempotent owner operation."
             ) from failure
         print("Conix schema installed/verified through a separate owner-only session.")
 
@@ -510,12 +519,12 @@ class Docker:
             self.run(*compose, "up", "--detach", "--no-build", "--pull",
                      "never", "--wait", "--wait-timeout", "30",
                      "indexer", env=env, timeout=60)
-        except OperationError:
+        except OperationError as error:
             raise OperationError(
-                f"Conix project {project} did not confirm startup. Inspect the "
-                "selected Engine and use deployment/status or deployment/remove with "
-                "the same exact settings; inputs were retained."
-            ) from None
+                f"Conix project {project} did not confirm startup: {error}. "
+                "Inspect the selected Engine and use deployment/status or "
+                "deployment/remove with the same exact settings; inputs were retained."
+            ) from error
         print(
             f"Applied conix project {project}; a running container is not evidence "
             "of chain freshness or payment readiness."
