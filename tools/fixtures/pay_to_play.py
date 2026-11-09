@@ -74,7 +74,9 @@ def pin_sibling_context(docker, name):
         except (OSError, subprocess.TimeoutExpired):
             raise CampaignError("Could not prepare the pinned sibling Docker client context.") from None
         if result.returncode:
-            raise CampaignError("Pinned sibling Docker context creation or verification failed.")
+            raise CampaignError(
+                f"Pinned sibling Docker context {command[1]} failed (exit {result.returncode})."
+            )
         if command[1] == "inspect" and result.stdout.strip() != docker.endpoint:
             raise CampaignError("Sibling Docker context resolves to a different Unix socket.")
     return None
@@ -392,8 +394,9 @@ class PayToPlayTest:
             self.sql_retired = True
             self.consumer_retired = True
             return []
-        except Exception:
-            return ["Conix-owned SQL/consumer teardown is unconfirmed."]
+        except Exception as error:
+            detail = str(error) if isinstance(error, OperationError) else type(error).__name__
+            return [f"Conix SQL/consumer teardown failed: {detail}; ownership unconfirmed."]
 
     def recovery(self):
         return (f"Borrowed fixture ID={self.fixture_id}; Conix project={self.project}; "
@@ -463,8 +466,9 @@ class Campaign:
             try:
                 self._dapp32("down")
                 self.producer_owned = False
-            except Exception:
-                errors.append("dapp32 producer fixture teardown is unconfirmed.")
+            except Exception as error:
+                detail = str(error) if isinstance(error, CampaignError) else type(error).__name__
+                errors.append(f"dapp32 producer fixture/down failed: {detail}; ownership unconfirmed.")
         if self.producer_owned or (self.creation_attempted and self.descriptor is None):
             errors.append(
                 "Inspect the original dapp32 fixture ID on the selected Engine; "
