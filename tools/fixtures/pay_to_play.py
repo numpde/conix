@@ -35,171 +35,183 @@ class CampaignError(Exception):
     """The fixture operation or evidence was not reliably completed."""
 
 
-def sibling_checkout(value):
-    """Admit an existing dapp32 checkout; never synthesize a producer."""
-    if type(value) is not str or not value or "\n" in value or "\r" in value:
+def sibling_checkout(checkout_directory):
+    """Admit a real sibling checkout without following the selected final link."""
+    if type(checkout_directory) is not str or not checkout_directory or "\n" in checkout_directory or "\r" in checkout_directory:
         raise CampaignError("Choose a concrete DAPP32_DIR checkout, with no line breaks.")
 
-    path = Path(value)
-    if not path.is_absolute():
+    checkout_path = Path(checkout_directory)
+
+    if not checkout_path.is_absolute():
         raise CampaignError("DAPP32_DIR must be an explicit absolute checkout path.")
 
-    if path.is_symlink() or not path.is_dir():
+    if checkout_path.is_symlink() or not checkout_path.is_dir():
         raise CampaignError("The selected sibling checkout must be a real directory, not a symlink.")
 
-    for name in ("Makefile", "tools/pay_to_play_fixture.sh", "tools/pay_to_play_fixture.py"):
-        item = path / name
-        if not item.is_file() or item.is_symlink():
+    for required_file in ("Makefile", "tools/pay_to_play_fixture.sh", "tools/pay_to_play_fixture.py"):
+        fixture_file = checkout_path / required_file
+
+        if not fixture_file.is_file() or fixture_file.is_symlink():
             raise CampaignError("Sibling checkout is missing a regular dapp32 fixture contract file.")
 
-    return path.resolve(strict=True)
+    return checkout_path.resolve(strict=True)
 
 
-def pin_sibling_context(docker, name):
-    """Bind dapp32's name-based selection to the already admitted Unix socket.
+def pin_sibling_context(docker, context_name):
+    """Bind the sibling's named context to this operation's admitted Unix socket.
 
-    The dapp32 producer resolves DOCKER_CONTEXT with its own client. Use an
-    operation-owned Docker config containing ONLY the selected local context,
-    preventing external context mutation from switching Engines mid-campaign.
-    Docker context create/inspect are client-only operations, no daemon calls.
+    The producer resolves DOCKER_CONTEXT independently. A private Docker
+    client configuration prevents external context changes mid-campaign.
     """
-    if type(name) is not str or not CONTEXT_NAME.fullmatch(name):
+    if type(context_name) is not str or not CONTEXT_NAME.fullmatch(context_name):
         raise CampaignError("The sibling fixture requires one explicit valid Docker context name.")
 
-    commands = (
-        ("context", "create", name, "--docker", "host=" + docker.endpoint),
-        ("context", "inspect", name, "--format", "{{.Endpoints.docker.Host}}"),
+    context_commands = (
+        ("context", "create", context_name, "--docker", "host=" + docker.endpoint),
+        ("context", "inspect", context_name, "--format", "{{.Endpoints.docker.Host}}"),
     )
-    for command in commands:
+
+    for context_args in context_commands:
         try:
-            context_command = subprocess.run(
-                ["docker", "--config", str(docker.config_dir), *command],
-                env=docker.docker_environment, cwd=ROOT, stdin=subprocess.DEVNULL,
-                capture_output=True, text=True, timeout=15, check=False,
+            context_result = subprocess.run(
+                ["docker", "--config", str(docker.config_dir), *context_args],
+                env=docker.docker_environment,
+                cwd=ROOT,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
             )
         except (OSError, subprocess.TimeoutExpired):
             raise CampaignError("Could not prepare the pinned sibling Docker client context.") from None
 
-        if context_command.returncode:
-            raise CampaignError(
-                f"Pinned sibling Docker context {command[1]} failed (exit {context_command.returncode})."
-            )
+        if context_result.returncode:
+            raise CampaignError(f"Pinned sibling Docker context {context_args[1]} failed (exit {context_result.returncode}).")
 
-        if command[1] == "inspect" and context_command.stdout.strip() != docker.endpoint:
+        if context_args[1] == "inspect" and context_result.stdout.strip() != docker.endpoint:
             raise CampaignError("Sibling Docker context resolves to a different Unix socket.")
 
     return None
 
 
 def _clean_env():
-    """Do not relay ambient Make, Compose, Docker or private-wallet authority."""
-    excluded = (
+    """Exclude ambient Docker, Make, Compose and private-wallet authority."""
+    excluded_prefixes = (
         "DOCKER_", "COMPOSE_", "BUILDX_", "CONIX_MAKE_", "CAM_",
         "PAY_TO_PLAY_", "MAKE", "GNUMAKEFLAGS",
     )
-    forwarded = {
-        k: v for (k, v) in os.environ.items()
-        if not k.startswith(excluded) and k not in (
-            "PRIVATE_KEY", "BASH_ENV", "ENV", "FIXTURE_ID", "SCENARIO",
-        )
+    excluded_names = ("PRIVATE_KEY", "BASH_ENV", "ENV", "FIXTURE_ID", "SCENARIO")
+
+    return {
+        name: value for (name, value) in os.environ.items()
+        if not name.startswith(excluded_prefixes) and name not in excluded_names
     }
-    return forwarded
 
 
 def _progress(message):
-    """Progress messages contain only known operation names, never subprocess text."""
+    """Emit only source-controlled progress labels, never child output."""
     print(f"[conix] {message}", file=sys.stderr, flush=True)
 
 
 def owned_command(argv, *, output, error_file, env, timeout, payload=None, label="fixture command"):
-    """Bound and reap one child; leave private receipts out of terminal output."""
-    started = time.monotonic()
+    """Bound and reap an owned child while keeping private receipts off terminal."""
+    started_at = time.monotonic()
     _progress(f"{label}: started")
 
-    with output.open("wb") as out, error_file.open("wb") as err:
-        # Receipts remain private even if the files are moved after failure.
+    with output.open("wb") as stdout_file, error_file.open("wb") as stderr_file:
         output.chmod(0o600)
         error_file.chmod(0o600)
-        child = subprocess.Popen(
-            argv, cwd=ROOT, env=env, stdin=subprocess.PIPE if payload is not None else subprocess.DEVNULL,
-            stdout=out, stderr=err, start_new_session=True,
+
+        owned_process = subprocess.Popen(
+            argv,
+            cwd=ROOT,
+            env=env,
+            stdin=subprocess.PIPE if payload is not None else subprocess.DEVNULL,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            start_new_session=True,
         )
 
-        send_payload = True
+        payload_pending = True
+
         try:
             while True:
-                remaining = timeout - (time.monotonic() - started)
-                if remaining <= 0:
+                remaining_seconds = timeout - (time.monotonic() - started_at)
+
+                if remaining_seconds <= 0:
                     raise subprocess.TimeoutExpired(argv, timeout)
 
                 try:
-                    child.communicate(
-                        input=payload if send_payload else None, timeout=min(15, remaining)
+                    owned_process.communicate(
+                        input=payload if payload_pending else None,
+                        timeout=min(15, remaining_seconds),
                     )
                     break
                 except subprocess.TimeoutExpired:
-                    # communicate() resumes the same process after a timeout;
-                    # input is passed only once, never replayed to the child.
-                    send_payload = False
-                    if time.monotonic() - started >= timeout:
+                    # Resume the same child without resending its private stdin.
+                    payload_pending = False
+
+                    if time.monotonic() - started_at >= timeout:
                         raise
 
-                    _progress(f"{label}: running ({int(time.monotonic() - started)}s)")
+                    _progress(f"{label}: running ({int(time.monotonic() - started_at)}s)")
         except BaseException as error:
-            # Reaping the CLI does not prove the Docker daemon retired its work.
+            # Reaping the CLI does not certify that Docker retired daemon work.
             try:
-                os.killpg(child.pid, signal.SIGTERM)
+                os.killpg(owned_process.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
 
             try:
-                child.wait(timeout=10)
+                owned_process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 try:
-                    os.killpg(child.pid, signal.SIGKILL)
+                    os.killpg(owned_process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-                child.wait(timeout=5)
+
+                owned_process.wait(timeout=5)
 
             if isinstance(error, subprocess.TimeoutExpired):
-                raise CampaignError(
-                    f"{label} timed out after {timeout}s; daemon effects are unconfirmed."
-                ) from error
+                raise CampaignError(f"{label} timed out after {timeout}s; daemon effects are unconfirmed.") from error
 
             raise
-    if child.returncode != 0:
-        raise CampaignError(
-            f"{label} exited with status {child.returncode}; see private {error_file.name}."
-        )
+
+    if owned_process.returncode != 0:
+        raise CampaignError(f"{label} exited with status {owned_process.returncode}; see private {error_file.name}.")
 
     if output.stat().st_size > 1048576:
         raise CampaignError(f"{label} produced an oversized receipt; no JSON was admitted.")
 
-    _progress(f"{label}: completed ({int(time.monotonic() - started)}s)")
+    _progress(f"{label}: completed ({int(time.monotonic() - started_at)}s)")
+
     return output.read_bytes()
 
 
 def verify_network(docker, descriptor):
-    """Prove that the descriptor identifies a live, producer-owned Anvil."""
-    project = descriptor["composeProject"]
+    """Prove the descriptor points to a live producer-owned Anvil service."""
+    producer_project = descriptor["composeProject"]
     network_name = descriptor["dockerNetwork"]
-    expected = f"true {project} {network_name}"
-    observed = docker.run(
+    expected_network_identity = f"true {producer_project} {network_name}"
+
+    observed_network_identity = docker.run(
         "network", "inspect", "--format",
         '{{.Internal}} {{index .Labels "com.docker.compose.project"}} {{.Name}}',
         network_name, timeout=15, capture=True,
     ).strip()
-    if observed != expected:
+
+    if observed_network_identity != expected_network_identity:
         raise CampaignError("dapp32 fixture network is not the internal, producer-owned network in the JSON.")
 
-    running = docker.run(
-        "ps", "--filter", f"label=com.docker.compose.project={project}",
+    running_anvil_ids = docker.run(
+        "ps", "--filter", f"label=com.docker.compose.project={producer_project}",
         "--filter", "label=com.docker.compose.service=pay-to-play-anvil",
         "--format", "{{.ID}}", timeout=15, capture=True,
     ).splitlines()
-    if len(running) != 1 or re.fullmatch(r"[0-9a-f]{12,64}", running[0]) is None:
-        raise CampaignError("Expected exactly one running producer-owned Anvil service.")
 
+    if len(running_anvil_ids) != 1 or re.fullmatch(r"[0-9a-f]{12,64}", running_anvil_ids[0]) is None:
+        raise CampaignError("Expected exactly one running producer-owned Anvil service.")
 
 def admit(rendered, *, runner_image, postgres_image, rpc_network):
     """Review the actual rendered Compose graph before creating SQL resources."""
