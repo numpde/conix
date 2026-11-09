@@ -142,7 +142,7 @@ class Observer:
             )
             opening = (await self.journal.headers_at(checkpoint, (start,)))[0]
             if earlier[-1].hash != opening.parent_hash or any(
-                right.parent_hash != left.hash for left, right in zip(earlier, earlier[1:])
+                right.parent_hash != left.hash for (left, right) in zip(earlier, earlier[1:])
             ):
                 raise ObservationUnavailable("Earlier canonical headers do not join retained history.")
             recorded.update((block.number, block) for block in earlier)
@@ -168,7 +168,7 @@ class Observer:
                     earlier = tuple([await self.chain.header(number) for number in range(finalized.number, start)])
                     opening = (await self.journal.headers_at(checkpoint, (start,)))[0]
                     if earlier[-1].hash != opening.parent_hash or any(
-                        right.parent_hash != left.hash for left, right in zip(earlier, earlier[1:])
+                        right.parent_hash != left.hash for (left, right) in zip(earlier, earlier[1:])
                     ):
                         raise ObservationUnavailable("Finalized ancestry does not join retained history.")
                     recorded_finalized = earlier[0]

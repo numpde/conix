@@ -61,37 +61,37 @@ def _block(row) -> Block:
 
 async def _state(connection: AsyncConnection, settings: Settings) -> Basis:
     """Read progress and reject a mismatched or structurally incomplete source."""
-    row = await (await connection.execute("SELECT * FROM conix.source_progress WHERE id = 1")).fetchone()
-    if row is None:
+    progress = await (await connection.execute("SELECT * FROM conix.source_progress WHERE id = 1")).fetchone()
+    if progress is None:
         raise ConfigurationError("conix schema is not initialized. Run conix init.")
     if (
-        row["schema_version"] != VERSION
-        or bytes(row["source_digest"]) != source_digest(settings)
-        or int(row["chain_id"]) != settings.deployment.chain_id
-        or bytes(row["contract_address"]) != bytes.fromhex(settings.deployment.address[2:])
-        or int(row["start_block"]) != settings.start_block
+        progress["schema_version"] != VERSION
+        or bytes(progress["source_digest"]) != source_digest(settings)
+        or int(progress["chain_id"]) != settings.deployment.chain_id
+        or bytes(progress["contract_address"]) != bytes.fromhex(settings.deployment.address[2:])
+        or int(progress["start_block"]) != settings.start_block
     ):
         raise ConfigurationError(
             "Stored conix schema/source identity differs from configuration; select the original source or migrate explicitly."
         )
     checkpoint = None
-    if row["completed_height"] is not None:
+    if progress["completed_height"] is not None:
         block_row = await (await connection.execute(
-            "SELECT * FROM conix.blocks WHERE number = %s", (row["completed_height"],)
+            "SELECT * FROM conix.blocks WHERE number = %s", (progress["completed_height"],)
         )).fetchone()
-        if block_row is None or bytes(block_row["hash"]) != bytes(row["completed_hash"]):
+        if block_row is None or bytes(block_row["hash"]) != bytes(progress["completed_hash"]):
             raise CorruptStore("Completed checkpoint has no matching stored block.")
         checkpoint = _block(block_row)
-    elif int(row["collection_count"]) != 0:
+    elif int(progress["collection_count"]) != 0:
         raise CorruptStore("Unstarted source has a nonzero collection count.")
     head = None
-    if row["head_height"] is not None:
-        head = Block(int(row["head_height"]), bytes(row["head_hash"]),
-                     bytes(row["head_parent_hash"]), int(row["head_timestamp"]))
+    if progress["head_height"] is not None:
+        head = Block(int(progress["head_height"]), bytes(progress["head_hash"]),
+                     bytes(progress["head_parent_hash"]), int(progress["head_timestamp"]))
     return Basis(
-        row["generation"], int(row["revision"]), checkpoint,
-        int(row["collection_count"]), row["blocked_reason"],
-        head, row["head_observed_at"],
+        progress["generation"], int(progress["revision"]), checkpoint,
+        int(progress["collection_count"]), progress["blocked_reason"],
+        head, progress["head_observed_at"],
     )
 
 
@@ -322,7 +322,7 @@ class Journal:
             )).fetchall()
             blocks = tuple(map(_block, rows))
             if len(blocks) != last - first + 1 or any(
-                b.number != a.number + 1 or b.parent_hash != a.hash for a, b in zip(blocks, blocks[1:])
+                b.number != a.number + 1 or b.parent_hash != a.hash for (a, b) in zip(blocks, blocks[1:])
             ):
                 raise CorruptStore("Stored block ancestry has a gap or broken parent connection.")
             return blocks

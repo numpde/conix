@@ -176,7 +176,7 @@ async def initialize(owner_dsn: str, settings: Settings):
                 await connection.execute(
                     sql.SQL("GRANT USAGE ON SCHEMA conix TO {}").format(target)
                 )
-                for table, allowed in _TABLES.items():
+                for (table, allowed) in _TABLES.items():
                     name = sql.Identifier("conix", table)
                     await connection.execute(
                         sql.SQL("REVOKE ALL ON TABLE {} FROM PUBLIC, {}").format(name, target)

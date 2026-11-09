@@ -41,7 +41,7 @@ class Settings:
         if type(self.start_block) is not int or not 0 <= self.start_block < 2**63:
             raise ValueError("Source start_block must be a nonnegative signed 64-bit integer.")
         # Bound whole operations separately from individual RPC calls.
-        for name, maximum in (
+        for (name, maximum) in (
             ("poll_seconds", 3600), ("rpc_timeout_seconds", 60),
             ("operation_timeout_seconds", 300),
         ):
@@ -49,7 +49,7 @@ class Settings:
             if type(value) not in (int, float) or not 0 < value <= maximum:
                 raise ValueError(f"Limits {name} must be positive and at most {maximum}.")
         # Valid replies can still exceed the memory or pagination budget.
-        for name, maximum in (
+        for (name, maximum) in (
             ("max_response_bytes", 4 * 1024 * 1024),
             ("max_connections", 32),
             ("max_page_size", 10000),

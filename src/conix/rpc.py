@@ -110,7 +110,7 @@ class RpcClient:
 def _unique_object(pairs):
     """Duplicate JSON names would make source interpretation ambiguous."""
     fields = {}
-    for name, value in pairs:
+    for (name, value) in pairs:
         if name in fields:
             raise ValueError("RPC response contains duplicate JSON names.")
         fields[name] = value
