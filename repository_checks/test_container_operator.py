@@ -29,9 +29,12 @@ elif "info" in args and "--format" in args:
         options.append("name=rootless")
     print(json.dumps(options))
 elif "image" in args and "inspect" in args:
-    if os.getenv("CONIX_FAKE_MISSING_RESOURCE"):
+    if any("io.conix.image-role" in item for item in args):
+        print(os.getenv("CONIX_FAKE_ROLE", "indexer"))
+    elif os.getenv("CONIX_FAKE_MISSING_RESOURCE"):
         sys.exit(3)
-    print("sha256:" + "a" * 64)
+    else:
+        print("sha256:" + "a" * 64)
 elif "volume" in args and "inspect" in args:
     volume = args[-1]
     print(json.dumps([{"Labels": {"io.conix.input-token": volume.removeprefix("conix-inputs-")}}]))
@@ -40,7 +43,7 @@ elif "network" in args and "inspect" in args:
 elif "compose" in args and "config" in args:
     if any("runtime.yml" in item for item in args):
         named_volume = os.environ["CONIX_INPUT_VOLUME"]
-        item = {"image": os.environ["CONIX_IMAGE"], "user": "65532:65532",
+        item = {"image": os.environ["CONIX_INDEXER_IMAGE"], "user": "65532:65532",
                 "read_only": True, "pull_policy": "never", "cap_drop": ["ALL"],
                 "security_opt": ["no-new-privileges:true"],
                 "networks": {"database": None, "rpc": None},
@@ -59,11 +62,11 @@ elif "compose" in args and "config" in args:
             "rpc": {"name": os.environ["CONIX_RPC_NETWORK"]}}}))
     else:
         print(json.dumps({"services": {
-            "tests": {"image": os.environ["CONIX_TEST_IMAGE"],
+            "tests": {"image": os.environ["CONIX_TEST_RUNNER_IMAGE"],
                       "read_only": True, "user": "65532:65532"},
             "postgres": {"read_only": True, "user": "999:999", "image": os.environ["CONIX_POSTGRES_IMAGE"]},
             "bootstrap": {"read_only": True, "user": "999:999", "image": os.environ["CONIX_POSTGRES_IMAGE"]},
-            "initialize": {"read_only": True, "user": "65532:65532", "image": os.environ["CONIX_TEST_IMAGE"]}},
+            "initialize": {"read_only": True, "user": "65532:65532", "image": os.environ["CONIX_TEST_RUNNER_IMAGE"]}},
             "networks": {"tests": {"internal": not bool(os.getenv("CONIX_FAKE_BAD_NETWORK"))}}}))
 elif "run" in args and "compose" not in args and args[args.index("run") + 1:]:
     # Runtime deployment checks execute only a non-root, read-only, one-shot
@@ -166,11 +169,12 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 env["CONIX_FAKE_DOWN_FAIL"] = "1"
             if bad_network:
                 env["CONIX_FAKE_BAD_NETWORK"] = "1"
+            env["CONIX_FAKE_ROLE"] = "test-runner"
             image = "sha256:" + "a" * 64
             run = subprocess.run([
                 sys.executable, "-m", "tools.containers.operator",
                 "--context", "science", "--origin", "command line",
-                "tests/container", "--test-image", image,
+                "test/postgres/run", "--runner-image", image,
             ], env=env, capture_output=True, text=True, timeout=15)
             records = [json.loads(line) for line in log.read_text().splitlines()]
             return run, records
@@ -204,7 +208,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertFalse(any("down" in item["args"] for item in calls))
         self.assertIn("network", completed.stderr)
 
-    def run_runtime_fake(self, *, bad_bind=False, operation="start", missing_resources=False,
+    def run_runtime_fake(self, *, bad_bind=False, operation="apply", missing_resources=False,
                          bad_cap=False, bad_privileges=False, bad_runtime_network=False,
                          rootful=False):
         with tempfile.TemporaryDirectory() as folder:
@@ -216,6 +220,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
             env = os.environ.copy()
             env["PATH"] = str(directory) + os.pathsep + env["PATH"]
             env["CONIX_FAKE_LOG"] = str(log)
+            env["CONIX_FAKE_ROLE"] = "indexer"
             env["DOCKER_HOST"] = "tcp://malicious.invalid:2375"
             env["COMPOSE_FILE"] = "/tmp/foreign.yml"
             if bad_bind:
@@ -233,8 +238,8 @@ class LocalDockerOperatorTests(unittest.TestCase):
             result = subprocess.run([
                 sys.executable, "-m", "tools.containers.operator",
                 "--context", "science", "--origin", "command line",
-                "runtime/" + operation, "--deployment", "pilot",
-                "--image", "sha256:" + "a" * 64,
+                "deployment/" + operation, "--deployment", "pilot",
+                "--indexer-image", "sha256:" + "a" * 64,
                 "--volume", "conix-inputs-" + "b" * 24,
                 "--database-network", "db-conix", "--rpc-network", "rpc-conix",
             ], env=env, capture_output=True, text=True, timeout=15)
@@ -254,7 +259,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 self.assertIn("unix:///tmp/science-docker.sock", item["args"])
 
     def test_runtime_stop_does_not_need_removed_external_resources(self):
-        result, calls = self.run_runtime_fake(operation="stop", missing_resources=True)
+        result, calls = self.run_runtime_fake(operation="remove", missing_resources=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(any("stop" in item["args"] for item in calls))
         self.assertTrue(any("down" in item["args"] for item in calls))

@@ -112,7 +112,7 @@ class SharedWheelhouseContracts(unittest.TestCase):
         self.assertIn("requirements/runtime.lock", selected)
         self.assertIn("requirements/build.lock", selected)
         self.assertIn("src/conix/journal.py", selected)
-        self.assertIn("tests/fixture_campaign.py", selected)
+        self.assertIn("tests/pay_to_play_integration.py", selected)
         self.assertNotIn("tools/containers/operator.py", selected)
         self.assertNotIn("containers/wheelhouse/Dockerfile", selected)
         self.assertTrue(all(item["sha256"] == hashlib.sha256(Path(item["path"]).read_bytes()).hexdigest()
