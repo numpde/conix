@@ -20,14 +20,10 @@ class Chain:
         try:
             chain_id = quantity(await self.rpc.call("eth_chainId", []), "chain ID")
             if chain_id != deployment.chain_id:
-                raise ObservationProtocolError(
-                    f"RPC chain ID {chain_id} differs from configured chain {deployment.chain_id}."
-                )
+                raise ObservationProtocolError(f"{chain_id = } differs from configured {deployment.chain_id = }.")
 
-            code = data(
-                await self.rpc.call("eth_getCode", [deployment.address, "latest"]),
-                "deployed code", size=None,
-            )
+            code_response = await self.rpc.call("eth_getCode", [deployment.address, "latest"])
+            code = data(code_response, "deployed code", size=None)
             if not code:
                 raise ObservationProtocolError(f"No contract code at configured address {deployment.address}.")
         except RpcProtocolError as error:
