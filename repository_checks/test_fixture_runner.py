@@ -68,8 +68,10 @@ class FakeDocker:
         self.calls.append(args)
         if args[:2] == ("network", "inspect"):
             return os.environ.get("CONIX_TEST_NETWORK_INSPECT", "")
+
         if args and args[0] == "ps":
             return "0123456789ab\n"
+
         return None
 
 
@@ -88,6 +90,7 @@ class FixtureRunnerTests(unittest.TestCase):
                 commands.append((argv, kwargs))
                 if "inspect" in argv:
                     return SimpleNamespace(returncode=0, stdout=selected.endpoint + "\n")
+
                 return SimpleNamespace(returncode=0, stdout="created\n")
             with patch.object(runner.subprocess, "run", side_effect=controlled):
                 runner.pin_sibling_context(selected, "science")

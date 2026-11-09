@@ -311,6 +311,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 calls.append(args)
                 if args[:2] == ("network", "inspect"):
                     return "db-conix\n"
+
                 return None
 
             with patch.object(docker, "require_rootless_engine"), patch.object(
@@ -350,8 +351,10 @@ class LocalDockerOperatorTests(unittest.TestCase):
             def call(*args, **kwargs):
                 if args[:2] == ("network", "inspect"):
                     return "db-conix\n"
+
                 if args and args[0] == "run":
                     raise operator.OperationError("Owner init outcome unknown.")
+
                 return None
 
             with patch.object(docker, "require_rootless_engine"), patch.object(
@@ -384,8 +387,10 @@ class LocalDockerOperatorTests(unittest.TestCase):
             def call(*args, **kwargs):
                 if args[:2] == ("network", "inspect"):
                     return "db-conix\n"
+
                 if args and args[0] == "run":
                     raise operator.OperationError("Owner init rejected source identity.")
+
                 return None
 
             with patch.object(docker, "require_rootless_engine"), patch.object(

@@ -29,10 +29,12 @@ def direct_versions(requirements):
         result = DIRECT.fullmatch(requirement)
         if result is None:
             raise ValueError("A direct dependency is not exactly version pinned.")
+
         name, version = result.groups()
         name = _name(name)
         if name in found:
             raise ValueError("A direct dependency is declared more than once.")
+
         found[name] = version
     return found
 
@@ -44,16 +46,20 @@ def lock_versions(content):
         line = line.strip()
         if not line or line.startswith("#"):
             continue
+
         result = PIN.fullmatch(line)
         if result is None:
             raise ValueError("A lock entry lacks an exact artifact version/hash.")
+
         name, version, digest = result.groups()
         name = _name(name)
         if name in found:
             raise ValueError("The lock includes more than one artifact for a project.")
+
         found[name] = (version, digest)
     if not found:
         raise ValueError("The lock has no admitted wheel artifacts.")
+
     return found
 
 
@@ -66,6 +72,7 @@ def verify_requirements(project, runtime, build):
         for (name, version) in expected.items():
             if name not in actual or actual[name][0] != version:
                 raise ValueError(f"{label} lock has no matching exact artifact for {name}.")
+
         if label == "build" and set(actual) != set(expected):
             raise ValueError("Build lock includes packages outside its declared build requirements.")
 
