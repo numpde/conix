@@ -541,21 +541,25 @@ def main():
                 print("PASS: PayToPlay collections, durable Conix indexing, "
                       "separate-session restart and checked manual reorganization repair.")
                 return
-            print(
-                f"PayToPlay test did not qualify; private receipts retained at {scratch}. "
-                + operation.recovery(),
-                file=sys.stderr,
-            )
-            for message in cleanup:
-                print(message, file=sys.stderr)
+            # Report recovery/cleanup first, then the first failure LAST.
+            print(f"Private phase receipts: {scratch}", file=sys.stderr)
+            print(f"Recovery: {operation.recovery()}", file=sys.stderr)
+            if cleanup:
+                for message in cleanup:
+                    print(f"Cleanup unconfirmed: {message}", file=sys.stderr)
+            else:
+                print("Cleanup: confirmed for owned resources.", file=sys.stderr)
             if failure is not None:
                 if isinstance(failure, KeyboardInterrupt):
-                    raise CampaignError("Test was interrupted; inspect exact resource ownership.")
-                raise CampaignError(
-                    f"Real-chain test failed ({type(failure).__name__}); "
-                    "inspect retained private receipts without publishing fixture keys."
-                ) from None
-            raise CampaignError("Real-chain test cleanup could not be confirmed.")
+                    detail = "Interrupted; inspect exact resource ownership."
+                elif isinstance(failure, (CampaignError, FixtureError, OperationError)):
+                    detail = f"{type(failure).__name__}: {failure}"
+                else:
+                    detail = f"{type(failure).__name__}: unexpected failure; inspect private receipts."
+                if cleanup:
+                    detail += " Cleanup is ALSO unconfirmed."
+                raise CampaignError(f"PayToPlay campaign failed: {detail}") from failure
+            raise CampaignError("PayToPlay campaign completed but cleanup could not be confirmed.")
     except (CampaignError, FixtureError, OperationError, OSError, ValueError) as error:
         raise SystemExit(f"Conix PayToPlay test refused or failed: {error}") from None
 
