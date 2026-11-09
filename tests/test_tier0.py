@@ -306,6 +306,14 @@ class PostgreSQLContracts(unittest.IsolatedAsyncioTestCase):
         async with self.journal.writer() as writer:
             await writer.basis()
 
+    async def test_writer_exits_with_original_failure_and_releases_session_lock(self):
+        with self.assertRaisesRegex(RuntimeError, "primary publication failure"):
+            async with self.journal.writer() as writer:
+                await writer.basis()
+                raise RuntimeError("primary publication failure")
+        async with self.journal.writer() as next_writer:
+            await next_writer.basis()
+
     async def test_repair_reuses_one_checked_core_mutation(self):
         first = block(1, 1, bytes(32))
         second = block(2, 2, first.hash)
