@@ -16,7 +16,10 @@ import sys
 from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fixture_protocol import FixtureError, _bad_constant, _pairs, decode, receipt
+from fixture_protocol import (
+    FixtureError, ScenarioFailure, _bad_constant, _pairs, decode,
+    phase_failure_record, receipt,
+)
 
 from eth_abi import encode
 from eth_utils import keccak, to_checksum_address
@@ -100,7 +103,7 @@ def _confirm(checkpoint, prior):
         or "0x" + checkpoint.block.hash.hex() != prior["block_hash"]
         or checkpoint.collection_count != prior["collection_count"]
     ):
-        raise AssertionError("Durable checkpoint differs from prior process's source generation or count.")
+        raise ScenarioFailure("Durable checkpoint differs from prior process's source generation or count.")
 
 
 async def _follow(journal, chain, height):
@@ -112,7 +115,7 @@ async def _follow(journal, chain, height):
             while True:
                 if task.done():
                     await task
-                    raise AssertionError("Tier-0 session ended without producing requested complete coverage.")
+                    raise ScenarioFailure("Tier-0 session ended without producing requested complete coverage.")
                 state = await journal.basis()
                 if state.checkpoint is not None and state.checkpoint.number >= height:
                     break
@@ -158,7 +161,7 @@ async def _send(chain, sender, signature, types=(), arguments=(), *, value=0):
         tx_hash = data(await rpc.call("eth_sendTransaction", [transaction]), "transaction hash", size=32)
         mined = await rpc.call("eth_getTransactionReceipt", ["0x" + tx_hash.hex()])
         if type(mined) is not dict or mined.get("status") != "0x1" or mined.get("transactionHash", "").lower() != ("0x" + tx_hash.hex()):
-            raise AssertionError("Fixture transaction did not produce an exact successful receipt; do not resubmit blindly.")
+            raise ScenarioFailure("Fixture transaction did not produce an exact successful receipt; do not resubmit blindly.")
         return mined
     finally:
         await rpc.call("anvil_stopImpersonatingAccount", [sender])
@@ -182,13 +185,13 @@ async def _voucher_signature(chain, key, customer, channel, cumulative, invoice)
             capture_output=True, text=True, timeout=15, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
-        raise AssertionError("Pinned test-only Cast signing operation failed.") from None
+        raise ScenarioFailure("Pinned test-only Cast signing operation failed.") from None
     signature = signed.stdout.strip()
     if signed.returncode != 0 or len(signature) != 132 or not signature.startswith("0x"):
-        raise AssertionError("Pinned test-only Cast returned no valid voucher signature.")
+        raise ScenarioFailure("Pinned test-only Cast returned no valid voucher signature.")
     result = bytes.fromhex(signature[2:])
     if len(result) != 65 or result[64] not in (27, 28):
-        raise AssertionError("Test-only voucher signature lacks a recoverable ECDSA identifier.")
+        raise ScenarioFailure("Test-only voucher signature lacks a recoverable ECDSA identifier.")
     return result
 
 
@@ -201,9 +204,9 @@ async def _events(observer, checkpoint):
         cursor = page.cursor
         if page.complete:
             if len(observed) != checkpoint.collection_count:
-                raise AssertionError("Collection pages do not cover exactly the checkpoint count.")
+                raise ScenarioFailure("Collection pages do not cover exactly the checkpoint count.")
             return tuple(observed)
-    raise AssertionError("Collection pagination failed to terminate within the known complete count.")
+    raise ScenarioFailure("Collection pagination failed to terminate within the known complete count.")
 
 
 async def _baseline(journal, chain, observer, _descriptor, prior):
@@ -213,10 +216,10 @@ async def _baseline(journal, chain, observer, _descriptor, prior):
     await _follow(journal, chain, head.number)
     checkpoint = await observer.latest_checkpoint()
     if checkpoint.block != head or checkpoint.collection_count != 0:
-        raise AssertionError("Fresh dapp32 base deployment should have complete, collection-free coverage.")
+        raise ScenarioFailure("Fresh dapp32 base deployment should have complete, collection-free coverage.")
     snapshot = await chain.rpc.call("evm_snapshot", [])
     if type(snapshot) is not str or not 0 < len(snapshot) <= 80:
-        raise AssertionError("Anvil did not confirm a bounded snapshot identity.")
+        raise ScenarioFailure("Anvil did not confirm a bounded snapshot identity.")
     return _summary("baseline", checkpoint, snapshot)
 
 
@@ -259,7 +262,7 @@ async def _collect(journal, chain, observer, descriptor, prior):
     checkpoint = await observer.latest_checkpoint()
     observed = await _events(observer, checkpoint)
     if len(observed) != 2:
-        raise AssertionError("Real signed collections did not produce exactly two indexed events.")
+        raise ScenarioFailure("Real signed collections did not produce exactly two indexed events.")
     for index, (item, raw, amount, paid, recipient) in enumerate(
         zip(observed, (first, second), (40, 20), (40, 60), (payee, admin))
     ):
@@ -267,19 +270,19 @@ async def _collect(journal, chain, observer, descriptor, prior):
         if (item.transaction_hash != tx or item.customer != customer or item.channel_id != channel
             or item.amount != amount or item.voucher_paid != paid or item.payee != recipient
             or item.invoice_hash != invoices[index]):
-            raise AssertionError("Indexed collection differs from the real receipt/typed voucher/payee.")
+            raise ScenarioFailure("Indexed collection differs from the real receipt/typed voucher/payee.")
     observation = await observer.latest_position(customer, channel)
     if (observation.checkpoint.block != checkpoint.block
         or observation.position.voucher_paid != 60
         or observation.position.balance != 40
         or observation.position.payee != admin
         or observation.position.voucher_key != customer):
-        raise AssertionError("Block-pinned position disagrees with collected contract state.")
+        raise ScenarioFailure("Block-pinned position disagrees with collected contract state.")
     evidence = await observer.canonical_evidence(
         checkpoint, tuple(item.block_number for item in observed), include_finalized=False
     )
     if tuple(item.hash for item in evidence.blocks) != tuple(item.block_hash for item in observed):
-        raise AssertionError("Collection evidence is inconsistent with the indexed branch.")
+        raise ScenarioFailure("Collection evidence is inconsistent with the indexed branch.")
     # An explicit empty block must still advance durable coverage without
     # creating a collection. Run the SAME Tier-0 session again to process it.
     await chain.rpc.call("evm_mine", [])
@@ -287,7 +290,7 @@ async def _collect(journal, chain, observer, descriptor, prior):
     await _follow(journal, chain, head.number)
     checkpoint = await observer.latest_checkpoint()
     if checkpoint.block != head or checkpoint.collection_count != 2:
-        raise AssertionError("Empty block did not advance coverage while retaining exactly two collections.")
+        raise ScenarioFailure("Empty block did not advance coverage while retaining exactly two collections.")
     return _summary("collected", checkpoint, prior["snapshot"])
 
 
@@ -303,7 +306,7 @@ async def _restart(journal, chain, observer, _descriptor, prior):
     await chain.rpc.call("evm_mine", [])
     head = await chain.current_head()
     if head.number <= state.block.number:
-        raise AssertionError("Restart fixture did not mine a new source block.")
+        raise ScenarioFailure("Restart fixture did not mine a new source block.")
     await _follow(journal, chain, head.number)
     after = await observer.latest_checkpoint()
     if (
@@ -312,7 +315,7 @@ async def _restart(journal, chain, observer, _descriptor, prior):
         or after.collection_count != state.collection_count
         or len(await _events(observer, after)) != 2
     ):
-        raise AssertionError("Restart did not scan the new empty block without duplicate financial events.")
+        raise ScenarioFailure("Restart did not scan the new empty block without duplicate financial events.")
     return _summary("restart", after, prior["snapshot"])
 
 
@@ -322,7 +325,7 @@ async def _reorg(journal, chain, observer, _descriptor, prior):
     old = await observer.latest_checkpoint()
     _confirm(old, prior)
     if old.collection_count != 2:
-        raise AssertionError("Reorg fixture lacks the two actual indexed collection events.")
+        raise ScenarioFailure("Reorg fixture lacks the two actual indexed collection events.")
     before = await journal.stored_headers(chain.settings.start_block, old.block.number)
     # The snapshot was taken at baseline before creating any channel/collection.
     # Only the prefix through the saved snapshot height survives reorganization.
@@ -330,7 +333,7 @@ async def _reorg(journal, chain, observer, _descriptor, prior):
     # Deployment itself is always before the chosen snapshot.
     snapshot = prior["snapshot"]
     if await chain.rpc.call("evm_revert", [snapshot]) is not True:
-        raise AssertionError("Anvil did not confirm fixture snapshot restoration.")
+        raise ScenarioFailure("Anvil did not confirm fixture snapshot restoration.")
     # Deliberately create a *different* branch at the old height before
     # expecting Tier-0 contradiction detection. Depth alone is not evidence.
     await chain.rpc.call("evm_increaseTime", [3600])
@@ -340,29 +343,29 @@ async def _reorg(journal, chain, observer, _descriptor, prior):
             break
         await chain.rpc.call("evm_mine", [])
     else:
-        raise AssertionError("Replacement branch exceeded the bounded reorg fixture depth.")
+        raise ScenarioFailure("Replacement branch exceeded the bounded reorg fixture depth.")
     if await chain.canonical(old.block):
-        raise AssertionError("Fixture did not produce a different canonical block at the old height.")
+        raise ScenarioFailure("Fixture did not produce a different canonical block at the old height.")
     try:
         await _follow(journal, chain, head.number)
     except BranchConflict:
         pass
     else:
-        raise AssertionError("Concrete Tier-0 scan did not reject the replaced checkpoint.")
+        raise ScenarioFailure("Concrete Tier-0 scan did not reject the replaced checkpoint.")
     state = await journal.basis()
     if not state.blocked_reason:
-        raise AssertionError("Canonical contradiction was not durably invalidated.")
+        raise ScenarioFailure("Canonical contradiction was not durably invalidated.")
     try:
         await observer.voucher_collected_events(old, cursor=None, limit=1)
     except HistoryUnavailable:
         pass
     else:
-        raise AssertionError("Invalidated collection generation remained available.")
+        raise ScenarioFailure("Invalidated collection generation remained available.")
     # Select an exact retained ancestor still canonical in the restored branch.
     # No direct extension SQL or replacement scanner is permitted.
     survivors = [block for block in before if await chain.canonical(block)]
     if not survivors:
-        raise AssertionError("No retained canonical ancestor remains for checked manual repair.")
+        raise ScenarioFailure("No retained canonical ancestor remains for checked manual repair.")
     anchor = survivors[-1]
     async with journal.writer() as writer:
         await writer.repair_to(await writer.basis(), anchor, chain)
@@ -372,7 +375,7 @@ async def _reorg(journal, chain, observer, _descriptor, prior):
         or recovered.block.number < old.block.number
         or recovered.collection_count != 0
         or await _events(observer, recovered)):
-        raise AssertionError("Repaired branch did not reject orphaned collections or rotate generation.")
+        raise ScenarioFailure("Repaired branch did not reject orphaned collections or rotate generation.")
     return _summary("reorg", recovered, snapshot)
 
 
@@ -404,10 +407,13 @@ def main():
     selected = parser.parse_args()
     try:
         summary = asyncio.run(execute(selected.phase))
-    except (AssertionError, FixtureError, ValueError, TimeoutError) as error:
-        # Never include fixture JSON, keys, upstream RPC responses or raw
-        # signing command lines. The phase and failure category are sufficient.
-        raise SystemExit(f"Conix real fixture {selected.phase} failed: {type(error).__name__}; inspect retained private campaign receipts.") from None
+    except Exception as error:
+        # Explicit scenario failures have source-controlled, nonsecret reasons.
+        # For arbitrary RPC/SQL/library errors, expose type and traceback
+        # location only: untrusted exception values may contain credentials.
+        print(phase_failure_record(selected.phase, error).decode("ascii"),
+              file=sys.stderr, flush=True)
+        raise SystemExit(1) from None
     if summary is not None:
         print(json.dumps(summary, separators=(",", ":")), flush=True)
 
