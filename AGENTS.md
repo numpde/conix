@@ -25,6 +25,29 @@ Implementation discipline
 - Keep financial state and policy out of the observer, including test-only
   substitutes presented as a real payment workflow.
 
+Python layout, naming and explanation
+-------------------------------------
+- Keep ordinary operations easy to read from top to bottom. Separate setup,
+  validation, side effects and reporting with purposeful blank lines, not
+  whitespace after every assignment or statement.
+- Keep short, coherent calls and raises on one line; expand expressions only
+  when the argument grouping or decision needs room. Do not compact unrelated
+  effects merely to reduce line count.
+- Name values after what they represent (e.g. schema owner, Docker endpoint,
+  wheel selection, phase receipt), especially at process and trust boundaries.
+  Use parenthesized tuple targets when unpacking; use conditional bindings only
+  when the observed value is immediately tested and reused.
+- Write docstrings and comments in direct English. Explain invariants, trust
+  assumptions, resource ownership, why ordering matters, and how failure
+  affects durable state. Add an inline comment inside a function when the
+  reason is not evident from names and types; avoid narrating Python syntax.
+- Treat debug f-strings as useful for named nonsecret diagnostic facts, not as
+  permission to stringify untrusted inputs, credentials, subprocess argv or
+  RPC responses. Prefer explicit bounded failure categories at such boundaries.
+- The Python package and test tooling are both subject to these conventions.
+  Preserve actual behavior while restyling; test meaningful contracts rather
+  than exact diagnostic copy or source whitespace.
+
 Error transparency and recovery reporting
 ----------------------------------------
 - Do not discard an informative failure merely to label it CampaignError,
