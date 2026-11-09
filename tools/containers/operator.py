@@ -64,6 +64,27 @@ def environment(client_config=None):
     return result
 
 
+def _docker_operation(argv):
+    """Name the invoked Docker action using only known verbs, not private args."""
+    if "compose" in argv:
+        rest = argv[argv.index("compose") + 1:]
+        action = next((value for value in rest if value in (
+            "config", "up", "down", "run", "ps", "stop", "logs",
+        )), "operation")
+        return f"Docker Compose {action}"
+    for group in ("image", "volume", "network", "context", "container"):
+        if group in argv:
+            index = argv.index(group)
+            action = argv[index + 1] if index + 1 < len(argv) and argv[index + 1] in (
+                "inspect", "create", "rm", "ls", "tag",
+            ) else "operation"
+            return f"Docker {group} {action}"
+    for action in ("run", "pull", "build", "info"):
+        if action in argv:
+            return f"Docker {action}"
+    return "Docker operation"
+
+
 def command(argv, *, env, timeout=60, capture=False, progress_to_stderr=False, public_diagnostic=False):
     try:
         result = subprocess.run(argv, cwd=ROOT, env=env, timeout=timeout,
@@ -73,7 +94,7 @@ def command(argv, *, env, timeout=60, capture=False, progress_to_stderr=False, p
                                     (sys.stderr if progress_to_stderr else None),
                                 check=False)
     except (OSError, subprocess.TimeoutExpired) as error:
-        raise OperationError(f"Command failed to run: {argv[-1]} ({type(error).__name__}).") from error
+        raise OperationError(f"{_docker_operation(argv)} failed to run ({type(error).__name__}).") from error
     if result.returncode:
         # Only nonsecret acquisition workers may opt in to bounded stdout/
         # stderr diagnostics. Never echo a runtime credential or a fixture
@@ -86,7 +107,7 @@ def command(argv, *, env, timeout=60, capture=False, progress_to_stderr=False, p
                 + (detail.strip() or "no worker diagnostic returned."),
                 exit_code=result.returncode,
             )
-        raise OperationError(f"Docker operation {argv[-1]} failed (exit {result.returncode}).",
+        raise OperationError(f"{_docker_operation(argv)} failed (exit {result.returncode}).",
                              exit_code=result.returncode)
     if capture and len(result.stdout) > 65536:
         raise OperationError("Docker returned an oversized response.")
