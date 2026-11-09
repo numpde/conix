@@ -79,6 +79,7 @@ def pin_sibling_context(docker, name):
             )
         except (OSError, subprocess.TimeoutExpired):
             raise CampaignError("Could not prepare the pinned sibling Docker client context.") from None
+
         if context_command.returncode:
             raise CampaignError(
                 f"Pinned sibling Docker context {command[1]} failed (exit {context_command.returncode})."
@@ -405,6 +406,7 @@ class PayToPlayTest:
 
             # On timeout, a daemon-side one-shot process may still be running.
             raise CampaignError(f"Conix phase/{phase} failed: {error}") from error
+
         if not need_receipt:
             return None
 

@@ -57,10 +57,12 @@ def admit_pool(value):
         info = path.stat()
     except OSError as error:
         raise PoolError("The selected WHEELHOUSE directory does not exist or cannot be inspected.") from None
+
     if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
         or info.st_mode & 0o022 or not info.st_mode & stat.S_IRUSR
         or not info.st_mode & stat.S_IWUSR or not info.st_mode & stat.S_IXUSR):
         raise PoolError("WHEELHOUSE must be an owner-readable/writable directory without group/other write.")
+
     return path
 
 
@@ -70,10 +72,12 @@ def release_record():
         document = json.loads((ROOT / "requirements/wheelhouse-tool-release.json").read_text())
     except (OSError, ValueError) as error:
         raise PoolError("Cannot read the reviewed shared wheelhouse-tool release record.") from None
+
     if (type(document) is not dict or set(document) != {"version", "sha256"}
         or type(document["version"]) is not str or VERSION.fullmatch(document["version"]) is None
         or type(document["sha256"]) is not str or SHA.fullmatch(document["sha256"]) is None):
         raise PoolError("The wheelhouse-tool pin must specify one semantic version and full SHA-256.")
+
     return document | {"name": f"wheelhouse-tool-{document['version']}.pyz"}
 
 
@@ -123,6 +127,7 @@ def source_allowlist(root=ROOT):
         ).stdout.decode("utf-8").split("\0")
     except (OSError, UnicodeError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         raise PoolError("Cannot establish the declared Git source inventory.") from None
+
     # An untracked module must not enter the image merely because rglob found it.
     declared = {name for name in tracked if name}
     if declared != set(modules):
@@ -207,6 +212,7 @@ def selection_manifest(raw):
         payload = json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeError) as error:
         raise PoolError("The contained selector returned invalid JSON.") from None
+
     if type(payload) is not list or not payload or len(payload) > 256:
         raise PoolError("The selected-wheel manifest must contain a bounded artifact list.")
 

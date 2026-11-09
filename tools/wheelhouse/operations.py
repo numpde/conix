@@ -40,6 +40,7 @@ class SharedWheelhouse:
             security = json.loads(observed)
         except ValueError:
             raise PoolError("Cannot establish the selected Docker Engine's user-namespace policy.") from None
+
         if type(security) is not list or any(type(item) is not str for item in security):
             raise PoolError("Selected Docker Engine returned invalid security options.")
 

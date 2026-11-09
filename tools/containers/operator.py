@@ -741,6 +741,7 @@ class Docker:
                     if failure is not None else ""
                 )
                 raise OperationError(f"Test project cleanup failed: {cleanup}.{first}") from cleanup
+
         if failure is not None:
             raise failure
 

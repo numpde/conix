@@ -83,6 +83,7 @@ def network_failure(error):
     if isinstance(error, (ConnectionResetError, ConnectionRefusedError, ConnectionAbortedError, BrokenPipeError,
                           http.client.RemoteDisconnected, http.client.IncompleteRead)):
         return 'network connection was interrupted', True
+
     return 'network connection failed', False
 
 
@@ -125,6 +126,7 @@ def download(url, target, expected):
                     raise TransientDownload(detail) from None
 
                 raise OSError(detail) from None
+
             if not block:
                 break
 
