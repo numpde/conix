@@ -211,7 +211,8 @@ class Docker:
         self.run("run", "--rm", "--pull", "never", "--network", "none", "--read-only",
                  "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
                  "--pids-limit", "64", "--memory", "256m",
-                 "--user", "65532:65532", image, "--help", timeout=30)
+                 "--user", "65532:65532", image, "--help", timeout=30, capture=True)
+        print("Verified offline indexer image and installed command.", file=sys.stderr)
 
     def check_evm_test_runner(self, image):
         """Check a test-only EVM runner without network or fixture secrets."""
@@ -222,9 +223,9 @@ class Docker:
             "--security-opt", "no-new-privileges:true",
             "--pids-limit", "64", "--memory", "256m",
         )
-        self.run(*grants, "--entrypoint", "cast", image, "--version", timeout=20)
+        self.run(*grants, "--entrypoint", "cast", image, "--version", timeout=20, capture=True)
         self.run(*grants, "--entrypoint", "python", image,
-                 "-I", "/tests/pay_to_play_integration.py", "--help", timeout=20)
+                 "-I", "/tests/pay_to_play_integration.py", "--help", timeout=20, capture=True)
         # Qualify the precise digest-signing interface used by the contained
         # campaign, without touching a wallet service or a live RPC endpoint.
         check = (
@@ -239,6 +240,8 @@ class Docker:
         )
         self.run(*grants, "--entrypoint", "python", image,
                  "-I", "-c", check, timeout=20)
+        print("Verified offline EVM test-runner image, Cast signing and scenario entry point.",
+              file=sys.stderr)
 
     def private_bytes(self, value, max_size, *, secret):
         path = Path(value)
