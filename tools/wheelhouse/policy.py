@@ -118,7 +118,7 @@ def source_allowlist(root=ROOT):
     abi_fixture_dir = test_directory / "fixtures" / "abi"
     abi_fixtures = tuple(sorted(
         file.relative_to(root).as_posix() for file in abi_fixture_dir.glob("*.json")
-    )))
+    ))
 
     if "src/conix/__init__.py" not in source_modules or not test_modules:
         raise PoolError("Conix source package or executable test suite is absent from the build context.")
