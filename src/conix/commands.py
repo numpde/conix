@@ -135,7 +135,7 @@ def main(argv=None):
             detail = f"{type(error).__name__}; inspect configured file, database and permissions."
         else:
             detail = str(error)
-        raise SystemExit(f"conix {arguments.command} failed: {detail}") from None
+        raise SystemExit(f"conix {arguments.command} failed ({type(error).__name__}): {detail}") from None
 
 
 if __name__ == "__main__":
