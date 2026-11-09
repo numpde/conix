@@ -22,6 +22,7 @@ def run(pool, release, runtime, build):
     tool = pool / ("wheelhouse-tool-" + pin["version"] + ".pyz")
     if sha256(tool.read_bytes()).hexdigest() != pin["sha256"]:
         raise ValueError("Contained shared-wheelhouse tool differs from the pinned upstream release.")
+
     with Path("/tmp/wheelhouse-pip.json").open("xb") as report:
         pass
     argv = [
@@ -58,9 +59,11 @@ def run(pool, release, runtime, build):
     )
     if manifest_conversion.returncode:
         raise ValueError("Pinned wheelhouse-tool refused the contained pip selection report.")
+
     artifacts = json.loads(manifest_conversion.stdout)
     if type(artifacts) is not list or not artifacts:
         raise ValueError("The contained selector returned no wheel artifact identities.")
+
     print(json.dumps(artifacts, sort_keys=True, separators=(",", ":")))
 
 

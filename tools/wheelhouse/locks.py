@@ -40,16 +40,19 @@ def inventory(requirements, temp: Path, label: str) -> str:
     files = sorted(wheels.iterdir())
     if not files or any(path.suffix != ".whl" for path in files):
         raise ValueError("Dependency resolution did not yield only binary wheel files.")
+
     entries = []
     seen = set()
     for path in files:
         parts = path.name[:-4].split("-")
         if len(parts) < 5:
             raise ValueError(f"Invalid wheel name in selected {label} closure.")
+
         name, version = parts[:2]
         project = name.lower().replace("_", "-")
         if project in seen:
             raise ValueError(f"Two selected wheels for {project}; an exact lock needs one.")
+
         seen.add(project)
         digest = sha256(path.read_bytes()).hexdigest()
         entries.append(f"{project}=={version} --hash=sha256:{digest}")
@@ -69,6 +72,7 @@ def generate():
     roots = source["project"]["dependencies"]
     if type(roots) is not list or any(type(item) is not str for item in roots):
         raise ValueError("Project dependencies must be a concrete list.")
+
     with tempfile.TemporaryDirectory(prefix="conix-lock-") as temp:
         working = Path(temp)
         return {

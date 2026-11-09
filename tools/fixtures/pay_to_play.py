@@ -39,15 +39,19 @@ def sibling_checkout(value):
     """Admit an existing dapp32 checkout; never synthesize a producer."""
     if type(value) is not str or not value or "\n" in value or "\r" in value:
         raise CampaignError("Choose a concrete DAPP32_DIR checkout, with no line breaks.")
+
     path = Path(value)
     if not path.is_absolute():
         raise CampaignError("DAPP32_DIR must be an explicit absolute checkout path.")
+
     if path.is_symlink() or not path.is_dir():
         raise CampaignError("The selected sibling checkout must be a real directory, not a symlink.")
+
     for name in ("Makefile", "tools/pay_to_play_fixture.sh", "tools/pay_to_play_fixture.py"):
         item = path / name
         if not item.is_file() or item.is_symlink():
             raise CampaignError("Sibling checkout is missing a regular dapp32 fixture contract file.")
+
     return path.resolve(strict=True)
 
 
@@ -61,6 +65,7 @@ def pin_sibling_context(docker, name):
     """
     if type(name) is not str or not CONTEXT_NAME.fullmatch(name):
         raise CampaignError("The sibling fixture requires one explicit valid Docker context name.")
+
     commands = (
         ("context", "create", name, "--docker", "host=" + docker.endpoint),
         ("context", "inspect", name, "--format", "{{.Endpoints.docker.Host}}"),
@@ -78,8 +83,10 @@ def pin_sibling_context(docker, name):
             raise CampaignError(
                 f"Pinned sibling Docker context {command[1]} failed (exit {result.returncode})."
             )
+
         if command[1] == "inspect" and result.stdout.strip() != docker.endpoint:
             raise CampaignError("Sibling Docker context resolves to a different Unix socket.")
+
     return None
 
 
@@ -121,6 +128,7 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
                 remaining = timeout - (time.monotonic() - started)
                 if remaining <= 0:
                     raise subprocess.TimeoutExpired(argv, timeout)
+
                 try:
                     child.communicate(
                         input=payload if send_payload else None, timeout=min(15, remaining)
@@ -132,6 +140,7 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
                     send_payload = False
                     if time.monotonic() - started >= timeout:
                         raise
+
                     _progress(f"{label}: running ({int(time.monotonic() - started)}s)")
         except BaseException as error:
             # CLI termination does not certify daemon-side cleanup.
@@ -151,13 +160,16 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
                 raise CampaignError(
                     f"{label} timed out after {timeout}s; daemon effects are unconfirmed."
                 ) from error
+
             raise
     if child.returncode != 0:
         raise CampaignError(
             f"{label} exited with status {child.returncode}; see private {error_file.name}."
         )
+
     if output.stat().st_size > 1048576:
         raise CampaignError(f"{label} produced an oversized receipt; no JSON was admitted.")
+
     _progress(f"{label}: completed ({int(time.monotonic() - started)}s)")
     return output.read_bytes()
 
@@ -174,6 +186,7 @@ def verify_network(docker, descriptor):
     ).strip()
     if observed != expected:
         raise CampaignError("dapp32 fixture network is not the internal, producer-owned network in the JSON.")
+
     running = docker.run(
         "ps", "--filter", f"label=com.docker.compose.project={project}",
         "--filter", "label=com.docker.compose.service=pay-to-play-anvil",
@@ -217,6 +230,7 @@ def admit(rendered, *, runner_image, postgres_image, rpc_network):
             required = {"database", "rpc"} if name == "consumer" else {"database"}
             if connected != required:
                 raise CampaignError("Fixture service has an unexpected database/RPC network grant.")
+
         owner = services["initialize"].get("environment", {})
         runtime = services["consumer"].get("environment", {})
         if (
@@ -236,9 +250,11 @@ def read_borrowed_descriptor(value):
     """
     if type(value) is not str or not value or "\x00" in value:
         raise CampaignError("FIXTURE_DESCRIPTOR must be an explicit absolute private JSON file.")
+
     path = Path(value)
     if not path.is_absolute() or any(part.is_symlink() for part in (path, *path.parents)):
         raise CampaignError("FIXTURE_DESCRIPTOR must have an absolute path without symlink ancestors.")
+
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
         try:
@@ -253,6 +269,7 @@ def read_borrowed_descriptor(value):
         raise CampaignError("Cannot open the selected private fixture descriptor.") from None
     if len(raw) > 1048576:
         raise CampaignError("Private fixture descriptor exceeds its byte limit.")
+
     try:
         decoded = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs,
                              parse_constant=_bad_constant)
@@ -260,6 +277,7 @@ def read_borrowed_descriptor(value):
         raise CampaignError("Fixture descriptor must be unique-key UTF-8 JSON.") from None
     if type(decoded) is not dict:
         raise CampaignError("Fixture descriptor must be a JSON object.")
+
     return decode(raw, fixture_id=decoded.get("fixtureId"))
 
 
@@ -368,13 +386,16 @@ class PayToPlayTest:
             reason = parse_phase_failure(stderr_tail, phase=phase)
             if reason is not None:
                 raise CampaignError(f"Conix phase/{phase} failed: {reason}.") from error
+
             # On timeout, a daemon-side one-shot process may still be running.
             raise CampaignError(f"Conix phase/{phase} failed: {error}") from error
         if not need_receipt:
             return None
+
         phase_receipt = receipt(phase_output)
         if phase_receipt["phase"] != phase:
             raise CampaignError("Contained fixture returned the wrong phase result.")
+
         return phase_receipt
 
     def execute(self):
@@ -388,8 +409,10 @@ class PayToPlayTest:
             previous_receipt = self._phase("consumer", phase, state=previous_receipt, need_receipt=True)
             if phase == "baseline" and previous_receipt["collection_count"] != 0:
                 raise CampaignError("Baseline unexpectedly contains collection events.")
+
             if phase in ("collected", "restart") and previous_receipt["collection_count"] != 2:
                 raise CampaignError("Expected two real indexed collection events.")
+
             if phase == "reorg" and previous_receipt["collection_count"] != 0:
                 raise CampaignError("Orphaned collections remain after checked reorganization repair.")
 
@@ -397,6 +420,7 @@ class PayToPlayTest:
         """Retire only this test's owned SQL project, regardless of outcome."""
         if not self.sql_started:
             return []
+
         try:
             self.docker.run(*_compose(self.docker, self.project),
                 "down", "--volumes", "--remove-orphans", "--timeout", "30",
@@ -435,6 +459,7 @@ class Campaign:
     def _dapp32(self, action):
         if action not in ("up", "info", "down"):
             raise CampaignError("Unknown producer fixture lifecycle action.")
+
         return owned_command(
             ["make", "--silent", "--no-print-directory", "-C", str(self.sibling),
              "pay-to-play/local/fixture/" + action,
@@ -459,6 +484,7 @@ class Campaign:
         inspected = decode(self._dapp32("info"), fixture_id=self.fixture_id)
         if inspected != descriptor:
             raise CampaignError("Producer fixture changed between creation and independent inspection.")
+
         self.descriptor = descriptor
         self.producer_owned = True
 
@@ -524,6 +550,7 @@ def main():
             args.fixture_descriptor = os.environ.get("CONIX_MAKE_FIXTURE_DESCRIPTOR", "")
         if not IMAGE_ID.fullmatch(args.runner_image or ""):
             raise CampaignError("Select a prebuilt immutable RUNNER_IMAGE=sha256:<id> with role evm-test-runner.")
+
         owned = args.action == "campaign/pay-to-play/run"
         if owned:
             sibling = sibling_checkout(args.dapp32_dir)

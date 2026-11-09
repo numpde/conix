@@ -233,6 +233,7 @@ class Docker:
         ).strip()
         if not IMAGE_ID.fullmatch(identity):
             raise OperationError("Selected image is not a valid local image ID.")
+
         return identity
 
     def require_rootless_engine(self):
@@ -248,6 +249,7 @@ class Docker:
             ) from error
         if type(options) is not list or not all(type(value) is str for value in options):
             raise OperationError("Selected Docker Engine returned malformed security options.")
+
         if "name=rootless" not in options:
             raise OperationError(
                 "Runtime start requires a verified rootless Docker Engine; "
@@ -264,6 +266,7 @@ class Docker:
         }
         if role not in source:
             raise OperationError("Image acquisition requires an explicitly declared component role.")
+
         self.run("pull", "--platform", "linux/amd64",
                  images[source[role]], timeout=240 if role == "foundry" else 180)
 
@@ -271,10 +274,13 @@ class Docker:
         """Bind a concrete image ID to its recorded purpose before use."""
         if role not in ("indexer", "test-runner", "evm-test-runner"):
             raise OperationError("An image role must be one of the reviewed Conix roles.")
+
         if not IMAGE_ID.fullmatch(image or ""):
             raise OperationError("An image role check requires an immutable sha256 image ID.")
+
         if self.require_image(image) != image:
             raise OperationError("The requested immutable image ID changed.")
+
         observed = self.run("image", "inspect",
                             "--format", '{{index .Config.Labels "io.conix.image-role"}}',
                             image, capture=True, timeout=10).strip()
@@ -323,27 +329,33 @@ class Docker:
         path = Path(value)
         if not path.is_absolute():
             raise OperationError("Staged input files must use absolute host paths.")
+
         flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
         fd = os.open(path, flags)
         try:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
                 raise OperationError("Staged input must be an operator-owned regular file.")
+
             if secret and info.st_mode & 0o077:
                 raise OperationError("Database credential source must have no group/other permissions.")
+
             if not secret and info.st_mode & 0o022:
                 raise OperationError("Conix settings source must not be group/other writable.")
+
             data = os.read(fd, max_size + 1)
         finally:
             os.close(fd)
         if not 0 < len(data) <= max_size:
             raise OperationError("Staged input file is empty or exceeds its size limit.")
+
         return data
 
     def stage_inputs(self, image, config_path, dsn_path, *, proof=False, announce=True):
         """Create and own a unique input volume, with no host bind mounts."""
         if not IMAGE_ID.fullmatch(image or ""):
             raise OperationError("INDEXER_IMAGE must select a prebuilt immutable indexer image.")
+
         self.require_role(image, "indexer")
         # No operator input becomes a bind mount into the runtime. Stage a
         # one-time snapshot and then prove access as the actual runtime UID.
@@ -366,6 +378,7 @@ class Docker:
         ).strip()
         if created != volume:
             raise OperationError("Created input volume identity differs from the selected name; inspect the Engine.")
+
         remove = proof
         try:
             # Root only in this short-lived, networkless provisioner. It receives
@@ -442,9 +455,11 @@ class Docker:
         """Remove only the exact volume whose ownership label still matches."""
         if not re.fullmatch(r"conix-inputs-[a-f0-9]{24}", volume or ""):
             raise OperationError("Only conix-owned input-volume identities can be removed.")
+
         values = json.loads(self.run("volume", "inspect", volume, timeout=10, capture=True))
         if len(values) != 1 or values[0].get("Labels", {}).get("io.conix.input-token") != (token or volume.removeprefix("conix-inputs-")):
             raise OperationError("Private input-volume label does not match its identity; refusing removal.")
+
         self.run("volume", "rm", volume, timeout=30)
 
     def initialize_schema(self, image, config_path, owner_dsn_path, database):
@@ -456,8 +471,10 @@ class Docker:
         """
         if not IMAGE_ID.fullmatch(image or ""):
             raise OperationError("Owner initialization requires immutable INDEXER_IMAGE=sha256:<id>.")
+
         if type(database) is not str or not CONTEXT_NAME.fullmatch(database):
             raise OperationError("Choose one existing database network for schema initialization.")
+
         self.require_rootless_engine()
         self.require_role(image, "indexer")
         actual = self.run(
@@ -516,10 +533,13 @@ class Docker:
         ):
             if type(value) is not str or not CONTEXT_NAME.fullmatch(value):
                 raise OperationError(f"Select one valid {label} name without paths or control characters.")
+
         if database == rpc:
             raise OperationError("Source RPC and database networks must be separately selected.")
+
         if not IMAGE_ID.fullmatch(image or ""):
             raise OperationError("Deployment requires immutable INDEXER_IMAGE=sha256:<id>.")
+
         # Resource existence is a start precondition, not a stop/status
         # precondition. Teardown must work after image, volume, network or
         # source files have disappeared from this Engine.
@@ -530,6 +550,7 @@ class Docker:
         # command can reuse it. The label is not a credential or permission.
         if not re.fullmatch(r"conix-inputs-[a-f0-9]{24}", volume or ""):
             raise OperationError("Runtime requires a staged conix-inputs-<token> volume.")
+
         if operation == "apply":
             rows = json.loads(self.run("volume", "inspect", volume, timeout=10, capture=True))
             if (len(rows) != 1
@@ -543,6 +564,7 @@ class Docker:
                 ).strip()
                 if actual != selected:
                     raise OperationError(f"Selected network {selected!r} was not found on this Engine.")
+
         project = "conix-" + name
         compose = [
             "compose", "--env-file", "/dev/null", "--project-directory", str(ROOT),
@@ -604,6 +626,7 @@ class Docker:
             return
         if operation != "apply":
             raise OperationError("Deployment operation must be apply, remove, status or config/check.")
+
         self.verify_inputs(image, volume)
         self.run(*compose, "stop", "--timeout", "90", "indexer", env=env, timeout=105)
         try:
@@ -625,6 +648,7 @@ class Docker:
         """Run isolated PostgreSQL tests without adopting external resources."""
         if not IMAGE_ID.fullmatch(image):
             raise OperationError("test/postgres/run requires immutable RUNNER_IMAGE=sha256:<id>.")
+
         self.require_role(image, "test-runner")
         self.require_image(images["postgres"])
         project = "conix-tier0-" + secrets.token_hex(6)

@@ -42,8 +42,10 @@ class SharedWheelhouse:
             raise PoolError("Cannot establish the selected Docker Engine's user-namespace policy.") from None
         if type(security) is not list or any(type(item) is not str for item in security):
             raise PoolError("Selected Docker Engine returned invalid security options.")
+
         if os.geteuid() == 0 or os.getegid() == 0:
             raise PoolError("Shared pool access requires a non-root host account and primary group.")
+
         self.user = "0:0" if "name=rootless" in security else f"{os.geteuid()}:{os.getegid()}"
         self.docker.require_image(self.images["python_base"])
 
@@ -77,6 +79,7 @@ class SharedWheelhouse:
             raise PoolError(
                 "Pinned NMR wheelhouse-tool is missing from WHEELHOUSE; run explicit wheelhouse/acquire."
             )
+
         raw = self.run(
             "/input/check.py",
             "--pool", "/wheelhouse", "--release", "/input/release.json",
@@ -100,6 +103,7 @@ class SharedWheelhouse:
             )
             if not has_tool(self.pool, self.pin):
                 raise PoolError("Contained wheelhouse-tool bootstrap returned without the pinned release.")
+
         try:
             return self.check()
         except Exception as error:
@@ -108,6 +112,7 @@ class SharedWheelhouse:
             # conflicts remain terminal without metadata requests.
             if getattr(error, "exit_code", None) != 10:
                 raise
+
             # The upstream source-lock projection remains temporary; original
             # issuer requirements authorize the recovered artifact hashes.
         with tempfile.TemporaryDirectory(prefix="conix-wheelhouse-projection-") as tmp:
@@ -155,6 +160,7 @@ class SharedWheelhouse:
         """Stream admitted sources to offline BuildKit, tag only after success."""
         if target not in ("indexer", "test-runner", "evm-test-runner"):
             raise PoolError("The shared wheelhouse supports only the three declared installed-image targets.")
+
         selected = self.check()
         if target == "evm-test-runner":
             self.docker.require_image(self.images["foundry"])
@@ -219,6 +225,7 @@ class SharedWheelhouse:
                     _retire(producer)
                     if isinstance(error, KeyboardInterrupt):
                         raise
+
                     raise PoolError(
                         f"Offline BuildKit or wheel-stream wait failed ({type(error).__name__}); "
                         "processes were signalled for retirement. Reconcile selected "
@@ -242,6 +249,7 @@ class SharedWheelhouse:
             actual = self.docker.require_image(raw)
             if actual != raw:
                 raise PoolError("Selected image identity changed after BuildKit completion.")
+
         # Never overwrite a usable tag before both streamer and builder
         # confirmed their outcomes. Shared wheel bytes stay in the pool.
         self.docker.run("image", "tag", raw, f"conix-{target}:local", timeout=20)
