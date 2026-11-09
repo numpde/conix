@@ -5,7 +5,9 @@ The descriptor establishes deployment facts; Docker network inspection and
 real RPC checks independently qualify their corresponding live identities.
 """
 import json
+from pathlib import Path
 import re
+import traceback
 
 LIMIT = 1048576
 IDENTITY = re.compile(r"[a-z0-9][a-z0-9_-]{0,47}\Z")
@@ -149,3 +151,78 @@ def receipt(raw: bytes):
         or type(result["snapshot"]) is not str or len(result["snapshot"]) > 80):
         raise FixtureError("Phase receipt contains invalid public checkpoint fields.")
     return result
+
+
+# A deliberately narrow wire diagnostic: tests can reveal their own fixed,
+# nonsecret assertion messages, but never an upstream exception's raw value.
+# The campaign prints this verified record only after it has attempted cleanup.
+_FAILURE_PREFIX = b"CONIX_PHASE_FAILURE "
+_PHASES = frozenset({"initialize", "baseline", "collected", "restart", "reorg"})
+_PUBLIC_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.,:;()/'-]{0,239}\\Z")
+_CATEGORY = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}\\Z")
+_PRIVATE_MARKERS = ("privatekey", "postgresql:", "password", "secret", "://")
+
+
+class ScenarioFailure(AssertionError):
+    """An explicit, source-controlled scenario assertion with a safe message."""
+
+
+def _public_reason(value):
+    return (
+        type(value) is str and _PUBLIC_TEXT.fullmatch(value) is not None
+        and not any(marker in value.lower() for marker in _PRIVATE_MARKERS)
+        and re.search(r"(?:0x)?[a-fA-F0-9]{64}", value) is None
+    )
+
+
+def phase_failure_record(phase: str, error: Exception) -> bytes:
+    """A safe diagnostic for a private fixture's stderr, not a traceback dump.
+
+    Only our explicit assertion/descriptor classes may contribute their text.
+    Unexpected exceptions expose their type and source location, never their
+    potentially credential-bearing arguments or upstream RPC response.
+    """
+    if phase not in _PHASES:
+        raise ValueError("Unknown fixture phase.")
+    category = type(error).__name__
+    if type(error) in (ScenarioFailure, FixtureError) and _public_reason(str(error)):
+        reason = str(error)
+    elif isinstance(error, TimeoutError):
+        reason = "Operation deadline exceeded."
+    else:
+        frames = traceback.extract_tb(error.__traceback__)
+        final = frames[-1] if frames else None
+        location = (
+            f"{Path(final.filename).name}:{final.lineno} in {final.name}"
+            if final else "the current phase"
+        )
+        reason = f"Unexpected error at {location}; inspect the selected operation."
+        if not _public_reason(reason):
+            reason = "Unexpected error; inspect the selected operation."
+    return _FAILURE_PREFIX + json.dumps(
+        {"phase": phase, "category": category, "reason": reason},
+        separators=(",", ":"), ensure_ascii=True,
+    ).encode("ascii")
+
+
+def parse_phase_failure(stderr: bytes, *, phase: str) -> str | None:
+    """Admit only the bounded, validated failure record for this exact phase."""
+    if phase not in _PHASES or type(stderr) is not bytes:
+        return None
+    for line in reversed(stderr[-16384:].splitlines()):
+        if not line.startswith(_FAILURE_PREFIX):
+            continue
+        try:
+            record = json.loads(line[len(_FAILURE_PREFIX):])
+        except (ValueError, UnicodeError):
+            continue
+        if (
+            type(record) is dict
+            and set(record) == {"phase", "category", "reason"}
+            and record["phase"] == phase
+            and type(record["category"]) is str
+            and _CATEGORY.fullmatch(record["category"]) is not None
+            and _public_reason(record["reason"])
+        ):
+            return f"{record['category']}: {record['reason']}"
+    return None
