@@ -213,23 +213,25 @@ def verify_network(docker, descriptor):
     if len(running_anvil_ids) != 1 or re.fullmatch(r"[0-9a-f]{12,64}", running_anvil_ids[0]) is None:
         raise CampaignError("Expected exactly one running producer-owned Anvil service.")
 
-def admit(rendered, *, runner_image, postgres_image, rpc_network):
-    """Review the actual rendered Compose graph before creating SQL resources."""
+def admit(rendered_graph, *, runner_image, postgres_image, rpc_network):
+    """Review the rendered Compose graph before creating any SQL resource."""
     try:
-        services = rendered["services"]
-        networks = rendered["networks"]
+        rendered_services = rendered_graph["services"]
+        rendered_networks = rendered_graph["networks"]
+
         if (
-            set(services) != {"postgres", "bootstrap", "initialize", "consumer"}
-            or set(networks) != {"database", "rpc"}
-            or networks["database"].get("internal") is not True
-            or networks["rpc"].get("name") != rpc_network
-            or networks["rpc"].get("external") is not True
+            set(rendered_services) != {"postgres", "bootstrap", "initialize", "consumer"}
+            or set(rendered_networks) != {"database", "rpc"}
+            or rendered_networks["database"].get("internal") is not True
+            or rendered_networks["rpc"].get("name") != rpc_network
+            or rendered_networks["rpc"].get("external") is not True
         ):
             raise CampaignError("Fixture graph includes an unknown service or network.")
 
-        for (name, service) in services.items():
-            expected_image = postgres_image if name in ("postgres", "bootstrap") else runner_image
-            required_user = "999:999" if name in ("postgres", "bootstrap") else "65532:65532"
+        for (service_name, service) in rendered_services.items():
+            expected_image = postgres_image if service_name in ("postgres", "bootstrap") else runner_image
+            required_user = "999:999" if service_name in ("postgres", "bootstrap") else "65532:65532"
+
             if (
                 service.get("image") != expected_image
                 or service.get("pull_policy") != "never"
@@ -241,79 +243,91 @@ def admit(rendered, *, runner_image, postgres_image, rpc_network):
                 or service.get("build") or service.get("ports")
                 or service.get("network_mode") or service.get("devices")
                 or service.get("pid") or service.get("ipc") or service.get("uts")
-                or any(item.get("type") == "bind" for item in service.get("volumes", []))
+                or any(mount.get("type") == "bind" for mount in service.get("volumes", []))
             ):
                 raise CampaignError("Fixture service has an unapproved image, privilege or host attachment.")
-            connected = set(service.get("networks", []))
-            required = {"database", "rpc"} if name == "consumer" else {"database"}
-            if connected != required:
+
+            connected_networks = set(service.get("networks", []))
+            required_networks = {"database", "rpc"} if service_name == "consumer" else {"database"}
+
+            if connected_networks != required_networks:
                 raise CampaignError("Fixture service has an unexpected database/RPC network grant.")
 
-        owner = services["initialize"].get("environment", {})
-        runtime = services["consumer"].get("environment", {})
+        owner_environment = rendered_services["initialize"].get("environment", {})
+        consumer_environment = rendered_services["consumer"].get("environment", {})
+
         if (
-            "CONIX_TEST_OWNER_DSN" not in owner or "CONIX_TEST_DSN" in owner
-            or "CONIX_TEST_DSN" not in runtime or "CONIX_TEST_OWNER_DSN" in runtime
+            "CONIX_TEST_OWNER_DSN" not in owner_environment or "CONIX_TEST_DSN" in owner_environment
+            or "CONIX_TEST_DSN" not in consumer_environment or "CONIX_TEST_OWNER_DSN" in consumer_environment
         ):
             raise CampaignError("One-shot owner credentials are not separated from the runtime.")
-
     except (TypeError, AttributeError, KeyError) as error:
         raise CampaignError("Cannot validate the rendered fixture service graph.") from None
 
 
-def read_borrowed_descriptor(value):
-    """Read a private, immutable handle to a producer-verified source descriptor.
+def read_borrowed_descriptor(descriptor_file):
+    """Read a private test descriptor without acquiring producer cleanup rights.
 
-    The descriptor authorizes an exclusive *test* against the supplied chain.
-    It never grants Conix the right to stop or remove dapp32 resources.
+    Its identity is checked again against the actual Docker network and RPC
+    service; the descriptor alone never transfers ownership of dapp32 assets.
     """
-    if type(value) is not str or not value or "\x00" in value:
+    if type(descriptor_file) is not str or not descriptor_file or "\x00" in descriptor_file:
         raise CampaignError("FIXTURE_DESCRIPTOR must be an explicit absolute private JSON file.")
 
-    path = Path(value)
-    if not path.is_absolute() or any(part.is_symlink() for part in (path, *path.parents)):
+    descriptor_path = Path(descriptor_file)
+
+    if not descriptor_path.is_absolute() or any(part.is_symlink() for part in (descriptor_path, *descriptor_path.parents)):
         raise CampaignError("FIXTURE_DESCRIPTOR must have an absolute path without symlink ancestors.")
 
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        descriptor_fd = os.open(descriptor_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+
         try:
-            info = os.fstat(fd)
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                or info.st_mode & 0o077 or not 0 < info.st_size <= 1048576):
+            file_stat = os.fstat(descriptor_fd)
+
+            if (
+                not stat.S_ISREG(file_stat.st_mode)
+                or file_stat.st_uid != os.getuid()
+                or file_stat.st_mode & 0o077
+                or not 0 < file_stat.st_size <= 1048576
+            ):
                 raise CampaignError("Fixture JSON must be an owner-owned, mode-0600-or-stricter regular file.")
 
-            raw = os.read(fd, 1048577)
+            descriptor_bytes = os.read(descriptor_fd, 1048577)
         finally:
-            os.close(fd)
+            os.close(descriptor_fd)
     except OSError:
         raise CampaignError("Cannot open the selected private fixture descriptor.") from None
 
-    if len(raw) > 1048576:
+    if len(descriptor_bytes) > 1048576:
         raise CampaignError("Private fixture descriptor exceeds its byte limit.")
 
     try:
-        decoded = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs,
-                             parse_constant=_bad_constant)
+        descriptor_document = json.loads(
+            s=descriptor_bytes.decode("utf-8"),
+            object_pairs_hook=_pairs,
+            parse_constant=_bad_constant,
+        )
     except (UnicodeError, ValueError, RecursionError):
         raise CampaignError("Fixture descriptor must be unique-key UTF-8 JSON.") from None
 
-    if type(decoded) is not dict:
+    if type(descriptor_document) is not dict:
         raise CampaignError("Fixture descriptor must be a JSON object.")
 
-    return decode(raw, fixture_id=decoded.get("fixtureId"))
+    return decode(descriptor_bytes, fixture_id=descriptor_document.get("fixtureId"))
 
 
-def _compose(docker, project):
+def _compose(docker, compose_project):
     """Select only Conix's disposable SQL/test Compose project."""
     return (
         "compose", "--env-file", "/dev/null", "--project-directory", str(ROOT),
-        "-p", project, "-f", str(ROOT / "compose/test-pay-to-play.yml"),
+        "-p", compose_project, "-f", str(ROOT / "compose/test-pay-to-play.yml"),
     )
 
 
-def _json_request(descriptor, state):
+def _json_request(descriptor, prior_phase_receipt):
     """Pass private fixture keys through stdin, never argv or environment."""
-    return (json.dumps({"descriptor": descriptor, "state": state}, separators=(",", ":")) + "\n").encode()
+    return (json.dumps({"descriptor": descriptor, "state": prior_phase_receipt}, separators=(",", ":")) + "\n").encode()
 
 
 class PayToPlayTest:
