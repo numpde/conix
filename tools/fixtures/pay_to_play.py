@@ -336,23 +336,23 @@ class PayToPlayTest:
     def __init__(self, docker, runner_image, scratch, descriptor):
         self.docker = docker
         self.runner_image = runner_image
-        self.scratch = scratch
-        self.descriptor = descriptor
+        self.scratch_dir = scratch
+        self.fixture_descriptor = descriptor
         self.fixture_id = descriptor["fixtureId"]
-        self.project = "conix-test-" + secrets.token_hex(6)
+        self.sql_project = "conix-test-" + secrets.token_hex(6)
         self.sql_started = False
         self.sql_retired = True
         self.consumer_retired = True
-        self.env = None
+        self.compose_environment = None
 
     def _file(self, name):
-        return self.scratch / name
+        return self.scratch_dir / name
 
     def check_new_sql_project(self):
         """Refuse to adopt or destroy any pre-existing Compose project assets."""
         for kind in ("container", "network", "volume"):
             args = [kind, "ls", "--quiet", "--filter",
-                    "label=com.docker.compose.project=" + self.project]
+                    "label=com.docker.compose.project=" + self.sql_project]
             if kind == "container":
                 args.insert(2, "--all")
 
@@ -368,16 +368,16 @@ class PayToPlayTest:
         self.docker.require_role(self.runner_image, "evm-test-runner")
         self.docker.require_image(images["postgres"])
 
-        self.env = self.docker.docker_environment.copy()
-        self.env.update(
+        self.compose_environment = self.docker.docker_environment.copy()
+        self.compose_environment.update(
             CONIX_EVM_TEST_RUNNER_IMAGE=self.runner_image,
             CONIX_POSTGRES_IMAGE=images["postgres"],
             CONIX_FIXTURE_ID=self.fixture_id,
-            CONIX_RPC_NETWORK=self.descriptor["dockerNetwork"],
+            CONIX_RPC_NETWORK=self.fixture_descriptor["dockerNetwork"],
         )
-        compose = _compose(self.docker, self.project)
+        compose = _compose(self.docker, self.sql_project)
         rendered_json = self.docker.run(*compose, "config", "--format", "json",
-                                        capture=True, timeout=20, env=self.env)
+                                        capture=True, timeout=20, env=self.compose_environment)
         try:
             rendered = json.loads(rendered_json)
         except ValueError:
@@ -385,7 +385,7 @@ class PayToPlayTest:
 
         admit(
             rendered, runner_image=self.runner_image,
-            postgres_image=images["postgres"], rpc_network=self.descriptor["dockerNetwork"],
+            postgres_image=images["postgres"], rpc_network=self.fixture_descriptor["dockerNetwork"],
         )
         self.check_new_sql_project()
 
@@ -394,7 +394,7 @@ class PayToPlayTest:
         _progress("Disposable PostgreSQL: starting")
         self.docker.run(*compose, "up", "--detach", "--no-build", "--pull", "never",
                         "--wait", "--wait-timeout", "60", "postgres",
-                        env=self.env, timeout=90)
+                        env=self.compose_environment, timeout=90)
         _progress("Disposable PostgreSQL: ready")
 
         self._phase("bootstrap", "bootstrap", state=None, need_receipt=False)
@@ -402,11 +402,11 @@ class PayToPlayTest:
 
     def _phase(self, service, phase, *, state, need_receipt):
         """Run the installed fixture phase and admit only its checked receipt."""
-        argv = list(self.docker.docker_command_prefix) + list(_compose(self.docker, self.project)) + [
+        argv = list(self.docker.docker_command_prefix) + list(_compose(self.docker, self.sql_project)) + [
             "run", "--rm", "--no-deps", "--pull", "never", "-T",
             service, *([] if phase == "bootstrap" else [phase]),
         ]
-        payload = _json_request(self.descriptor, state) if phase != "bootstrap" else None
+        payload = _json_request(self.fixture_descriptor, state) if phase != "bootstrap" else None
         self.consumer_retired = False
 
         try:
@@ -414,7 +414,7 @@ class PayToPlayTest:
                 argv,
                 output=self._file("conix-" + phase + ".out"),
                 error_file=self._file("conix-" + phase + ".err"),
-                env=self.env, timeout=180 if phase in ("collected", "reorg") else 75,
+                env=self.compose_environment, timeout=180 if phase in ("collected", "reorg") else 75,
                 payload=payload, label=f"Conix phase/{phase}",
             )
             self.consumer_retired = True
@@ -446,7 +446,7 @@ class PayToPlayTest:
         """Run all phases without acquiring or retiring the dapp32 fixture."""
         # The fixture is borrowed, but its chain state is changed deliberately
         # by the scenario's transactions and reorganization tests.
-        verify_network(self.docker, self.descriptor)
+        verify_network(self.docker, self.fixture_descriptor)
         self.sql()
 
         previous_receipt = None
@@ -467,9 +467,9 @@ class PayToPlayTest:
             return []
 
         try:
-            self.docker.run(*_compose(self.docker, self.project),
+            self.docker.run(*_compose(self.docker, self.sql_project),
                 "down", "--volumes", "--remove-orphans", "--timeout", "30",
-                env=self.env, timeout=100)
+                env=self.compose_environment, timeout=100)
             self.sql_retired = True
             self.consumer_retired = True
             return []
@@ -478,7 +478,7 @@ class PayToPlayTest:
             return [f"Conix SQL/consumer teardown failed: {detail}; ownership unconfirmed."]
 
     def recovery(self):
-        return (f"Borrowed fixture ID={self.fixture_id}; Conix project={self.project}; "
+        return (f"Borrowed fixture ID={self.fixture_id}; Conix project={self.sql_project}; "
                 "no rights to remove or replace the producer fixture; "
                 f"selected Engine={self.docker.endpoint}.")
 
@@ -488,27 +488,27 @@ class Campaign:
 
     def __init__(self, docker, context, sibling, runner_image, scratch):
         self.docker = docker
-        self.context = context
-        self.sibling = sibling
+        self.context_name = context
+        self.sibling_checkout_path = sibling
         self.runner_image = runner_image
-        self.scratch = scratch
+        self.scratch_dir = scratch
         self.fixture_id = "conix-" + secrets.token_hex(6)
-        self.descriptor = None
+        self.fixture_descriptor = None
         self.producer_owned = False
         self.creation_attempted = False
-        self.test = None
+        self.consumer_test = None
 
     def _file(self, name):
-        return self.scratch / name
+        return self.scratch_dir / name
 
     def _dapp32(self, action):
         if action not in ("up", "info", "down"):
             raise CampaignError("Unknown producer fixture lifecycle action.")
 
         return owned_command(
-            ["make", "--silent", "--no-print-directory", "-C", str(self.sibling),
+            ["make", "--silent", "--no-print-directory", "-C", str(self.sibling_checkout_path),
              "pay-to-play/local/fixture/" + action,
-             "DOCKER_CONTEXT=" + self.context,
+             "DOCKER_CONTEXT=" + self.context_name,
              "FIXTURE_ID=" + self.fixture_id],
             output=self._file("producer-" + action + ".out"),
             error_file=self._file("producer-" + action + ".err"),
@@ -533,18 +533,18 @@ class Campaign:
         if inspected != descriptor:
             raise CampaignError("Producer fixture changed between creation and independent inspection.")
 
-        self.descriptor = descriptor
+        self.fixture_descriptor = descriptor
         self.producer_owned = True
 
     def execute(self):
         self.acquire()
-        self.test = PayToPlayTest(self.docker, self.runner_image, self.scratch, self.descriptor)
-        self.test.execute()
+        self.consumer_test = PayToPlayTest(self.docker, self.runner_image, self.scratch_dir, self.fixture_descriptor)
+        self.consumer_test.execute()
 
     def cleanup(self):
         """Retire consumers before the producer; report uncertain ownership."""
-        errors = self.test.cleanup() if self.test is not None else []
-        consumers_retired = self.test is None or (self.test.sql_retired and self.test.consumer_retired)
+        errors = self.consumer_test.cleanup() if self.consumer_test is not None else []
+        consumers_retired = self.consumer_test is None or (self.consumer_test.sql_retired and self.consumer_test.consumer_retired)
 
         if self.producer_owned and consumers_retired:
             try:
@@ -554,7 +554,7 @@ class Campaign:
                 detail = str(error) if isinstance(error, CampaignError) else type(error).__name__
                 errors.append(f"dapp32 producer fixture/down failed: {detail}; ownership unconfirmed.")
 
-        if self.producer_owned or (self.creation_attempted and self.descriptor is None):
+        if self.producer_owned or (self.creation_attempted and self.fixture_descriptor is None):
             errors.append(
                 "Inspect the original dapp32 fixture ID on the selected Engine; "
                 "creation/retirement ownership cannot be inferred from its name."
@@ -564,12 +564,12 @@ class Campaign:
 
     def recovery(self):
         """Give exact operator coordinates without reproducing private JSON."""
-        sql = self.test.project if self.test is not None else "none"
+        sql = self.consumer_test.project if self.consumer_test is not None else "none"
         return (
             f"Producer fixture ID={self.fixture_id}; Conix project={sql}; "
-            f"Docker context={self.context}; selected Engine={self.docker.endpoint}. "
-            f"Inspect: make -C {self.sibling} pay-to-play/local/fixture/info "
-            f"DOCKER_CONTEXT={self.context} FIXTURE_ID={self.fixture_id}. "
+            f"Docker context={self.context_name}; selected Engine={self.docker.endpoint}. "
+            f"Inspect: make -C {self.sibling_checkout_path} pay-to-play/local/fixture/info "
+            f"DOCKER_CONTEXT={self.context_name} FIXTURE_ID={self.fixture_id}. "
             "Retire with the sibling's fixture/down only after verifying creation "
             "ownership and retirement of every consumer."
         )

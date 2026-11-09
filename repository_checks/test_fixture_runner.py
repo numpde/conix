@@ -178,7 +178,7 @@ class FixtureRunnerTests(unittest.TestCase):
                 campaign.acquire()
             self.assertEqual(actions, ["up", "info"])
             self.assertTrue(campaign.producer_owned)
-            self.assertEqual(campaign.descriptor, document)
+            self.assertEqual(campaign.fixture_descriptor, document)
 
     def test_wrong_descriptor_does_not_grant_cleanup_ownership(self):
         with tempfile.TemporaryDirectory() as path:
@@ -191,7 +191,7 @@ class FixtureRunnerTests(unittest.TestCase):
                 with self.assertRaises(FixtureError):
                     campaign.acquire()
             self.assertFalse(campaign.producer_owned)
-            self.assertIsNone(campaign.descriptor)
+            self.assertIsNone(campaign.fixture_descriptor)
 
     def test_project_name_is_not_sufficient_cleanup_ownership(self):
         with tempfile.TemporaryDirectory() as path:
@@ -219,14 +219,14 @@ class FixtureRunnerTests(unittest.TestCase):
                 docker, "agentic", Path(path), "sha256:" + "a" * 64, Path(path),
             )
             campaign.producer_owned = True
-            campaign.descriptor = descriptor_for(campaign.fixture_id)
+            campaign.fixture_descriptor = descriptor_for(campaign.fixture_id)
             borrowed = runner.PayToPlayTest(
-                docker, campaign.runner_image, Path(path), campaign.descriptor,
+                docker, campaign.runner_image, Path(path), campaign.fixture_descriptor,
             )
             borrowed.sql_started = True
             borrowed.sql_retired = False
-            borrowed.env = {}
-            campaign.test = borrowed
+            borrowed.compose_environment = {}
+            campaign.consumer_test = borrowed
             down = []
             def producer(action):
                 down.append(action)
@@ -244,14 +244,14 @@ class FixtureRunnerTests(unittest.TestCase):
                 docker, "agentic", Path(path), "sha256:" + "a" * 64, Path(path)
             )
             campaign.producer_owned = True
-            campaign.descriptor = descriptor_for(campaign.fixture_id)
+            campaign.fixture_descriptor = descriptor_for(campaign.fixture_id)
             borrowed = runner.PayToPlayTest(
-                docker, campaign.runner_image, Path(path), campaign.descriptor,
+                docker, campaign.runner_image, Path(path), campaign.fixture_descriptor,
             )
             borrowed.sql_started = True
             borrowed.sql_retired = False
-            borrowed.env = {}
-            campaign.test = borrowed
+            borrowed.compose_environment = {}
+            campaign.consumer_test = borrowed
             with patch.object(docker, "run", side_effect=runner.OperationError("uncertain")), patch.object(
                 campaign, "_dapp32"
             ) as producer:
@@ -308,7 +308,7 @@ class FixtureRunnerTests(unittest.TestCase):
                 "sha256:" + "a" * 64, Path(directory),
             )
             campaign.creation_attempted = True
-            campaign.descriptor = None
+            campaign.fixture_descriptor = None
             campaign.producer_owned = False
             with patch.object(campaign, "_dapp32") as producer:
                 self.assertTrue(campaign.cleanup())
@@ -350,7 +350,7 @@ class FixtureRunnerTests(unittest.TestCase):
                 FakeDocker(), "sha256:" + "a" * 64, Path(directory),
                 descriptor_for("conix-abcdef123456"),
             )
-            fixture.env = {}
+            fixture.compose_environment = {}
             fixture.docker.docker_command_prefix = ["docker"]
 
             def failed(_argv, *, error_file, **_kwargs):
