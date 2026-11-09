@@ -454,6 +454,394 @@ contract address, topic0 and blockHash, then verify historical
 contract state at several depths. This qualifies individual
 endpoints; it is not part of Conix's generic Tier-0 implementation.
 
+
+8. T0-0 public contract — frozen choices for first generic implementation
+--------------------------------------------------------------------------
+
+This section resolves the remaining T0-0 design choices. It is normative for
+the NEW implementation; it is not a statement that the code exists. Earlier
+"illustrative"/"proposed" wording above yields to these specific choices.
+The existing package in src/conix remains a disposable PayToPlay prototype.
+
+8.1. Configuration and admission
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+ONE TOML document (schema version 1) with exactly:
+    version
+    [chain] chain_id, genesis_hash, start_block, rpc_url
+    [contracts.<alias>] address, abi_file, events
+    [database] dsn_file, runtime_role
+    [limits] rpc_timeout_seconds, operation_timeout_seconds,
+             max_response_bytes, max_connections, max_page_size,
+             max_evidence_blocks, max_logs_per_block, max_abi_bytes,
+             max_abi_nesting, max_abi_elements
+
+The following is a COMPLETE form, aside from real hashes/addresses/paths:
+
+    version = 1
+
+    [chain]
+    chain_id = 31337
+    genesis_hash = "0x<exactly 64 lowercase hex digits>"
+    start_block = 1
+    rpc_url = "http://anvil:8545"
+
+    [contracts.payment]
+    address = "0x<40 hex digits>"
+    abi_file = "abi/PayToPlay.json"
+    events = ["VoucherCollected(address,uint256,address,uint256,uint256,bytes32)"]
+
+    [contracts.erc20]
+    address = "0x<another 40 hex digits>"
+    abi_file = "abi/ERC20.json"
+    events = ["Transfer(address,address,uint256)"]
+
+    [database]
+    dsn_file = "/run/conix/connection.dsn"
+    runtime_role = "conix_runtime"
+
+    [limits]
+    rpc_timeout_seconds = 5
+    operation_timeout_seconds = 30
+    max_response_bytes = 1048576
+    max_connections = 4
+    max_page_size = 100
+    max_evidence_blocks = 64
+    max_logs_per_block = 10000
+    max_abi_bytes = 1048576
+    max_abi_nesting = 8
+    max_abi_elements = 4096
+
+The TOML file has a 64 KiB maximum, must decode as UTF-8 and must have
+unique, exactly admitted keys. Contract aliases match [a-z][a-z0-9_]{0,63}.
+Require 1..32 contracts, 1..256 distinct selected events over the complete
+catalog, one start_block and one chain. Require chain_id and start_block to
+be ordinary Python integers in [0, 2^63-1], never bool. Addresses are 20-byte
+hex; accept lowercase or a valid EIP-55 mixed-case checksum, reject invalid
+mixed case, and normalize internally to bytes. All returned public addresses
+use EIP-55 checksum display. Genesis is 32 bytes, lowercase hex in TOML.
+No default or ambient chain, database, RPC, credential, limit or Docker Engine.
+
+The rpc_url is an absolute http(s) URL with a host and no userinfo or fragment.
+Do not log it or embed it in source identity. Operator policy separately
+authorizes the network and private credential handling. In particular, a
+proxy that excludes eth_call cannot be silently bypassed for historical reads.
+
+ABI input is one JSON array per contract, read only from an explicit local
+regular file. Relative abi_file resolves relative to the TOML file directory;
+absolute paths are admitted under the explicitly staged input authority.
+Reject symlink files and ancestor traversal, network fetches, duplicate JSON
+members, malformed UTF-8, unmatched event signatures, duplicate declarations
+and ABI size overflows. Read and freeze each ABI as an immutable snapshot
+BEFORE opening RPC or database sessions; later disk edits cannot change a
+live session's descriptors. File formatting, unrelated ABI events, mutating
+functions and ABI entry ordering are not event-history changes. Selected
+events and all readable view/pure functions are validated at preparation.
+No selection/configuration-defined ABI type system exists.
+
+A single catalog selects each deployed ADDRESS exactly once, regardless of
+alias. Reject overlapping selectors and ambiguous same-contract topic0
+layouts. ERC-20 and ERC-721 may share topic0 on DIFFERENT addresses, with
+different indexed argument layouts.
+
+8.2. Source identity, catalog changes and handles
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Construct source_id as SHA-256 of this canonical logical event-selection
+document, not of raw ABI files, operator aliases, RPC URLs or TOML bytes:
+
+    schema = "conix.source.v1"
+    chain_id = canonical base-10 integer string
+    genesis_hash = lowercase 0x-prefixed 32-byte hex
+    start_block = canonical base-10 integer string
+    events = sorted list, ordered by address bytes then event signature
+
+Each event record includes 20-byte normalized emitting address, canonical
+event signature, anonymous=false and the FULL positional input layout:
+canonical ABI type tree (including tuple/array component shapes), original
+input name (including empty or duplicate names) and indexed boolean.
+The serialized document uses UTF-8 JSON, lexicographically sorted object
+keys, no insignificant whitespace and ASCII escapes for non-ASCII names.
+Byte values use lowercase hex, numbers in the document are decimal strings.
+There is no unstable hash of Python dictionaries, file mtimes or JSON source
+order. Every component of this encoding has literal input/output tests.
+
+source_id is the database's history authority. Selected ABI event name/type,
+indexed flags, contract address, origin or chain identity changes REQUIRE
+fresh history; no in-place extension of a previously complete prefix.
+Changing ABI JSON whitespace, unselected event declarations, RPC endpoint,
+credentials, local alias, runtime limits or available view/pure functions
+does NOT require a rebuild. Reader aliases and view/pure descriptors live in
+a separately identified immutable read catalog; their changes may reject an
+old query handle, but may not change retained event-history identity.
+
+A running worker checks the durable source_id at startup and before any
+publication. A source mismatch is an error, not a reason to initialize a
+second owner schema or silently drop old data.
+
+8.3. Public Python surface and exact value rules
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Keep one installed Python distribution. These module/function names form the
+first generic contract, not implementation-stub extension points:
+
+    from conix.catalog import prepare_catalog
+    from conix.abi import compile_event, decode_event, encode_indexed_filter
+    from conix.core import open_writer
+    from conix.reader import open_reader
+
+    catalog = prepare_catalog(config_path)       # sync, offline, no RPC/DB
+
+    async with open_writer(
+        catalog=catalog,
+        database_dsn=runtime_dsn,
+        rpc_url=selected_rpc_url,
+    ) as writer:
+        result = await writer.advance_one()       # at most one complete block
+
+    async with open_reader(
+        catalog=catalog,
+        database_dsn=reader_dsn,
+        rpc_url=selected_rpc_url,
+    ) as reader:
+        checkpoint = await reader.checkpoint()    # Checkpoint | None
+        page = await reader.events(
+            checkpoint=checkpoint,
+            contract="payment",
+            event="VoucherCollected(address,uint256,address,uint256,uint256,bytes32)",
+            where={"customer": customer, "channelId": channel_id},
+            cursor=None,
+            limit=100,
+        )
+        value = await reader.call(
+            checkpoint=checkpoint,
+            contract="payment",
+            function="viewPosition(address,uint256,address)",
+            arguments=(customer, channel_id, actor),
+        )
+        facts = await reader.evidence(
+            checkpoint=checkpoint, block_numbers=(100, 105),
+            include_finalized=True,
+        )
+
+The caller explicitly owns both context managers; neither may select a
+different RPC endpoint, database, Docker context, or implicit credentials.
+The owner-only initialize(owner_dsn, catalog) is a separate one-shot
+administrative API; writer and reader cannot create or alter schema.
+The checked manual repair_to(ancestor identity) is exclusively a writer
+operation, fenced by source generation/revision, and never automated in Tier 0.
+A timed-out run must retire its owned sessions; a blocked state stops instead
+of quietly retrying.
+
+Public immutable values, in meaning rather than incidental field ordering:
+
+  Block(number: int, hash: bytes32, parent_hash: bytes32, timestamp: int)
+  Checkpoint(source_id: bytes32, generation: UUID, history_start: int,
+             block: Block, revision: int)
+  Event(contract: alias, event: canonical signature, address: EIP55 string,
+        block: Block, transaction_hash: bytes32, transaction_index: int,
+        log_index: int, topics: tuple[bytes32, ...], data: bytes,
+        values: tuple[typed ABI values, ...])
+  IndexedHash(topic: bytes32)    # NOT a decoded dynamic original value
+  EventPage(checkpoint: Checkpoint, history_start: int,
+            events: tuple[Event, ...], next_cursor: Cursor | None,
+            complete: bool)
+  CanonicalEvidence(checkpoint: Checkpoint, blocks: tuple[Block, ...],
+                    finalized: Block | None, finalized_status: known/unknown)
+
+Return exact Python int (not bool), EIP-55 address str, bool, immutable bytes,
+UTF-8 str and recursively nested tuples for tuples/arrays. Unnamed arguments
+retain their original POSITION. Provide exact names only when unique.
+For indexed dynamic/array/tuple values, return IndexedHash wrapping the exact
+32-byte topic. Do not compare it with, or masquerade it as, an ABI preimage.
+Callable view/pure results are tuples even for one return; a tuple-valued
+return is nested inside that outer tuple. No additional PayToPlay Position
+model, balance computation or consumer validation lives here.
+
+compile_event takes a selected ABI event declaration (without network or
+database), returns a complete descriptor and rejects ambiguity/cap breaches.
+decode_event(descriptor, topics, data) yields a positional tuple.
+encode_indexed_filter(descriptor, field_name, Python value) yields exactly
+one 32-byte topic. It is restricted to uniquely named indexed static scalar
+fields. No adapter can silently accept an array/hash/name ambiguity.
+
+8.4. ABI admitted/rejected combinations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The machine-readable type matrix is tests/fixtures/abi/support_matrix.json.
+Qualify every accepted operation; do not infer support from a library having
+a decoder for a shape. Included families:
+
+  uint8..uint256 and int8..int256, multiples of 8;
+  address, bool, bytes1..bytes32;
+  dynamic bytes, string, fixed/dynamic arrays and tuples recursively.
+
+Only indexed uint/int, address, bool and bytesN have typed SQL topic equality.
+Indexed bytes/string/arrays/tuples are accepted as hashed ABI topics, never as
+recoverable values and never as scalar equality-filter candidates. All admitted
+families support nonindexed events and view/pure inputs/outputs within bounds.
+Reject function and fixed/ufixed ABI value families for first release, as
+well as malformed arrays, anonymous events and invalid UTF-8.
+
+Compile canonical argument shapes and verify every entry's indexing layout.
+Reject too many indexed arguments (>3 for nonanonymous events), wrong topic
+count, invalid 32-byte padding, uint/int range/sign extension violations,
+invalid bool words, bad dynamic offset graphs, overlapping/trailing tails,
+noncanonical ABI encoding, integer supplied as bool, wrong tuple dimensions
+or output shape, and unrecognized/ambiguous overload selection.
+No float coercion, automatic integer truncation, string-to-bytes conversion,
+normalization of ABI argument names or data-dependent SQL column names.
+
+8.5. Complete-block publisher and SQL ownership
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Store only source_progress, blocks and events in NEW owner-controlled tables.
+Every block from origin through checkpoint is represented in blocks even if
+it contains no selected events. The events table retains exact emitting
+address, all original topic words (missing topic slots NULL), original data
+BYTEA, block/transaction hashes, indices and validated log occurrence.
+Uniqueness is by block identity + block-global log_index, NOT transaction hash
+and NOT an invented per-contract event sequence. Selected log indices may
+have gaps when unrelated events occur in the same block.
+
+One advance_one() acquires an exclusive writer and checked durable basis;
+fetches exactly one block's header and EVERY configured address/topic0 via
+eth_getLogs(blockHash), checks full result envelopes, IDs, order, duplicates,
+ABI validity, continuity and canonicality, and commits events + block +
+checkpoint atomically with a generation/revision compare-and-swap.
+No RPC during SQL transactions. A failed selected query publishes NOTHING,
+even if all others return an empty array. At the tip, the retained hash
+is checked against the live canonical branch. Unknown COMMIT retires the
+writer and requires a fresh durable-state inspection next explicit run.
+
+Dedicated PostgreSQL identities, provisioned externally:
+  conix_owner:  non-superuser schema owner, only explicit install DDL;
+  conix_runtime:  restricted DML to own journal, no CREATE/TRUNCATE/DDL;
+  conix_reader:  SELECT-only on the journal, no DML/DDL.
+
+Grant no ledger or other application-schema access. Runtime and reader DSNs
+are distinct private inputs; owner credential never enters normal worker or
+reader. Initial schema is created on an empty explicitly selected database,
+not silently migrated from prototype collections. A reader uses REPEATABLE
+READ or equivalent consistent snapshot, validates source/generation/blocked
+status before and after the page, and never allows a repair/rebuild to rebind
+old handles. Any RPC read is pinned to the selected checkpoint block hash
+and rechecks durable generation/branch afterward.
+
+8.6. Filtering, pages, calls and evidence
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The where mapping is equality-only on uniquely named indexed static scalar
+arguments, validated and topic-encoded BEFORE SQL. Compare bytes in one of
+topic1/topic2/topic3, including topic2-only and topic3-only predicates.
+Filters use a canonical ordered list of argument ordinal + exact topic bytes,
+independent of user dict insertion order. No OFFSET, SQL expression language,
+Python post-filter that can miss pages, or unindexed-field scan fallback.
+
+Order pages by (block_number, transaction_index, log_index). Cursors use an
+opaque, bounded, fully checked representation binding source_id, generation,
+exact event identity/alias, canonical filters, selected checkpoint number/hash,
+and last returned occurrence. A continuation may use only the SAME selected
+checkpoint. An append preserves an older checkpoint's usable complete prefix;
+a repair/rebuild invalidates all old-generation cursors, including A->B->A.
+complete=True means no further matching selected events up through THIS
+checkpoint; next_cursor is None then. A zero-match complete page proves only
+no matching selected events within [history_start, checkpoint].
+
+Historical calls invoke EIP-1898 eth_call with
+{"blockHash": checkpoint.block.hash, "requireCanonical": true}.
+They MUST NOT fall back to latest or silently change to block-number pinning.
+Reject absent historical state, missing code at that checkpoint, reverted
+calls, noncanonical output data and unsupported block-hash selectors. These
+are availability errors independent of the completeness of stored logs.
+Evidence includes identified block ancestry plus optional provider-reported
+finalized ancestry; unavailable finality is UNKNOWN, not a proven fork and
+not independently established consensus.
+
+8.7. Hard limits and rejection policy
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+All configured limit values are required; each also has a fixed code ceiling:
+
+  rpc_timeout_seconds       0 < value <= 60
+  operation_timeout_seconds 0 < value <= 300
+  max_response_bytes        1 .. 4194304
+  max_connections           1 .. 32
+  max_page_size             1 .. 500
+  max_evidence_blocks       1 .. 64
+  max_logs_per_block        1 .. 10000
+  max_abi_bytes             1 .. 1048576  (per ABI file or encoded payload)
+  max_abi_nesting           1 .. 8
+  max_abi_elements          1 .. 4096     (per decoded array)
+
+The fixed aggregate raw-event cap for one candidate block is 8 MiB; at most
+8 MiB total ABI-file bytes are admitted in one prepared catalog. The scanner
+does not stream unbounded RPC results or allocate a decoded array based solely
+on an untrusted ABI length. One block transaction and every SQL operation
+has an explicit bounded deadline. Exhaustion is an UNAVAILABLE operation,
+never evidence of an empty selected history.
+
+Failure categories are public, stable, typed and scrubbed of source payloads:
+
+  ConfigurationError        invalid/inconsistent local catalog
+  UnsupportedABI            unsupported/ambiguous ABI at admission
+  InvalidCallerValue        wrong Python value for an admitted ABI descriptor
+  RpcUnavailable            timeout/transport/upstream availability
+  RpcProtocolError          malformed/contradictory provider evidence
+  BranchConflict            retained history versus observed canonical branch
+  HistoryUnavailable        missing, blocked or invalidated complete prefix
+  CursorInvalid             mismatched/retired cursor or checkpoint
+  HistoricalCallUnavailable unavailable/reverted/unsupported pinned eth_call
+  ResourceExceeded          admissible input exceeds an explicit budget
+  WriterBusy                concurrent writer lock denied
+  CommitOutcomeUnknown      PostgreSQL COMMIT confirmation lost; stop safely
+  StorageUnavailable        durable SQL operation could not be proven complete
+
+Do not expose upstream response text, credentials or raw call inputs in public
+exceptions. Preserve original error cause/phase privately; cleanup outcomes
+are reported separately and the primary failure remains LAST. A simple
+ordinary RPC failure must not be silently retried under a stronger claim.
+
+8.8. Executable acceptance and current gaps
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Test data from commit C:
+  tests/fixtures/abi/{erc20,erc721,pay_to_play,compound}.json
+  tests/fixtures/abi/support_matrix.json
+  tests/abi_golden_vectors.py, tests/abi_contract_vectors.py
+  tests/test_abi_contract_fixtures.py
+
+The declarations are minimal supported slices, with PayToPlay
+VoucherCollected and viewPosition field order grounded in actual dapp32
+Solidity. The literal event/call encodings were assembled independently of
+Conix and checked by a separately maintained eth_abi codec. A fixture test
+passing proves only the fixture oracle, NOT generic Conix support.
+
+Test harness from commit D:
+  test/indexer/acceptance/run         (borrowed validated dapp32 fixture)
+  campaign/indexer/acceptance/run     (owned dapp32 fixture lifecycle)
+  tests/generic_acceptance.py        (installed-image phases)
+
+The opt-in gate obtains public genesis via a genuine RPC-connected Anvil
+consumer, initializes via separate owner-only identity, and invokes named
+installed-code checks under a restricted runtime identity. It deliberately
+fails at catalog import until the new code exists. This is not a skipped test
+and the old prototype has no compatibility fallback. The legacy PayToPlay
+campaign must remain separate during replacement.
+
+Still REQUIRED beyond today's acceptance skeleton before T0-6 release:
+  - real-PostgreSQL restricted SELECT-only reader role and concurrent repair;
+  - full compound ABI property/canonical-error matrix, seeded regressions;
+  - actual ERC-20 AND ERC-721 on-chain emissions;
+  - signed PayToPlay collection + customer/channel filtered history;
+  - restart, unknown COMMIT, real multi-contract reorg and manual repair;
+  - SQL filtered-query plans, sparse pages and bounded-work measurements;
+  - rootless Engine proof, isolated egress, cancellation and teardown.
+
+Do not mark generic T0-0 or later stages qualified simply because the old
+PayToPlay tests are green. The installed-source inventory MUST include every
+tracked ABI fixture, rather than dropping JSON from the curated Docker context.
+
 Last line
 ---------
 
