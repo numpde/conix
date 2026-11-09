@@ -160,8 +160,32 @@ async def _send(chain, sender, signature, types=(), arguments=(), *, value=0):
             transaction["value"] = hex(value)
         tx_hash = data(await rpc.call("eth_sendTransaction", [transaction]), "transaction hash", size=32)
         mined = await rpc.call("eth_getTransactionReceipt", ["0x" + tx_hash.hex()])
-        if type(mined) is not dict or mined.get("status") != "0x1" or mined.get("transactionHash", "").lower() != ("0x" + tx_hash.hex()):
-            raise ScenarioFailure("Fixture transaction did not produce an exact successful receipt; do not resubmit blindly.")
+        action = signature.split("(", 1)[0]
+        if mined is None:
+            raise ScenarioFailure(
+                f"Fixture {action} has no mined receipt after submission; "
+                "outcome unknown; do not resubmit."
+            )
+        if type(mined) is not dict:
+            raise ScenarioFailure(
+                f"Fixture {action} receipt has an invalid shape; "
+                "outcome unknown; do not resubmit."
+            )
+        receipt_hash = mined.get("transactionHash")
+        if type(receipt_hash) is not str or receipt_hash.lower() != ("0x" + tx_hash.hex()):
+            raise ScenarioFailure(
+                f"Fixture {action} receipt names a different transaction; "
+                "outcome unknown; do not resubmit."
+            )
+        if mined.get("status") != "0x1":
+            used = mined.get("gasUsed")
+            gas = int(used, 16) if type(used) is str and used.startswith("0x") and len(used) < 20 else None
+            status = mined.get("status")
+            outcome = "reverted" if status == "0x0" else "unknown receipt status"
+            gas_detail = f"; gas used {gas} of {int(GAS, 16)}" if gas is not None else ""
+            raise ScenarioFailure(
+                f"Fixture {action} {outcome}{gas_detail}; do not resubmit."
+            )
         return mined
     finally:
         await rpc.call("anvil_stopImpersonatingAccount", [sender])
