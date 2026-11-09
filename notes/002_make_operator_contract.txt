@@ -67,6 +67,18 @@ campaign/pay-to-play/run            Obtain dapp32 fixture using its supported
                                     up/info API, execute exactly the same test,
                                     retire Conix SQL, then call dapp32 down
                                     only for a verified fixture we created.
+test/indexer/acceptance/run         Borrow an owned/verified dapp32 fixture
+                                    and run the opt-in generic-core installed
+                                    package gate. Own/retire only Conix SQL.
+campaign/indexer/acceptance/run     Create, verify and own dapp32 Anvil fixture;
+                                    run the SAME opt-in generic gate using
+                                    fresh PostgreSQL; retire SQL before fixture.
+                                    Deliberately RED until the generic core
+                                    exists; not part of ordinary prototype CI.
+The generic gate acquires genesis from the RPC-connected runtime consumer
+and passes only a bounded public source receipt to the DB-only schema owner.
+Never pass private accounts in argv, labels, logs or owner-only secrets to
+a runtime container.
 
 Selectors
 ---------

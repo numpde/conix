@@ -457,3 +457,39 @@ class FixtureRunnerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GenericAcceptanceOperatorContracts(unittest.TestCase):
+    """Opt-in acceptance must use the same contained, owned fixture boundary."""
+
+    def test_acceptance_entrypoint_overrides_only_the_test_program(self):
+        with tempfile.TemporaryDirectory() as path:
+            descriptor = descriptor_for("conix-abcdef123456")
+            docker = SimpleNamespace(docker_command_prefix=("docker",), docker_environment={})
+            consumer = runner.PayToPlayTest(
+                docker, "sha256:" + "a" * 64, Path(path), descriptor, acceptance=True,
+            )
+            consumer.compose_environment = {}
+            state = {
+                "schema": "conix.acceptance.preflight.v1",
+                "chainId": 31337, "genesisHash": "0x" + "ab" * 32,
+            }
+            with patch.object(runner, "owned_command", return_value=b"") as invoke:
+                consumer._phase("consumer", "baseline", prior_receipt=state, expect_receipt=False)
+            argv = invoke.call_args.args[0]
+            self.assertIn("--entrypoint", argv)
+            self.assertEqual(argv[argv.index("--entrypoint") + 1:], [
+                "python", "consumer", "-I", "/tests/generic_acceptance.py", "baseline",
+            ])
+            self.assertNotIn("pay_to_play_integration.py", argv)
+            self.assertNotIn("privateKey", str(argv))
+            self.assertTrue(consumer.consumer_retired)
+
+    def test_borrowed_acceptance_cannot_retire_a_producer(self):
+        with tempfile.TemporaryDirectory() as path:
+            consumer = runner.PayToPlayTest(
+                FakeDocker(), "sha256:" + "a" * 64, Path(path),
+                descriptor_for("conix-abcdef123456"), acceptance=True,
+            )
+            self.assertFalse(consumer.sql_started)
+            self.assertEqual(consumer.cleanup(), [])

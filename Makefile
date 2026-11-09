@@ -27,6 +27,7 @@ override export CONIX_MAKE_RPC_NETWORK := $(value RPC_NETWORK)
  image/indexer/build image/test-runner/build image/evm-test-runner/build \
  image/indexer/check image/evm-test-runner/check \
  test/postgres/run test/input-staging/run test/pay-to-play/run campaign/pay-to-play/run \
+ test/indexer/acceptance/run campaign/indexer/acceptance/run \
  deployment/inputs/create deployment/inputs/remove database/schema/initialize \
  deployment/config/check deployment/apply deployment/status deployment/remove
 
@@ -52,6 +53,9 @@ help:
 	  '  test/pay-to-play/run                        DOCKER_CONTEXT=agentic RUNNER_IMAGE=sha256:<id>' \
 	  '                                                FIXTURE_DESCRIPTOR=/absolute/private/fixture.json' \
 	  '  campaign/pay-to-play/run                    DOCKER_CONTEXT=agentic RUNNER_IMAGE=sha256:<id>' \
+	  '  test/indexer/acceptance/run                 DOCKER_CONTEXT=agentic RUNNER_IMAGE=sha256:<id>' \
+	  '                                                FIXTURE_DESCRIPTOR=/absolute/private/fixture.json' \
+	  '  campaign/indexer/acceptance/run             DOCKER_CONTEXT=agentic RUNNER_IMAGE=sha256:<id>' \
 	  '                                                DAPP32_DIR=/absolute/dapp32' \
 	  '  deployment/inputs/create                    DOCKER_CONTEXT=agentic INDEXER_IMAGE=sha256:<id>' \
 	  '                                                CONFIG_FILE=/absolute/config.toml DSN_FILE=/absolute/secret' \
@@ -95,5 +99,5 @@ deployment/config/check deployment/apply deployment/status deployment/remove:
 	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
 
 # The borrowed test never invokes dapp32's fixture lifecycle operations.
-test/pay-to-play/run campaign/pay-to-play/run:
+test/pay-to-play/run campaign/pay-to-play/run test/indexer/acceptance/run campaign/indexer/acceptance/run:
 	@python3 -m tools.fixtures.pay_to_play --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"

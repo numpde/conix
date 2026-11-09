@@ -132,3 +132,25 @@ class FixtureContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AcceptancePreflightContracts(unittest.TestCase):
+    """Public source preflight cannot smuggle credentials to schema owner."""
+
+    def test_exact_record_and_rejected_mutations(self):
+        from fixture_protocol import acceptance_preflight
+        safe = {
+            "schema": "conix.acceptance.preflight.v1",
+            "chainId": 31337,
+            "genesisHash": "0x" + "ab" * 32,
+        }
+        self.assertEqual(acceptance_preflight((json.dumps(safe) + "\n").encode(), chain_id=31337), safe)
+        for malformed in (
+            {**safe, "chainId": 1},
+            {**safe, "chainId": True},
+            {**safe, "privateKey": "unacceptable"},
+            {**safe, "genesisHash": "0x" + "aa" * 31},
+            {**safe, "genesisHash": 0},
+        ):
+            with self.subTest(record=malformed), self.assertRaises(FixtureError):
+                acceptance_preflight((json.dumps(malformed) + "\n").encode(), chain_id=31337)

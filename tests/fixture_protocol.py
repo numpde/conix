@@ -177,7 +177,7 @@ def receipt(raw: bytes):
 # nonsecret assertion messages, but never an upstream exception's raw value.
 # The campaign prints this verified record only after it has attempted cleanup.
 _FAILURE_PREFIX = b"CONIX_PHASE_FAILURE "
-_PHASES = frozenset({"initialize", "baseline", "collected", "restart", "reorg"})
+_PHASES = frozenset({"preflight", "initialize", "baseline", "collected", "restart", "reorg"})
 _PUBLIC_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.,:;()/'-]{0,239}\Z")
 _CATEGORY = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}\Z")
 _PRIVATE_MARKERS = ("privatekey", "postgresql:", "password", "secret", "://")
@@ -251,3 +251,22 @@ def parse_phase_failure(stderr: bytes, *, phase: str) -> str | None:
             return f"{record['category']}: {record['reason']}"
 
     return None
+
+
+def acceptance_preflight(raw: bytes, *, chain_id: int) -> dict:
+    """Admit only chain identity and observed genesis; never private fixture keys."""
+    if type(raw) is not bytes or not 0 < len(raw) <= 512 or len(raw.splitlines()) != 1:
+        raise FixtureError("Expected one bounded preflight JSON line.")
+    try:
+        result = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_bad_constant)
+    except (UnicodeError, ValueError, RecursionError):
+        raise FixtureError("Preflight result is invalid JSON.") from None
+    if (
+        type(result) is not dict or set(result) != {"schema", "chainId", "genesisHash"}
+        or result["schema"] != "conix.acceptance.preflight.v1"
+        or type(result["chainId"]) is not int or result["chainId"] != chain_id
+        or type(result["genesisHash"]) is not str
+        or KEY.fullmatch(result["genesisHash"]) is None
+    ):
+        raise FixtureError("Preflight has an invalid source identity or extra fields.")
+    return result

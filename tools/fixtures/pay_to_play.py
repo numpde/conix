@@ -25,7 +25,7 @@ from tools.containers.operator import (
 )
 
 sys.path.insert(0, str(ROOT / "tests"))
-from fixture_protocol import FixtureError, _bad_constant, _pairs, decode, parse_phase_failure, receipt
+from fixture_protocol import FixtureError, _bad_constant, _pairs, acceptance_preflight, decode, parse_phase_failure, receipt
 
 ID = re.compile(r"conix-[0-9a-f]{12}\Z")
 GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -333,7 +333,9 @@ def _json_request(descriptor, prior_phase_receipt):
 class PayToPlayTest:
     """Borrow the producer's Anvil; own only the disposable SQL/consumer project."""
 
-    def __init__(self, docker, runner_image, scratch, descriptor):
+    def __init__(self, docker, runner_image, scratch, descriptor, *, acceptance=False):
+        self.acceptance = acceptance
+        self.preflight_record = None
         self.docker = docker
         self.runner_image = runner_image
         self.scratch_dir = scratch
@@ -412,13 +414,30 @@ class PayToPlayTest:
         _progress("Disposable PostgreSQL: ready")
 
         self._phase("bootstrap", "bootstrap", prior_receipt=None, expect_receipt=False)
-        self._phase("initialize", "initialize", prior_receipt=None, expect_receipt=False)
+
+        if self.acceptance:
+            # The consumer can see RPC but not owner credentials. The owner
+            # receives only the validated PUBLIC genesis preflight.
+            self.preflight_record = self._phase(
+                "consumer", "preflight", prior_receipt=None, expect_receipt=True,
+            )
+            self._phase(
+                "initialize", "initialize",
+                prior_receipt=self.preflight_record, expect_receipt=False,
+            )
+        else:
+            self._phase("initialize", "initialize", prior_receipt=None, expect_receipt=False)
 
     def _phase(self, service_name, phase, *, prior_receipt, expect_receipt):
         """Run one installed fixture phase and admit its checked public receipt."""
+        runner_arguments = (
+            ["--entrypoint", "python", service_name, "-I", "/tests/generic_acceptance.py", phase]
+            if self.acceptance and phase != "bootstrap"
+            else [service_name, *([] if phase == "bootstrap" else [phase])]
+        )
         phase_argv = list(self.docker.docker_command_prefix) + list(_compose(self.docker, self.sql_project)) + [
             "run", "--rm", "--no-deps", "--pull", "never", "-T",
-            service_name, *([] if phase == "bootstrap" else [phase]),
+            *runner_arguments,
         ]
         phase_payload = _json_request(self.fixture_descriptor, prior_receipt) if phase != "bootstrap" else None
         self.consumer_retired = False
@@ -453,6 +472,9 @@ class PayToPlayTest:
         if not expect_receipt:
             return None
 
+        if self.acceptance and phase == "preflight":
+            return acceptance_preflight(phase_stdout, chain_id=self.fixture_descriptor["chainId"])
+
         phase_receipt = receipt(phase_stdout)
 
         if phase_receipt["phase"] != phase:
@@ -466,6 +488,13 @@ class PayToPlayTest:
         # transactions, then with a controlled reorganization.
         verify_network(self.docker, self.fixture_descriptor)
         self.prepare_sql()
+
+        if self.acceptance:
+            self._phase(
+                "consumer", "baseline",
+                prior_receipt=self.preflight_record, expect_receipt=False,
+            )
+            return
 
         prior_receipt = None
 
@@ -511,7 +540,8 @@ class PayToPlayTest:
 class Campaign:
     """Own a new dapp32 fixture and its Conix consumer until both are retired."""
 
-    def __init__(self, docker, context, sibling, runner_image, scratch):
+    def __init__(self, docker, context, sibling, runner_image, scratch, *, acceptance=False):
+        self.acceptance = acceptance
         self.docker = docker
         self.context_name = context
         self.sibling_checkout_path = sibling
@@ -564,7 +594,10 @@ class Campaign:
 
     def execute(self):
         self.acquire()
-        self.consumer_test = PayToPlayTest(self.docker, self.runner_image, self.scratch_dir, self.fixture_descriptor)
+        self.consumer_test = PayToPlayTest(
+            self.docker, self.runner_image, self.scratch_dir, self.fixture_descriptor,
+            acceptance=self.acceptance,
+        )
         self.consumer_test.execute()
 
     def cleanup(self):
@@ -614,7 +647,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--from-make", action="store_true")
     parser.add_argument("--origin", required=True)
-    parser.add_argument("action", choices=("test/pay-to-play/run", "campaign/pay-to-play/run"))
+    parser.add_argument("action", choices=(
+        "test/pay-to-play/run", "campaign/pay-to-play/run",
+        "test/indexer/acceptance/run", "campaign/indexer/acceptance/run",
+    ))
     parser.add_argument("--context")
     parser.add_argument("--dapp32-dir")
     parser.add_argument("--runner-image")
@@ -631,7 +667,8 @@ def main():
         if not IMAGE_ID.fullmatch(options.runner_image or ""):
             raise CampaignError("Select a prebuilt immutable RUNNER_IMAGE=sha256:<id> with role evm-test-runner.")
 
-        owns_producer = options.action == "campaign/pay-to-play/run"
+        owns_producer = options.action.startswith("campaign/")
+        acceptance = "/acceptance/" in options.action
 
         if owns_producer:
             sibling_checkout_path = sibling_checkout(options.dapp32_dir)
@@ -658,9 +695,15 @@ def main():
             os.chmod(receipt_directory, 0o700)
 
             campaign_operation = (
-                Campaign(docker, options.context, sibling_checkout_path, options.runner_image, receipt_directory)
+                Campaign(
+                    docker, options.context, sibling_checkout_path, options.runner_image,
+                    receipt_directory, acceptance=acceptance,
+                )
                 if owns_producer
-                else PayToPlayTest(docker, options.runner_image, receipt_directory, borrowed_descriptor)
+                else PayToPlayTest(
+                    docker, options.runner_image, receipt_directory, borrowed_descriptor,
+                    acceptance=acceptance,
+                )
             )
 
             primary_failure = None
@@ -685,8 +728,13 @@ def main():
             if primary_failure is None and not cleanup_failures:
                 shutil.rmtree(receipt_directory)
                 print(
-                    "PASS: PayToPlay collections, durable Conix indexing, "
-                    "separate-session restart and checked manual reorganization repair."
+                    (
+                        "PASS: Generic Tier-0 acceptance campaign against installed code, "
+                        "disposable PostgreSQL and real dapp32 Anvil."
+                        if acceptance else
+                        "PASS: PayToPlay collections, durable Conix indexing, "
+                        "separate-session restart and checked manual reorganization repair."
+                    )
                 )
                 return
 
