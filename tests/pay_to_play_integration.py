@@ -521,6 +521,7 @@ async def _reorg(journal, chain, observer, _descriptor, prior):
         await chain.rpc.call("evm_mine", [])
     else:
         raise ScenarioFailure("Replacement branch exceeded the bounded reorg fixture depth.")
+
     if await chain.canonical(old.block):
         raise ScenarioFailure("Fixture did not produce a different canonical block at the old height.")
 
@@ -605,6 +606,7 @@ def main():
         print(phase_failure_record(selected.phase, error).decode("ascii"),
               file=sys.stderr, flush=True)
         raise SystemExit(1) from None
+
     if summary is not None:
         print(json.dumps(summary, separators=(",", ":")), flush=True)
 

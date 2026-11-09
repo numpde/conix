@@ -75,6 +75,7 @@ def decode(raw: bytes, *, fixture_id: str):
         )
     except (UnicodeError, ValueError, RecursionError) as error:
         raise FixtureError("Fixture descriptor is not well-formed unique-key UTF-8 JSON.") from None
+
     if type(document) is not dict or set(document) != {
         "schema", "fixtureId", "composeProject", "dockerNetwork",
         "rpcUrl", "chainId", "contracts", "publicFixtureAccounts",
@@ -91,6 +92,7 @@ def decode(raw: bytes, *, fixture_id: str):
         or type(document["chainId"]) is not int or document["chainId"] != 31337
     ):
         raise FixtureError("Fixture source identity, network or RPC endpoint differs from the selected fixture.")
+
     # Names and ABI alone are not proof of a live deployment; the campaign
     # separately checks the producer network and actual RPC instance.
     contracts = document["contracts"]
@@ -119,6 +121,7 @@ def decode(raw: bytes, *, fixture_id: str):
         for item in event[0].get("inputs", [])
     ] != EVENT:
         raise FixtureError("Fixture VoucherCollected ABI does not match the indexed contract.")
+
     for (name, types) in FUNCTIONS.items():
         matches = [
             row for row in abi if row.get("type") == "function" and row.get("name") == name
@@ -136,6 +139,7 @@ def decode(raw: bytes, *, fixture_id: str):
             or not _address(item["address"]) or type(item["privateKey"]) is not str
             or KEY.fullmatch(item["privateKey"]) is None):
             raise FixtureError("Fixture test-account coordinates are malformed.")
+
     if len({value["address"].lower() for value in accounts.values()}) != 4:
         raise FixtureError("Fixture test-account addresses must be distinct.")
 
@@ -151,10 +155,12 @@ def receipt(raw: bytes):
         result = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs)
     except (ValueError, UnicodeError) as error:
         raise FixtureError("Phase receipt is invalid JSON.") from None
+
     if type(result) is not dict or set(result) != {
         "phase", "generation", "height", "block_hash", "collection_count", "snapshot",
     }:
         raise FixtureError("Phase receipt fields are missing or unexpected.")
+
     if (result["phase"] not in ("baseline", "collected", "restart", "reorg")
         or type(result["generation"]) is not str
         or not re.fullmatch(r"[0-9a-f-]{36}", result["generation"])
@@ -163,6 +169,7 @@ def receipt(raw: bytes):
         or not _uint(result["collection_count"])
         or type(result["snapshot"]) is not str or len(result["snapshot"]) > 80):
         raise FixtureError("Phase receipt contains invalid public checkpoint fields.")
+
     return result
 
 
@@ -242,4 +249,5 @@ def parse_phase_failure(stderr: bytes, *, phase: str) -> str | None:
             and _public_reason(record["reason"])
         ):
             return f"{record['category']}: {record['reason']}"
+
     return None
