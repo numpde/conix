@@ -111,6 +111,29 @@ class SharedWheelhouseContracts(unittest.TestCase):
             with self.assertRaises(pool.PoolError):
                 pool.has_tool(root, pin)
 
+    def test_omitting_one_tracked_test_from_stream_inventory_is_rejected(self):
+        """A successful CI build must not mean tests were left off the image."""
+        source_modules = sorted(
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "src" / "conix").rglob("*.py")
+        )
+        test_modules = sorted(
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "tests").rglob("*.py")
+        )
+        self.assertIn("tests/test_abi_type_safety.py", test_modules)
+        omitted = "tests/test_abi_type_safety.py"
+        reported_paths = (*source_modules, *(path for path in test_modules if path != omitted))
+        reported_bytes = ("\0".join(reported_paths) + "\0").encode("utf-8")
+
+        with patch.object(
+            pool.subprocess,
+            "run",
+            return_value=SimpleNamespace(stdout=reported_bytes),
+        ):
+            with self.assertRaises(pool.PoolError):
+                pool.source_allowlist(ROOT)
+
     def test_source_capture_is_exact_and_rejects_symlinks(self):
         sources = pool.source_allowlist(ROOT)
         selected = {item["destination"] for item in sources}
@@ -119,6 +142,12 @@ class SharedWheelhouseContracts(unittest.TestCase):
         self.assertIn("requirements/build.lock", selected)
         self.assertIn("src/conix/journal.py", selected)
         self.assertIn("tests/pay_to_play_integration.py", selected)
+        expected_tests = {
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "tests").rglob("*.py")
+        }
+        selected_tests = {name for name in selected if name.startswith("tests/")}
+        self.assertEqual(selected_tests, expected_tests)
         self.assertNotIn("tools/containers/operator.py", selected)
         self.assertNotIn("containers/wheelhouse/Dockerfile", selected)
         self.assertTrue(all(item["sha256"] == hashlib.sha256(Path(item["path"]).read_bytes()).hexdigest()
