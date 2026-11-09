@@ -52,7 +52,7 @@ class Settings:
             configured_seconds = getattr(self, limit_name)
 
             if type(configured_seconds) not in (int, float) or not 0 < configured_seconds <= maximum_seconds:
-                raise ValueError(f"{limit_name = }, {configured_seconds = }; maximum {maximum_seconds} seconds.")
+                raise ValueError(f"Invalid {limit_name = }; expected a positive number no greater than {maximum_seconds} seconds.")
 
         for (limit_name, maximum_value) in (
             ("max_response_bytes", 4 * 1024 * 1024),
@@ -63,7 +63,7 @@ class Settings:
             configured_value = getattr(self, limit_name)
 
             if type(configured_value) is not int or not 1 <= configured_value <= maximum_value:
-                raise ValueError(f"{limit_name = }, {configured_value = }; maximum {maximum_value}.")
+                raise ValueError(f"Invalid {limit_name = }; expected a positive integer no greater than {maximum_value}.")
 
         if not isinstance(self.database_dsn_file, Path) or not self.database_dsn_file.is_absolute():
             raise ValueError("Database dsn_file must be an absolute path.")
