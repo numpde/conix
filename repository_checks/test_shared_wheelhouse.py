@@ -59,12 +59,14 @@ class SharedWheelhouseContracts(unittest.TestCase):
                 self.calls.append((args, kwargs))
                 if args[:2] == ("info", "--format"):
                     return '["name=rootless"]' if self.rootless else '["name=seccomp"]'
+
                 if args and args[0] == "run":
                     return json.dumps([{
                         "directory": "wheelhouse",
                         "filename": "demo-1.0-py3-none-any.whl",
                         "sha256": "a" * 64,
                     }])
+
                 raise AssertionError("Unexpected Docker method in offline wheel worker.")
 
             def require_image(self, reference):
