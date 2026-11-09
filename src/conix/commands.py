@@ -13,14 +13,12 @@ from conix.configuration import load_settings, open_chain, read_dsn
 from conix.engine import run_session
 from conix.errors import Blocked, BranchConflict, ConfigurationError, CorruptStore, StateChanged, WriterBusy
 from conix.journal import Journal
-from conix.models import Block, HistoryUnavailable, ObservationProtocolError, ObservationUnavailable
+from conix.models import HistoryUnavailable, ObservationProtocolError, ObservationUnavailable
 from conix.rpc import RpcError, RpcProtocolError, RpcUnavailable
 from conix.schema import initialize
 
-logger = logging.getLogger("conix")
-
-
 def _target(value: str) -> tuple[int, bytes]:
+    """Require the operator's exact height/hash selection for checked repair."""
     try:
         number, encoded = value.split(":")
         if (
@@ -37,6 +35,7 @@ def _target(value: str) -> tuple[int, bytes]:
 
 
 def _parse(argv):
+    """Keep schema installation, observation and repair explicit."""
     parser = argparse.ArgumentParser(
         prog="conix", description="Follow exactly one configured PayToPlay collection stream."
     )
@@ -54,6 +53,7 @@ def _parse(argv):
 
 
 async def _execute(arguments):
+    """Own command lifetimes; never infer a source or start hidden recovery."""
     settings = load_settings(arguments.config)
     if arguments.command == "init":
         if arguments.owner_dsn_file == settings.database_dsn_file:
@@ -63,11 +63,12 @@ async def _execute(arguments):
         await initialize(read_dsn(arguments.owner_dsn_file), settings)
         print("Verified owner-installed Conix schema and restricted runtime grants.")
         return
+    # Owner credentials are unavailable to the runtime journal by design.
     journal = Journal(read_dsn(settings.database_dsn_file), settings)
 
     if arguments.command == "status":
         basis = await journal.basis()
-        answer = {
+        status = {
             "chain_id": settings.deployment.chain_id,
             "contract_address": settings.deployment.address,
             "start_block": settings.start_block,
@@ -85,7 +86,7 @@ async def _execute(arguments):
             "head_observed_at": None if basis.head_observed_at is None else basis.head_observed_at.isoformat(),
             "blocked_reason": basis.blocked_reason,
         }
-        print(json.dumps(answer, sort_keys=True))
+        print(json.dumps(status, sort_keys=True))
         return
 
     async with open_chain(settings) as contract:
@@ -102,11 +103,14 @@ async def _execute(arguments):
                         raise BranchConflict(
                             f"Selected repair target {number}:0x{block_hash.hex()} is not the source's canonical block."
                         )
-                # Same concrete repair primitive called by future Tier-1 controller.
+                # Manual and future automatic controllers invoke the same
+                # checked repair mutation; an ancestor suggestion is not authority.
                 await writer.repair_to(basis, target, chain)
             print("Conix history repaired; a fresh normal worker session must reindex the remaining blocks.")
             return
 
+        # Only termination is handled here; ordinary failures exit so the
+        # next session must examine PostgreSQL before attempting progress.
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
         for name in (signal.SIGINT, signal.SIGTERM):

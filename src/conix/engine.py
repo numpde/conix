@@ -11,11 +11,14 @@ from conix.models import ObservationProtocolError, ObservationUnavailable
 
 @dataclass(frozen=True, slots=True)
 class AdvanceResult:
+    """Distinguish publication from tip validation without inventing progress."""
+
     block_number: int | None
     changed: bool
 
 
 async def _invalidate(writer, basis, message: str):
+    """Persist a branch contradiction before making the session fail closed."""
     await writer.invalidate(basis, message)
     raise BranchConflict(message)
 
@@ -27,6 +30,8 @@ async def advance_one(writer, chain: Chain) -> AdvanceResult:
         raise Blocked(f"Source history is blocked: {basis.blocked_reason}; run conix repair or rebuild.")
     await chain.assert_source()
     head = await chain.current_head()
+    # Recheck stored progress even at the tip: a reorg can replace the last
+    # completed block without increasing chain height.
     previous = basis.checkpoint
     if previous is not None:
         if head.number < previous.number:
@@ -48,6 +53,8 @@ async def advance_one(writer, chain: Chain) -> AdvanceResult:
         predecessor = await chain.header(next_height - 1)
         if block.parent_hash != predecessor.hash:
             raise ObservationUnavailable("Initial block is not connected to its canonical predecessor.")
+    # Even a block without collections advances a complete journal prefix;
+    # event order defines the durable pagination sequence.
     events = await chain.contract.voucher_collected_events(block)
     if type(events) is not tuple:
         raise ObservationProtocolError("Decoded collection events must be an immutable tuple.")
@@ -55,7 +62,7 @@ async def advance_one(writer, chain: Chain) -> AdvanceResult:
         raise ObservationProtocolError("Duplicate log index in one block.")
     if tuple(sorted(events, key=lambda e: (e.transaction_index, e.log_index))) != events:
         raise ObservationProtocolError("Collection events are not in transaction/log order.")
-    # These are fresh RPC checks, not prefetch/cacheable evidence.
+    # Prefetched data cannot satisfy these fresh canonicality checks.
     if not await chain.canonical(block):
         raise ObservationUnavailable("Candidate block changed branch before publication; retry from durable progress.")
     if previous is not None and not await chain.canonical(previous):
@@ -76,6 +83,8 @@ async def run_session(journal, chain: Chain, stop: asyncio.Event):
                 writer, basis,
                 f"Stored checkpoint at block {basis.checkpoint.number} is no longer canonical.",
             )
+        # A later supervisor may start a new session, but cannot reuse this
+        # Writer or bypass startup's durable-state check.
         while not stop.is_set():
             # Bound the entire one-block operation, not only each individual
             # RPC request. Cancellation still unwinds the owned writer session.

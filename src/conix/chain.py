@@ -6,6 +6,8 @@ from conix.rpc import RpcError, RpcProtocolError, RpcUnavailable, data, quantity
 
 
 class Chain:
+    """Read one configured RPC source; coherence is not independent consensus."""
+
     def __init__(self, contract, settings: Settings):
         self.contract = contract
         self.rpc = contract.rpc
@@ -19,6 +21,8 @@ class Chain:
                 raise ObservationProtocolError(
                     f"RPC chain ID {chain_id} differs from configured chain {self.settings.deployment.chain_id}."
                 )
+            # Code presence rules out an empty address; the operator still
+            # owns the deployment/ABI provenance and RPC trust decision.
             code = data(await self.rpc.call(
                 "eth_getCode", [self.settings.deployment.address, "latest"]
             ), "deployed code", size=None)
@@ -30,6 +34,7 @@ class Chain:
             raise ObservationProtocolError(f"Invalid chain identity or contract code response: {error}") from error
 
     async def header(self, selector: int | str) -> Block:
+        """Resolve a supported height or tag to a bounded, identified header."""
         if type(selector) is int:
             if not 0 <= selector < 2**63:
                 raise ValueError("Block selector is outside PostgreSQL block-height limits.")
@@ -75,11 +80,11 @@ class Chain:
             raise ValueError("Ancestry endpoints must be ordered.")
         if upper.number - lower.number + 1 > self.settings.max_evidence_blocks:
             raise ObservationUnavailable("Finality ancestry exceeds max_evidence_blocks.")
-        prev = lower
+        previous = lower
         for height in range(lower.number + 1, upper.number + 1):
             block = await self.header(height)
-            if block.parent_hash != prev.hash:
+            if block.parent_hash != previous.hash:
                 raise ObservationUnavailable(f"Canonical ancestry is inconsistent between heights {height - 1} and {height}.")
-            prev = block
-        if prev.hash != upper.hash:
+            previous = block
+        if previous.hash != upper.hash:
             raise ObservationUnavailable("The supplied upper block is not connected to the checkpoint.")

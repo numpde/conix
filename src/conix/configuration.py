@@ -2,8 +2,8 @@
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from pathlib import Path
 import os
+from pathlib import Path
 import re
 import stat
 import tomllib
@@ -18,6 +18,8 @@ from conix.pay_to_play import PayToPlay
 
 @dataclass(frozen=True, slots=True)
 class Settings:
+    """Bind one deployment, storage identity and work limits without defaults."""
+
     deployment: Deployment
     start_block: int
     rpc_url: str
@@ -38,6 +40,7 @@ class Settings:
             raise ValueError("Source contract address must be EIP-55 checksummed.")
         if type(self.start_block) is not int or not 0 <= self.start_block < 2**63:
             raise ValueError("Source start_block must be a nonnegative signed 64-bit integer.")
+        # Bound whole operations separately from individual RPC calls.
         for name, maximum in (
             ("poll_seconds", 3600), ("rpc_timeout_seconds", 60),
             ("operation_timeout_seconds", 300),
@@ -45,6 +48,7 @@ class Settings:
             value = getattr(self, name)
             if type(value) not in (int, float) or not 0 < value <= maximum:
                 raise ValueError(f"Limits {name} must be positive and at most {maximum}.")
+        # Valid replies can still exceed the memory or pagination budget.
         for name, maximum in (
             ("max_response_bytes", 4 * 1024 * 1024),
             ("max_connections", 32),
@@ -71,7 +75,7 @@ def load_settings(path: Path) -> Settings:
     fields = tomllib.loads(content.decode("utf-8"))
     if set(fields) != {"source", "database", "limits"}:
         raise ValueError("Configuration requires exactly source, database and limits tables.")
-    source, database, limits = (fields[name] for name in ("source", "database", "limits"))
+    (source, database, limits) = (fields[name] for name in ("source", "database", "limits"))
     if any(type(value) is not dict for value in (source, database, limits)):
         raise ValueError("Each configuration table must be a TOML object.")
     if set(source) != {"chain_id", "contract_address", "start_block", "rpc_url"}:
@@ -98,7 +102,8 @@ def load_settings(path: Path) -> Settings:
 
 
 def read_dsn(path: Path) -> str:
-    """Read an operator-owned secret file; never copy credentials into diagnostics."""
+    """Read a private regular file once; never include DSN bytes in diagnostics."""
+    # The explicit path must not resolve through a replaced final symlink.
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
     try:
         info = os.fstat(fd)
@@ -120,6 +125,7 @@ def read_dsn(path: Path) -> str:
 
 @asynccontextmanager
 async def open_chain(settings: Settings):
+    """Own the HTTP client lifetime; ignore ambient host proxy settings."""
     limits = httpx.Limits(
         max_connections=settings.max_connections,
         max_keepalive_connections=settings.max_connections,
