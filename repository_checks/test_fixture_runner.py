@@ -6,6 +6,8 @@ privileges and teardown order without inventing a fake indexer or signed logs.
 import io
 import json
 import os
+import re
+import shutil
 from pathlib import Path
 import sys
 import tempfile
@@ -373,6 +375,40 @@ class FixtureRunnerTests(unittest.TestCase):
             self.assertIn("status 7", str(raised.exception))
             self.assertNotIn(secret, terminal.getvalue() + str(raised.exception))
             self.assertIn(secret.encode(), stderr.read_bytes())
+
+    def test_cleanup_exception_does_not_erase_the_first_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = Path(directory) / "fixture.json"
+            descriptor.write_text(json.dumps(descriptor_for("borrowed-1")) + "\n")
+            descriptor.chmod(0o600)
+            image = "sha256:" + "a" * 64
+            args = [
+                "pay_to_play", "--origin", "command line",
+                "--context", "agentic", "test/pay-to-play/run",
+                "--runner-image", image, "--fixture-descriptor", str(descriptor),
+            ]
+            terminal = io.StringIO()
+            with patch.object(sys, "argv", args), patch.object(
+                runner, "select_endpoint", return_value="unix:///tmp/selected.sock"
+            ), patch.object(runner, "Docker") as docker, patch.object(
+                runner.PayToPlayTest, "execute",
+                side_effect=runner.CampaignError("Primary collection assertion failed.")
+            ), patch.object(
+                runner.PayToPlayTest, "cleanup",
+                side_effect=RuntimeError("cleanup function broke")
+            ), patch.object(runner.signal, "signal"), redirect_stderr(terminal):
+                docker.return_value.endpoint = "unix:///tmp/selected.sock"
+                with self.assertRaises(SystemExit) as raised:
+                    runner.main()
+            result = str(raised.exception)
+            self.assertIn("Primary collection assertion failed", result)
+            self.assertIn("cleanup", result.lower())
+            output = terminal.getvalue()
+            self.assertIn("Cleanup unconfirmed", output)
+            self.assertIn("Recovery:", output)
+            match = re.search(r"Private phase receipts: ([^\\n]+)", output)
+            self.assertIsNotNone(match)
+            shutil.rmtree(match.group(1))
 
     def test_timed_out_owned_process_is_reaped_before_retirement(self):
         import time
