@@ -18,13 +18,6 @@ ROOT = Path(__file__).resolve().parents[2]
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\Z")
 WHEEL = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+-]*\.whl\Z")
-TEST_SOURCES = (
-    "tests/test_tier0.py",
-    "tests/test_input_staging.py",
-    "tests/prepare_schema.py",
-    "tests/fixture_protocol.py",
-    "tests/pay_to_play_integration.py",
-)
 
 
 class PoolError(ValueError):
@@ -110,33 +103,40 @@ def source_allowlist(root=ROOT):
     """Capture only Dockerfile inputs, with exact hashes and executable flags."""
     # The builder never receives the checkout root: source inputs are
     # explicitly reviewed, tracked, and hashed before streaming.
-    relative = (
+    fixed_inputs = (
         "Dockerfile", "pyproject.toml", "requirements/runtime.lock",
-        "requirements/build.lock", *TEST_SOURCES,
+        "requirements/build.lock",
     )
 
+    # Both the installed package AND its entire Python test suite are the
+    # reviewed Git inventory. A newly tracked test must not disappear merely
+    # because someone forgot a second manual whitelist.
     source_directory = root / "src" / "conix"
-    modules = tuple(sorted(file.relative_to(root).as_posix() for file in source_directory.rglob("*.py")))
-    if not modules or "src/conix/__init__.py" not in modules:
-        raise PoolError("Conix source package is absent from the selected build context.")
+    test_directory = root / "tests"
+    source_modules = tuple(sorted(file.relative_to(root).as_posix() for file in source_directory.rglob("*.py")))
+    test_modules = tuple(sorted(file.relative_to(root).as_posix() for file in test_directory.rglob("*.py")))
+
+    if "src/conix/__init__.py" not in source_modules or not test_modules:
+        raise PoolError("Conix source package or executable test suite is absent from the build context.")
 
     try:
-        tracked = subprocess.run(
-            ["git", "ls-files", "--cached", "-z", "--", "src/conix"],
+        tracked_paths = subprocess.run(
+            ["git", "ls-files", "--cached", "-z", "--", "src/conix", "tests"],
             cwd=root, capture_output=True, timeout=10, check=True,
         ).stdout.decode("utf-8").split("\0")
     except (OSError, UnicodeError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        raise PoolError("Cannot establish the declared Git source inventory.") from None
+        raise PoolError("Cannot establish the declared Git source and test inventory.") from None
 
-    # An untracked module must not enter the image merely because rglob found it.
-    declared = {name for name in tracked if name}
-    if declared != set(modules):
+    # Every test is included; no untracked or non-Python test input is admitted
+    # by this build path. New test fixtures require an explicit policy change.
+    captured_inputs = set((*source_modules, *test_modules))
+    if {path for path in tracked_paths if path} != captured_inputs:
         raise PoolError(
-            "Source package differs from tracked Git inputs; do not stream "
-            "unreviewed or untracked Python files into a build."
+            "Conix source/test files differ from tracked Python inputs; "
+            "do not omit tests or stream unreviewed files into a build."
         )
 
-    paths = (*relative, *modules)
+    paths = (*fixed_inputs, *source_modules, *test_modules)
     if len(paths) != len(set(paths)):
         raise PoolError("The curated image source list contains duplicates.")
 
