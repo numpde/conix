@@ -333,17 +333,25 @@ class Docker:
                 remove = False
                 if announce:
                     print(volume)
-        except Exception:
+        except Exception as original:
             remove = True
             raise
         finally:
             if remove:
                 try:
                     self.remove_inputs(volume, token=token)
-                except Exception as error:
+                except Exception as cleanup_error:
+                    active = sys.exc_info()[1]
+                    cause = (
+                        f" Original staging failure: {active}."
+                        if isinstance(active, OperationError) else
+                        f" Original staging failure: {type(active).__name__}."
+                        if active is not None else ""
+                    )
                     raise OperationError(
-                        f"Cannot confirm cleanup of owned private volume {volume}; inspect selected Engine {self.base[-1]}."
-                    ) from error
+                        f"Cannot confirm cleanup of owned private volume {volume}; "
+                        f"inspect selected Engine {self.base[-1]}.{cause}"
+                    ) from cleanup_error
 
         return None if proof else volume
 
@@ -626,7 +634,13 @@ class Docker:
                     f"compose={ROOT / 'compose/tests.yml'}. Inspect before removing.",
                     file=sys.stderr,
                 )
-                raise OperationError(f"Test project cleanup failed: {cleanup}") from failure
+                first = (
+                    f" Original test failure: {failure}."
+                    if isinstance(failure, OperationError) else
+                    f" Original test failure: {type(failure).__name__}."
+                    if failure is not None else ""
+                )
+                raise OperationError(f"Test project cleanup failed: {cleanup}.{first}") from cleanup
         if failure is not None:
             raise failure
 
