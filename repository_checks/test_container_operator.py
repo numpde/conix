@@ -219,7 +219,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
     def run_runtime_fake(self, *, bad_bind=False, operation="apply", missing_resources=False,
                          role="indexer",
                          bad_cap=False, bad_privileges=False, bad_runtime_network=False,
-                         rootful=False):
+                         rootful=False, fail_up=False):
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)
             fake = directory / "docker"
@@ -244,6 +244,8 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 env["CONIX_FAKE_ROOTFUL_ENGINE"] = "1"
             if missing_resources:
                 env["CONIX_FAKE_MISSING_RESOURCE"] = "1"
+            if fail_up:
+                env["CONIX_FAKE_UP_FAIL"] = "1"
             result = subprocess.run([
                 sys.executable, "-m", "tools.containers.operator",
                 "--context", "science", "--origin", "command line",
@@ -340,14 +342,47 @@ class LocalDockerOperatorTests(unittest.TestCase):
             ), patch.object(docker, "stage_inputs", return_value=volume), patch.object(
                 docker, "remove_inputs"
             ) as cleanup, patch.object(docker, "run", side_effect=call):
-                with self.assertRaises(operator.OperationError):
+                with self.assertRaises(operator.OperationError) as failure:
                     docker.initialize_schema(
                         "sha256:" + "a" * 64,
                         "/home/operator/config.toml",
                         "/home/operator/owner.dsn",
                         "db-conix",
                     )
+                self.assertIn("Owner init outcome unknown", str(failure.exception))
                 cleanup.assert_called_once_with(volume)
+
+    def test_runtime_start_failure_reports_original_exit_status(self):
+        outcome, calls = self.run_runtime_fake(fail_up=True)
+        self.assertNotEqual(outcome.returncode, 0)
+        self.assertIn("startup", outcome.stderr)
+        self.assertIn("exit 3", outcome.stderr)
+        self.assertTrue(any("up" in entry["args"] for entry in calls))
+
+    def test_owner_init_and_cleanup_failures_are_both_visible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            docker = operator.Docker("unix:///tmp/science-docker.sock", Path(directory))
+            volume = "conix-inputs-" + "c" * 24
+
+            def call(*args, **kwargs):
+                if args[:2] == ("network", "inspect"):
+                    return "db-conix\n"
+                if args and args[0] == "run":
+                    raise operator.OperationError("Owner init rejected source identity.")
+                return None
+
+            with patch.object(docker, "require_rootless_engine"), patch.object(
+                docker, "require_role"
+            ), patch.object(docker, "stage_inputs", return_value=volume), patch.object(
+                docker, "remove_inputs", side_effect=operator.OperationError("Volume removal failed.")
+            ), patch.object(docker, "run", side_effect=call):
+                with self.assertRaises(operator.OperationError) as raised:
+                    docker.initialize_schema(
+                        "sha256:" + "a" * 64, "/home/operator/config.toml",
+                        "/home/operator/owner.dsn", "db-conix",
+                    )
+            self.assertIn("cleanup is unconfirmed", str(raised.exception))
+            self.assertIn("Owner init rejected source identity", str(raised.exception))
 
     def test_runtime_start_still_refuses_missing_image(self):
         result, calls = self.run_runtime_fake(missing_resources=True)
