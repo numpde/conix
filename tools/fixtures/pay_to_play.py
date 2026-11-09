@@ -564,7 +564,7 @@ class Campaign:
 
     def recovery(self):
         """Give exact operator coordinates without reproducing private JSON."""
-        sql = self.consumer_test.project if self.consumer_test is not None else "none"
+        sql = self.consumer_test.sql_project if self.consumer_test is not None else "none"
         return (
             f"Producer fixture ID={self.fixture_id}; Conix project={sql}; "
             f"Docker context={self.context_name}; selected Engine={self.docker.endpoint}. "
