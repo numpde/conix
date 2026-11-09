@@ -62,7 +62,7 @@ services:
     networks: [tests]
 
   initialize:
-    image: ${CONIX_TEST_IMAGE:?select exact installed test image}
+    image: ${CONIX_TEST_RUNNER_IMAGE:?select exact installed test image}
     pull_policy: never
     entrypoint: ["python", "/tests/prepare_schema.py"]
     environment:
@@ -81,7 +81,7 @@ services:
     networks: [tests]
 
   tests:
-    image: ${CONIX_TEST_IMAGE:?select exact installed test image}
+    image: ${CONIX_TEST_RUNNER_IMAGE:?select exact installed test image}
     pull_policy: never
     environment:
       CONIX_TEST_DSN: postgresql://conix_runtime:conix-disposable-runtime@postgres:5432/conix_test

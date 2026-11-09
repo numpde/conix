@@ -224,7 +224,7 @@ class Docker:
         )
         self.run(*grants, "--entrypoint", "cast", image, "--version", timeout=20)
         self.run(*grants, "--entrypoint", "python", image,
-                 "-I", "/tests/fixture_campaign.py", "--help", timeout=20)
+                 "-I", "/tests/pay_to_play_integration.py", "--help", timeout=20)
         # Qualify the precise digest-signing interface used by the contained
         # campaign, without touching a wallet service or a live RPC endpoint.
         check = (
@@ -447,7 +447,7 @@ class Docker:
         ]
         env = self.env.copy()
         env.update(
-            CONIX_IMAGE=image,
+            CONIX_INDEXER_IMAGE=image,
             CONIX_INPUT_VOLUME=volume,
             CONIX_DATABASE_NETWORK=database,
             CONIX_RPC_NETWORK=rpc,
@@ -529,7 +529,7 @@ class Docker:
             "-p", project, "-f", str(ROOT / "compose/tests.yml"),
         ]
         env = self.env.copy()
-        env["CONIX_TEST_IMAGE"] = image
+        env["CONIX_TEST_RUNNER_IMAGE"] = image
         env["CONIX_POSTGRES_IMAGE"] = images["postgres"]
         try:
             rendered = json.loads(self.run(*compose, "config", "--format", "json",

@@ -1,4 +1,4 @@
-"""Real dapp32 fixture campaign using the installed, unchanged Tier-0 Conix.
+"""Real PayToPlay integration checks using the installed, unchanged Tier-0 Conix.
 
 This is a disposable *test-only* client of dapp32's verified fixture JSON.
 Transactions use Anvil-only account impersonation and test-only Cast signing.

@@ -23,7 +23,7 @@ TEST_SOURCES = (
     "tests/test_input_staging.py",
     "tests/prepare_schema.py",
     "tests/fixture_protocol.py",
-    "tests/fixture_campaign.py",
+    "tests/pay_to_play_integration.py",
 )
 
 

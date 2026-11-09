@@ -48,4 +48,4 @@ LABEL io.conix.image-role=evm-test-runner
 COPY --from=fixture_signer /usr/local/bin/cast /usr/local/bin/cast
 COPY tests /tests
 RUN --network=none cast --version
-ENTRYPOINT ["python", "-I", "/tests/fixture_campaign.py"]
+ENTRYPOINT ["python", "-I", "/tests/pay_to_play_integration.py"]

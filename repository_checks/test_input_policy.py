@@ -106,7 +106,7 @@ class OfflineInputChecks(unittest.TestCase):
             "!src/", "!src/**", "!tests/",
             "!tests/test_tier0.py", "!tests/test_input_staging.py",
             "!tests/prepare_schema.py", "!tests/fixture_protocol.py",
-            "!tests/fixture_campaign.py",
+            "!tests/pay_to_play_integration.py",
         }
         self.assertEqual(rules[0], "**", "The default Docker context must deny every path.")
         self.assertEqual(set(rules[1:]), expected)

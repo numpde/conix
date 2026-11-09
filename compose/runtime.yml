@@ -3,7 +3,7 @@
 # Operator-owned static inputs are staged into an engine volume before startup.
 services:
   indexer:
-    image: ${CONIX_IMAGE:?select verified immutable runtime image ID}
+    image: ${CONIX_INDEXER_IMAGE:?select verified immutable runtime image ID}
     pull_policy: never
     init: true
     command: ["run", "--config", "/run/conix/config.toml"]

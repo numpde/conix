@@ -62,9 +62,9 @@ services:
     networks: [database]
 
   initialize:
-    image: ${CONIX_FIXTURE_IMAGE:?select the prebuilt installed fixture image}
+    image: ${CONIX_EVM_TEST_RUNNER_IMAGE:?select prebuilt EVM test-runner image}
     pull_policy: never
-    entrypoint: [python, -I, /tests/fixture_campaign.py]
+    entrypoint: [python, -I, /tests/pay_to_play_integration.py]
     stdin_open: true
     tty: false
     environment:
@@ -84,9 +84,9 @@ services:
     networks: [database]
 
   consumer:
-    image: ${CONIX_FIXTURE_IMAGE:?select the prebuilt installed fixture image}
+    image: ${CONIX_EVM_TEST_RUNNER_IMAGE:?select prebuilt EVM test-runner image}
     pull_policy: never
-    entrypoint: [python, -I, /tests/fixture_campaign.py]
+    entrypoint: [python, -I, /tests/pay_to_play_integration.py]
     stdin_open: true
     tty: false
     environment:
