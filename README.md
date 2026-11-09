@@ -1,6 +1,10 @@
 Conix — focused PayToPlay collection observer
 ===============================================
 
+Make targets follow <resource>[/<role-or-subject>]/<action>, with effects,
+permissions and outputs defined in notes/002_make_operator_contract.txt.
+Plain make prints help without using Docker.
+
 Status: Tier 0 under qualification. Branch 20261108-tier0-executable-core.
 The implementation observes one explicitly configured chain, one PayToPlay
 contract, one trusted Ethereum RPC and one PostgreSQL database. It does not
@@ -63,10 +67,10 @@ temporary private volume containing this config and owner credential, verifies
 the non-root read boundary, invokes the real conix init command on the
 selected database network, and retires that volume after the result:
 
-    make schema/init DOCKER_CONTEXT=science CONIX_IMAGE="$runtime" \
-      CONIX_CONFIG_FILE=/absolute/config.toml \
-      CONIX_OWNER_DSN_FILE=/absolute/owner-postgres.dsn \
-      CONIX_DATABASE_NETWORK=payment-db
+    make database/schema/initialize DOCKER_CONTEXT=agentic INDEXER_IMAGE="$runtime" \
+      CONFIG_FILE=/absolute/config.toml \
+      OWNER_DSN_FILE=/absolute/owner-postgres.dsn \
+      DATABASE_NETWORK=payment-db
 
 The one-shot installed command is:
 
@@ -140,7 +144,7 @@ For explicit lock regeneration only, use:
 Container preparation and verification
 --------------------------------------
 
-Production runtime/start verifies that the selected daemon reports rootless
+Production deployment/apply verifies that the selected daemon reports rootless
 operation; a local Unix socket is not sufficient. Source/status/stop remain
 available for recovery even if the daemon's previous image or external inputs
 are absent. CI's disposable build and test engine is not thereby certified
@@ -153,18 +157,20 @@ COMPOSE_* variables do not authorize the operation. The selected local Unix
 socket is pinned through build, run and teardown; remote Engines are refused.
 
     # Select the existing host-local pool shared with NMR repositories.
-    pool="$HOME/Downloads/wheelhouse"
-    make check/container
-    make deps/images/prepare DOCKER_CONTEXT=science
-    make deps/wheelhouse/check DOCKER_CONTEXT=science WHEELHOUSE="$pool"
+    wheelhouse="$HOME/Downloads/wheelhouse"
+    make test/repository/run
+    make image/python-base/acquire DOCKER_CONTEXT=agentic
+    make image/postgres/acquire DOCKER_CONTEXT=agentic
+    make image/dockerfile-frontend/acquire DOCKER_CONTEXT=agentic
+    make wheelhouse/check DOCKER_CONTEXT=agentic WHEELHOUSE="$wheelhouse"
 
     # Explicit acquisition ONLY if the pinned tool or locked wheels are absent.
-    make deps/wheelhouse/acquire DOCKER_CONTEXT=science WHEELHOUSE="$pool"
+    make wheelhouse/acquire DOCKER_CONTEXT=agentic WHEELHOUSE="$wheelhouse"
 
-    runtime="$(make -s image/build DOCKER_CONTEXT=science WHEELHOUSE="$pool")"
-    make image/smoke DOCKER_CONTEXT=science CONIX_IMAGE="$runtime"
-    tests="$(make -s tests/image/build DOCKER_CONTEXT=science WHEELHOUSE="$pool")"
-    make tests/container DOCKER_CONTEXT=science CONIX_TEST_IMAGE="$tests"
+    runtime="$(make -s image/indexer/build DOCKER_CONTEXT=agentic WHEELHOUSE="$wheelhouse")"
+    make image/indexer/check DOCKER_CONTEXT=agentic IMAGE="$runtime"
+    runner_image="$(make -s image/test-runner/build DOCKER_CONTEXT=agentic WHEELHOUSE="$wheelhouse")"
+    make test/postgres/run DOCKER_CONTEXT=agentic RUNNER_IMAGE="$runner_image"
 
 
 Static private inputs and runtime
@@ -178,9 +184,9 @@ environment variable, Docker labels, or a command argument.
 
 Stage and independently prove the inputs on the same selected local Engine:
 
-    make inputs/proof DOCKER_CONTEXT=science CONIX_IMAGE="$runtime" \
-      CONIX_CONFIG_FILE=/absolute/config.toml \
-      CONIX_DSN_FILE=/absolute/postgres.dsn
+    make test/input-staging/run DOCKER_CONTEXT=agentic INDEXER_IMAGE="$runtime" \
+      CONFIG_FILE=/absolute/config.toml \
+      DSN_FILE=/absolute/postgres.dsn
 
 The proof destroys its own temporary private volume after verifying that the
 real installed conix image reads both files as uid 65532, with a read-only
@@ -188,30 +194,30 @@ root filesystem, no capabilities and no network.
 
 For an actual deployment, stage a retained private volume:
 
-    inputs="$(make -s inputs/stage DOCKER_CONTEXT=science CONIX_IMAGE="$runtime" \
-      CONIX_CONFIG_FILE=/absolute/config.toml CONIX_DSN_FILE=/absolute/postgres.dsn)"
+    inputs="$(make -s deployment/inputs/create DOCKER_CONTEXT=agentic INDEXER_IMAGE="$runtime" \
+      CONFIG_FILE=/absolute/config.toml DSN_FILE=/absolute/postgres.dsn)"
 
 Do not print or expose the original DSN. The inputs variable is an engine-owned
 opaque volume name, not a credential; it is nonetheless bound to one Engine's
 storage. Existing RPC and PostgreSQL networks must have been provisioned
 explicitly on that Engine. Deploy the one-worker profile with:
 
-    make runtime/start DOCKER_CONTEXT=science CONIX_DEPLOYMENT=pilot \
-      CONIX_IMAGE="$runtime" CONIX_INPUT_VOLUME="$inputs" \
-      CONIX_DATABASE_NETWORK=payment-db CONIX_RPC_NETWORK=payment-rpc
+    make deployment/apply DOCKER_CONTEXT=agentic DEPLOYMENT=pilot \
+      INDEXER_IMAGE="$runtime" INPUT_VOLUME="$inputs" \
+      DATABASE_NETWORK=payment-db RPC_NETWORK=payment-rpc
 
-    make runtime/status DOCKER_CONTEXT=science CONIX_DEPLOYMENT=pilot \
-      CONIX_IMAGE="$runtime" CONIX_INPUT_VOLUME="$inputs" \
-      CONIX_DATABASE_NETWORK=payment-db CONIX_RPC_NETWORK=payment-rpc
+    make deployment/status DOCKER_CONTEXT=agentic DEPLOYMENT=pilot \
+      INDEXER_IMAGE="$runtime" INPUT_VOLUME="$inputs" \
+      DATABASE_NETWORK=payment-db RPC_NETWORK=payment-rpc
 
-    make runtime/stop DOCKER_CONTEXT=science CONIX_DEPLOYMENT=pilot \
-      CONIX_IMAGE="$runtime" CONIX_INPUT_VOLUME="$inputs" \
-      CONIX_DATABASE_NETWORK=payment-db CONIX_RPC_NETWORK=payment-rpc
+    make deployment/remove DOCKER_CONTEXT=agentic DEPLOYMENT=pilot \
+      INDEXER_IMAGE="$runtime" INPUT_VOLUME="$inputs" \
+      DATABASE_NETWORK=payment-db RPC_NETWORK=payment-rpc
 
 After stopping the worker and ensuring no other reader uses the selected
 volume, retire its exact identity explicitly:
 
-    make inputs/remove DOCKER_CONTEXT=science CONIX_INPUT_VOLUME="$inputs"
+    make deployment/inputs/remove DOCKER_CONTEXT=agentic INPUT_VOLUME="$inputs"
 
 The runtime profile uses no host binds, Docker Engine mount, public port,
 root user or writable root filesystem. It does not create/manage PostgreSQL or
@@ -226,7 +232,7 @@ Input staging and startup on a particular operator rootless Engine still
 require local qualification. Passing CI on a hosted Docker Engine does not
 establish that another host's Docker mapping or network topology matches it.
 
-Replace 'science' with your selected Docker context. Every Docker action
+Use the explicitly selected local Docker context (agentic in these examples). Every Docker action
 resolves one local Unix-socket endpoint, disables ambient client/build/proxy
 overrides, and uses that same endpoint for contained acquisition, BuildKit,
 service startup, read-only inspection and teardown. An absent context in an
@@ -271,7 +277,7 @@ Python wheel lock regeneration using 'python3 -m tools.wheelhouse.locks --write'
 is a separate operator action; the image installation path never invokes
 host pip.
 
-The test command does not build or pull an image. It uses the exact selected
+The test/postgres/run and test/pay-to-play/run targets do not build or pull Conix images. It uses the exact selected
 image ID, an isolated network, a uniquely named disposable PostgreSQL volume,
 non-root read-only containers, bounded resources and no host-published ports.
 It attempts to remove its own resources on success/failure; uncertain teardown
@@ -287,16 +293,24 @@ automatic schema upgrades. An unsupported observation fails rather than
 manufacturing complete history, current canonicality or finality evidence.
 
 
-Real-contract fixture campaign (explicit, test-only)
----------------------------------------------------
+PayToPlay real-chain test and owned fixture campaign
+-----------------------------------------------------
 
 Conix consumes dapp32's existing pay-to-play.local-fixture.v1 interface. The
 producer checkout, contracts and Anvil Compose stack are NOT copied or edited.
-The test harness invokes dapp32's supported fixture/up, validates the returned
-private one-line JSON (including exact chain/deployment/ABI identities), checks
-the actual internal Docker network and producer-owned Anvil container, then
-independently invokes fixture/info. A new unpredictable fixture ID is generated
-per test. Attached/existing fixtures are never mutated or automatically removed.
+The owned campaign invokes dapp32's fixture/up, validates the private JSON
+(including exact chain/deployment/ABI identities), checks the actual internal
+Docker network and producer-owned Anvil container, then invokes fixture/info
+independently. It creates an unpredictable fixture ID and delegates down only
+after confirmed consumer retirement.
+
+The separate test/pay-to-play/run consumes an explicitly selected private
+fixture JSON descriptor, requires an owner-owned mode-0600 file, verifies the
+live source and network, and NEVER invokes dapp32's up/info/down operations.
+It DOES submit transactions, mine blocks and reorganize the borrowed Anvil
+chain. Only execute this test with exclusive permission to modify the chain.
+A descriptor is not producer cleanup authority. Both targets invoke exactly
+the same installed Conix test phases.
 
 Choose an explicit local rootless Docker context and a real absolute dapp32
 checkout. The sibling's own pinned Solidity dependencies/build prerequisites
@@ -305,14 +319,27 @@ not change or install them. Conix builds its test-only Cast tool from dapp32's
 reviewed Foundry-image digest. Neither the normal runtime nor the ordinary SQL
 test image contains the signing tool.
 
-    pool="$HOME/Downloads/wheelhouse"
-    make deps/images/prepare DOCKER_CONTEXT=science
-    make deps/wheelhouse/check DOCKER_CONTEXT=science WHEELHOUSE="$pool"
-    make deps/fixture-image/prepare DOCKER_CONTEXT=science
-    fixture="$(make -s tests/fixture/image/build DOCKER_CONTEXT=science WHEELHOUSE="$pool")"
-    make tests/fixture/image/smoke DOCKER_CONTEXT=science CONIX_FIXTURE_IMAGE="$fixture"
-    make tests/fixture DOCKER_CONTEXT=science \
-      DAPP32_DIR=/absolute/path/to/dapp32 CONIX_FIXTURE_IMAGE="$fixture"
+    wheelhouse="$HOME/Downloads/wheelhouse"
+    make image/python-base/acquire DOCKER_CONTEXT=agentic
+    make image/postgres/acquire DOCKER_CONTEXT=agentic
+    make image/dockerfile-frontend/acquire DOCKER_CONTEXT=agentic
+    make wheelhouse/check DOCKER_CONTEXT=agentic WHEELHOUSE="$wheelhouse"
+    make image/foundry/acquire DOCKER_CONTEXT=agentic
+    runner_image="$(make -s image/evm-test-runner/build DOCKER_CONTEXT=agentic WHEELHOUSE="$wheelhouse")"
+    make image/evm-test-runner/check DOCKER_CONTEXT=agentic IMAGE="$runner_image"
+    make campaign/pay-to-play/run DOCKER_CONTEXT=agentic \
+      DAPP32_DIR=/absolute/path/to/dapp32 RUNNER_IMAGE="$runner_image"
+
+To run against a separately prepared, exclusively allocated fixture, save
+dapp32's verified fixture/info JSON into an owner-owned mode-0600 file (it
+contains disposable test private keys). Then execute only the Conix test:
+
+    make test/pay-to-play/run DOCKER_CONTEXT=agentic \
+      RUNNER_IMAGE="$runner_image" FIXTURE_DESCRIPTOR=/absolute/private/fixture.json
+
+Both variants use newly created, disposable Conix SQL. Only the full campaign
+owns and removes a newly created producer fixture. dapp32 fixture/up itself
+uses Compose --build, so the full campaign is not a build-free operation.
 
 What this explicit lane exercises:
   - dapp32 emits a receipt-verified real contract deployment as JSON;
