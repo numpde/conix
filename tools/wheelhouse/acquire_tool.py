@@ -2,15 +2,12 @@
 # scripts/acquire-wheelhouse-tool.py; same published wheelhouse-tool v0.5.14.
 """Acquire the pinned shared tool before it can acquire wheelhouse artifacts."""
 
-import fcntl
 import errno
+import fcntl
 import hashlib
 import http.client
 import json
 import os
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
-from pathlib import Path
 import re
 import secrets
 import socket
@@ -21,6 +18,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from pathlib import Path
 
 
 class InsecureRedirect(ValueError):
@@ -58,6 +58,7 @@ def network_failure(error):
     """Classify only known transient transport faults for acquisition retries."""
     if isinstance(error, urllib.error.URLError):
         error = error.reason
+
     if isinstance(error, ssl.SSLError):
         return 'TLS verification or protocol failed', False
 
@@ -75,6 +76,7 @@ def network_failure(error):
                 return f'proxy tunnel returned HTTP {status}; Retry-After is unavailable', False
 
             return f'proxy tunnel returned HTTP {status}', status in (408, 500, 502, 504)
+
     if isinstance(error, TimeoutError):
         return 'network operation timed out', True
 
@@ -104,6 +106,7 @@ def download(url, target, expected):
             raise TransientDownload(detail) from None
 
         raise OSError(detail) from None
+
     with source:
         digest = hashlib.sha256()
         size = 0
@@ -131,6 +134,7 @@ def download(url, target, expected):
 
             digest.update(block)
             target.write(block)
+
         if length is not None and size < length:
             raise TransientDownload('the release download ended before its declared length')
 

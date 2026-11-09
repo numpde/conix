@@ -5,14 +5,14 @@ The lock records exactly one binary artifact per pinned package for this target.
 """
 import argparse
 import base64
-from hashlib import sha256
 import os
-from pathlib import Path
 import platform
 import subprocess
 import sys
 import tempfile
 import tomllib
+from hashlib import sha256
+from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -31,12 +31,14 @@ def inventory(requirements, temp: Path, label: str) -> str:
     """Resolve once, then pin one exact wheel digest per package identity."""
     request = temp / (label + ".in")
     request.write_text("\n".join(requirements) + "\n", encoding="utf-8")
+
     wheels = temp / label
     wheels.mkdir()
     subprocess.run([
         sys.executable, "-m", "pip", "--isolated", "download",
         "--only-binary=:all:", "--dest", str(wheels), "--requirement", str(request),
     ], check=True)
+
     files = sorted(wheels.iterdir())
     if not files or any(path.suffix != ".whl" for path in files):
         raise ValueError("Dependency resolution did not yield only binary wheel files.")
@@ -56,11 +58,13 @@ def inventory(requirements, temp: Path, label: str) -> str:
         seen.add(project)
         digest = sha256(path.read_bytes()).hexdigest()
         entries.append(f"{project}=={version} --hash=sha256:{digest}")
+
     header = [
         "# Target: CPython 3.12 / Linux x86_64, binary wheels only.",
         "# Regenerate explicitly with: python3 -m tools.wheelhouse.locks --write",
         "# Acquisition may use the network. Runtime image build MUST use no-index.",
     ]
+
     return "\n".join(header + sorted(entries) + [""])
 
 
@@ -69,6 +73,7 @@ def generate():
     selected_target()
     with (ROOT / "pyproject.toml").open("rb") as stream:
         source = tomllib.load(stream)
+
     roots = source["project"]["dependencies"]
     if type(roots) is not list or any(type(item) is not str for item in roots):
         raise ValueError("Project dependencies must be a concrete list.")
@@ -88,6 +93,7 @@ def main():
     group.add_argument("--write", action="store_true")
     group.add_argument("--emit-b64", action="store_true")
     args = parser.parse_args()
+
     locks = generate()
     if args.write:
         for (name, content) in locks.items():

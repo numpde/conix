@@ -5,11 +5,11 @@ worker; actual installation happens only in a separate BuildKit image stage.
 The released tool projects the successful pip report to exact stream inputs.
 """
 import argparse
-from hashlib import sha256
 import json
-from pathlib import Path
 import subprocess
 import sys
+from hashlib import sha256
+from pathlib import Path
 
 
 class MissingSelection(Exception):
@@ -23,8 +23,11 @@ def run(pool, release, runtime, build):
     if sha256(tool.read_bytes()).hexdigest() != pin["sha256"]:
         raise ValueError("Contained shared-wheelhouse tool differs from the pinned upstream release.")
 
-    with Path("/tmp/wheelhouse-pip.json").open("xb") as report:
+    # Reserve an exclusive report path: pip must not overwrite a stale
+    # selection from an earlier attempt.
+    with Path("/tmp/wheelhouse-pip.json").open("xb"):
         pass
+
     argv = [
         sys.executable, "-I", "-m", "pip", "--isolated", "install",
         "--dry-run", "--ignore-installed", "--quiet",
@@ -45,10 +48,12 @@ def run(pool, release, runtime, build):
         ):
             print("Missing one or more target-compatible locked wheels.", file=sys.stderr)
             raise MissingSelection()
+
         raise ValueError(
             "The selected target interpreter rejected cached wheel integrity "
             "or requirements; do not start network acquisition."
         )
+
     manifest_conversion = subprocess.run(
         [
             sys.executable, "-I", str(tool), "report",
@@ -75,6 +80,7 @@ def main():
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--build", type=Path, required=True)
     args = parser.parse_args()
+
     try:
         run(args.pool, args.release, args.runtime, args.build)
     except MissingSelection:
@@ -82,6 +88,7 @@ def main():
     except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
         print(f"Shared wheelhouse offline selection refused: {type(error).__name__}.", file=sys.stderr)
         return 2
+
     return 0
 
 

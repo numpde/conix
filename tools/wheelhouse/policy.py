@@ -6,13 +6,13 @@ released standalone Python zipapp streams verified wheel bytes to BuildKit;
 the host process only coordinates the stream and source admission.
 """
 
-from hashlib import sha256
 import json
 import os
-from pathlib import Path, PurePosixPath
 import re
 import stat
 import subprocess
+from hashlib import sha256
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[2]
 SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -104,11 +104,13 @@ def has_tool(path, pin):
 
 def source_allowlist(root=ROOT):
     """Capture only Dockerfile inputs, with exact hashes and executable flags."""
-    # The build context is an allowlist, never the checkout root.
+    # The builder never receives the checkout root: source inputs are
+    # explicitly reviewed, tracked, and hashed before streaming.
     relative = (
         "Dockerfile", "pyproject.toml", "requirements/runtime.lock",
         "requirements/build.lock", *TEST_SOURCES,
     )
+
     source_directory = root / "src" / "conix"
     modules = tuple(sorted(file.relative_to(root).as_posix() for file in source_directory.rglob("*.py")))
     if not modules or "src/conix/__init__.py" not in modules:
@@ -153,6 +155,7 @@ def source_allowlist(root=ROOT):
             "sha256": sha256(content).hexdigest(),
             "executable": bool(info.st_mode & 0o111),
         })
+
     return entries
 
 
@@ -216,6 +219,7 @@ def selection_manifest(raw):
             or item["filename"] in seen):
             raise PoolError("The selected-wheel manifest contains an unapproved or repeated artifact.")
         seen.add(item["filename"])
+
     return sorted(payload, key=lambda item: item["filename"])
 
 
