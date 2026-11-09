@@ -79,12 +79,12 @@ def pin_sibling_context(docker, name):
             )
         except (OSError, subprocess.TimeoutExpired):
             raise CampaignError("Could not prepare the pinned sibling Docker client context.") from None
-        if result.returncode:
+        if context_command.returncode:
             raise CampaignError(
-                f"Pinned sibling Docker context {command[1]} failed (exit {result.returncode})."
+                f"Pinned sibling Docker context {command[1]} failed (exit {context_command.returncode})."
             )
 
-        if command[1] == "inspect" and result.stdout.strip() != docker.endpoint:
+        if command[1] == "inspect" and context_command.stdout.strip() != docker.endpoint:
             raise CampaignError("Sibling Docker context resolves to a different Unix socket.")
 
     return None
