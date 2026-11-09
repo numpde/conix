@@ -219,7 +219,10 @@ async def _send(chain, sender, signature, types=(), arguments=(), *, value=0, er
             )
         if mined.get("status") != "0x1":
             used = mined.get("gasUsed")
-            gas = int(used, 16) if type(used) is str and used.startswith("0x") and len(used) < 20 else None
+            try:
+                gas = quantity(used, "receipt gas used")
+            except RpcProtocolError:
+                gas = None
             status = mined.get("status")
             outcome = "reverted" if status == "0x0" else "unknown receipt status"
             gas_detail = f"; gas used {gas} of {int(GAS, 16)}" if gas is not None else ""
@@ -230,7 +233,25 @@ async def _send(chain, sender, signature, types=(), arguments=(), *, value=0, er
             )
         return mined
     finally:
-        await rpc.call("anvil_stopImpersonatingAccount", [sender])
+        prior = sys.exc_info()[1]
+        try:
+            await rpc.call("anvil_stopImpersonatingAccount", [sender])
+        except Exception as cleanup:
+            action = signature.split("(", 1)[0]
+            if type(prior) is ScenarioFailure:
+                raise ScenarioFailure(
+                    f"{prior} Anvil impersonation cleanup also failed "
+                    f"({type(cleanup).__name__})."
+                ) from prior
+            if prior is not None:
+                raise ScenarioFailure(
+                    f"Fixture {action} failed ({type(prior).__name__}); "
+                    f"Anvil impersonation cleanup also failed ({type(cleanup).__name__})."
+                ) from prior
+            raise ScenarioFailure(
+                f"Fixture {action} succeeded but Anvil impersonation cleanup failed "
+                f"({type(cleanup).__name__}); fixture state requires inspection."
+            ) from cleanup
 
 
 async def _voucher_signature(chain, key, customer, channel, cumulative, invoice):
