@@ -251,11 +251,11 @@ class Docker:
     def __init__(self, endpoint, config_dir):
         self.endpoint = endpoint
         self.config_dir = config_dir
-        self.base = ["docker", "--config", str(config_dir), "--host", endpoint]
-        self.env = environment(config_dir)
+        self.docker_command_prefix = ["docker", "--config", str(config_dir), "--host", endpoint]
+        self.docker_environment = environment(config_dir)
 
     def run(self, *args, timeout=60, capture=False, env=None, progress_to_stderr=False, public_diagnostic=False):
-        return command(self.base + list(args), env=self.env if env is None else env,
+        return command(self.docker_command_prefix + list(args), env=self.docker_environment if env is None else env,
                        timeout=timeout, capture=capture,
                        progress_to_stderr=progress_to_stderr, public_diagnostic=public_diagnostic)
 
@@ -419,7 +419,7 @@ class Docker:
             # Root only in this short-lived, networkless provisioner. It receives
             # exactly CAP_CHOWN to hand 0600 files and 0700 directory to uid 65532.
             # No secret appears in argv, environment, Docker labels, or image layers.
-            argv = self.base + [
+            argv = self.docker_command_prefix + [
                 "run", "--rm", "--interactive", "--pull", "never", "--network", "none",
                 "--read-only", "--user", "0:0", "--cap-drop", "ALL",
                 "--cap-add", "CHOWN", "--security-opt", "no-new-privileges:true",
@@ -429,7 +429,7 @@ class Docker:
             ]
             staging_result = subprocess.run(
                 argv, input=envelope, capture_output=True, cwd=ROOT,
-                env=self.env, timeout=40, check=False,
+                env=self.docker_environment, timeout=40, check=False,
             )
             if staging_result.returncode:
                 cause = _staging_failure(staging_result.stderr)
@@ -459,7 +459,7 @@ class Docker:
                     )
                     raise OperationError(
                         f"Cannot confirm cleanup of owned private volume {volume}; "
-                        f"inspect selected Engine {self.base[-1]}.{cause}"
+                        f"inspect selected Engine {self.docker_command_prefix[-1]}.{cause}"
                     ) from cleanup_error
 
         return None if proof else volume
@@ -555,7 +555,7 @@ class Docker:
             )
             raise OperationError(
                 f"Schema init input-volume cleanup is unconfirmed for {volume} "
-                f"on selected Engine {self.base[-1]}.{first} Inspect exact volume ownership."
+                f"on selected Engine {self.docker_command_prefix[-1]}.{first} Inspect exact volume ownership."
             ) from cleanup_failure
 
         if failure is not None:
@@ -613,7 +613,7 @@ class Docker:
             "compose", "--env-file", "/dev/null", "--project-directory", str(ROOT),
             "-p", project, "-f", str(ROOT / "compose/runtime.yml"),
         ]
-        env = self.env.copy()
+        env = self.docker_environment.copy()
         env.update(
             CONIX_INDEXER_IMAGE=image,
             CONIX_INPUT_VOLUME=volume,
@@ -703,7 +703,7 @@ class Docker:
             "compose", "--env-file", "/dev/null", "--project-directory", str(ROOT),
             "-p", project, "-f", str(ROOT / "compose/tests.yml"),
         ]
-        env = self.env.copy()
+        env = self.docker_environment.copy()
         env["CONIX_TEST_RUNNER_IMAGE"] = image
         env["CONIX_POSTGRES_IMAGE"] = images["postgres"]
         try:
@@ -764,7 +764,7 @@ class Docker:
                          "--timeout", "30", env=env, timeout=90)
             except Exception as cleanup:
                 print(
-                    f"Cleanup unconfirmed: project={project}, endpoint={self.base[-1]}, "
+                    f"Cleanup unconfirmed: project={project}, endpoint={self.docker_command_prefix[-1]}, "
                     f"compose={ROOT / 'compose/tests.yml'}. Inspect before removing.",
                     file=sys.stderr,
                 )

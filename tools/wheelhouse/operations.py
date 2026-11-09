@@ -191,7 +191,7 @@ class SharedWheelhouse:
                 "--manifest", str(manifest),
             ]
             build_argv = [
-                *self.docker.base, "build", "--builder", "default",
+                *self.docker.docker_command_prefix, "build", "--builder", "default",
                 "--pull=false", "--platform", "linux/amd64",
                 "--network", "none", "--target", target, "--file", "Dockerfile",
                 "--build-arg", "PYTHON_BASE_IMAGE=" + self.images["python_base"],
@@ -212,7 +212,7 @@ class SharedWheelhouse:
                 try:
                     builder = subprocess.Popen(
                         build_argv, cwd=ROOT, stdin=streamer.stdout,
-                        stdout=sys.stderr, stderr=sys.stderr, env=self.docker.env,
+                        stdout=sys.stderr, stderr=sys.stderr, env=self.docker.docker_environment,
                         start_new_session=True,
                     )
                 except BaseException:

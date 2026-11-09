@@ -62,7 +62,7 @@ class FakeDocker:
 
     def __init__(self):
         self.calls = []
-        self.env = {}
+        self.docker_environment = {}
 
     def run(self, *args, **kwargs):
         self.calls.append(args)
@@ -351,7 +351,7 @@ class FixtureRunnerTests(unittest.TestCase):
                 descriptor_for("conix-abcdef123456"),
             )
             fixture.env = {}
-            fixture.docker.base = ["docker"]
+            fixture.docker.docker_command_prefix = ["docker"]
 
             def failed(_argv, *, error_file, **_kwargs):
                 error_file.write_bytes(phase_failure_record(

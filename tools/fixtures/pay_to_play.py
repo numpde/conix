@@ -74,7 +74,7 @@ def pin_sibling_context(docker, name):
         try:
             context_command = subprocess.run(
                 ["docker", "--config", str(docker.config_dir), *command],
-                env=docker.env, cwd=ROOT, stdin=subprocess.DEVNULL,
+                env=docker.docker_environment, cwd=ROOT, stdin=subprocess.DEVNULL,
                 capture_output=True, text=True, timeout=15, check=False,
             )
         except (OSError, subprocess.TimeoutExpired):
@@ -342,7 +342,7 @@ class PayToPlayTest:
         self.docker.require_role(self.runner_image, "evm-test-runner")
         self.docker.require_image(images["postgres"])
 
-        self.env = self.docker.env.copy()
+        self.env = self.docker.docker_environment.copy()
         self.env.update(
             CONIX_EVM_TEST_RUNNER_IMAGE=self.runner_image,
             CONIX_POSTGRES_IMAGE=images["postgres"],
@@ -376,7 +376,7 @@ class PayToPlayTest:
 
     def _phase(self, service, phase, *, state, need_receipt):
         """Run the installed fixture phase and admit only its checked receipt."""
-        argv = list(self.docker.base) + list(_compose(self.docker, self.project)) + [
+        argv = list(self.docker.docker_command_prefix) + list(_compose(self.docker, self.project)) + [
             "run", "--rm", "--no-deps", "--pull", "never", "-T",
             service, *([] if phase == "bootstrap" else [phase]),
         ]

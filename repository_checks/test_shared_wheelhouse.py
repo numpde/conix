@@ -51,9 +51,9 @@ class SharedWheelhouseContracts(unittest.TestCase):
             def __init__(self, rootless):
                 self.calls = []
                 self.rootless = rootless
-                self.base = ["docker", "--config", "/private/client",
+                self.docker_command_prefix = ["docker", "--config", "/private/client",
                              "--host", "unix:///tmp/selected-docker.sock"]
-                self.env = {}
+                self.docker_environment = {}
 
             def run(self, *args, **kwargs):
                 self.calls.append((args, kwargs))
