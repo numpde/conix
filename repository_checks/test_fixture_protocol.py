@@ -15,6 +15,7 @@ HASH = "0x" + "ab" * 32
 
 
 def valid():
+    """Build a syntactically valid, disposable v1 fixture descriptor."""
     event = [
         {"name": name, "type": type_, "indexed": indexed}
         for name, type_, indexed in (
@@ -54,10 +55,13 @@ def valid():
 
 
 def encode(document):
+    """Use the same single-line JSON framing as the private fixture handoff."""
     return (json.dumps(document, separators=(",", ":")) + "\n").encode()
 
 
 class FixtureContractTests(unittest.TestCase):
+    """Reject foreign source identities and secret-bearing public diagnostics."""
+
     def test_exact_dapp32_json_is_admitted(self):
         self.assertEqual(decode(encode(valid()), fixture_id=IDENTITY), valid())
 
@@ -109,6 +113,7 @@ class FixtureContractTests(unittest.TestCase):
                 explanation = parse_phase_failure(record, phase="collected")
                 self.assertIsNotNone(explanation)
                 self.assertIn(type(original).__name__, explanation)
+        # A child cannot bypass diagnostics admission by forging its stderr.
         forged = (
             b'CONIX_PHASE_FAILURE {"phase":"collected","category":"ScenarioFailure",'
             b'"reason":"privateKey=0x' + b"ab" * 32 + b'"}'

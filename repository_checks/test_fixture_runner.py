@@ -23,6 +23,7 @@ from test_fixture_protocol import valid
 
 
 def descriptor_for(fixture_id):
+    """Give tests a producer-shaped descriptor without a running chain."""
     document = valid()
     project = "dapps-pay-to-play-fixture-" + fixture_id
     document["fixtureId"] = fixture_id
@@ -32,6 +33,7 @@ def descriptor_for(fixture_id):
 
 
 def graph(fixture_image, postgres_image, rpc):
+    """Build an admitted Compose graph for adversarial privilege changes."""
     def item(image, user, networks, environment=None):
         return {
             "image": image, "pull_policy": "never", "user": user,
@@ -56,6 +58,8 @@ def graph(fixture_image, postgres_image, rpc):
 
 
 class FakeDocker:
+    """Record only the calls needed to check ownership and admission order."""
+
     def __init__(self):
         self.calls = []
         self.env = {}
@@ -70,6 +74,8 @@ class FakeDocker:
 
 
 class FixtureRunnerTests(unittest.TestCase):
+    """Keep dapp32 producer authority separate from Conix's borrowed test."""
+
     def test_sibling_context_is_frozen_in_private_docker_client(self):
         with tempfile.TemporaryDirectory() as folder:
             selected = SimpleNamespace(
@@ -202,6 +208,8 @@ class FixtureRunnerTests(unittest.TestCase):
             self.assertFalse(any("down" in call for call in calls))
 
     def test_cleanup_order_respects_consumer_retirement(self):
+        # Producer retirement must be causally downstream of consumer cleanup;
+        # a matching Compose project label alone never authorizes deletion.
         with tempfile.TemporaryDirectory() as path:
             docker = FakeDocker()
             campaign = runner.Campaign(
@@ -356,6 +364,7 @@ class FixtureRunnerTests(unittest.TestCase):
             self.assertFalse(fixture.consumer_retired)
 
     def test_failed_subprocess_keeps_private_output_out_of_terminal(self):
+        """The final error may name a phase/status, never child wallet output."""
         with tempfile.TemporaryDirectory() as directory:
             secret = "0x" + "ab" * 32
             output = Path(directory) / "out"

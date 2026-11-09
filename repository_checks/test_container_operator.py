@@ -104,6 +104,8 @@ else:
 
 
 class LocalDockerOperatorTests(unittest.TestCase):
+    """Exercise Docker admission and teardown without reaching any daemon."""
+
     def test_recording_docker_refuses_unknown_operations(self):
         # A fake that exits zero for an unrecognized command can certify a
         # dangerous new side effect as safe simply because it did not inspect it.
@@ -164,6 +166,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
                     operator.select_endpoint("science", "environment")
 
     def run_fake(self, *, fail_up=False, fail_down=False, bad_network=False, role="test-runner"):
+        """Use a recording Docker executable that refuses unrecognized effects."""
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)
             fake = directory / "docker"
@@ -233,6 +236,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
                          role="indexer",
                          bad_cap=False, bad_privileges=False, bad_runtime_network=False,
                          rootful=False, fail_up=False):
+        """Prove deployment confinement before start and recovery after failure."""
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)
             fake = directory / "docker"

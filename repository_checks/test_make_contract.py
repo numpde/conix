@@ -22,7 +22,10 @@ TARGETS = {
     "deployment/apply", "deployment/status", "deployment/remove",
 }
 
+
 class MakeContractTests(unittest.TestCase):
+    """Treat published Make target names as a stable operator interface."""
+
     def test_exact_exported_target_names(self):
         text = (ROOT / "Makefile").read_text()
         actual = set()
@@ -46,6 +49,7 @@ class MakeContractTests(unittest.TestCase):
                            "CONIX_CONFIG_FILE", "CONIX_DSN_FILE", "CONIX_DEPLOYMENT",
                            "WHEELHOUSE_IMAGE"):
             self.assertNotIn("CONIX_MAKE_" + deprecated, source)
+
 
 if __name__ == "__main__":
     unittest.main()

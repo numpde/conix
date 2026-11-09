@@ -41,6 +41,8 @@ PARAMETERS = {
 
 
 class MakeInputSafety(unittest.TestCase):
+    """Operator text must cross Make literally, never execute during expansion."""
+
     def test_default_target_is_read_only_help(self):
         with tempfile.TemporaryDirectory() as directory:
             marker = Path(directory) / "effect"
@@ -73,14 +75,14 @@ class MakeInputSafety(unittest.TestCase):
             env = os.environ.copy()
             env["PATH"] = str(root) + os.pathsep + env["PATH"]
             env["CONIX_TEST_TRACE"] = str(trace)
-            # Clear incidental inherited Make variables to test no hidden
-            # substitution or unexpected live input authority.
+            # Clear inherited selections so the test proves Make does not
+            # quietly recover authority from the operator's environment.
             for key in PARAMETERS.values():
                 env.pop(key, None)
             for name in list(env):
                 if name.startswith("CONIX_MAKE_"):
                     env.pop(name)
-            for target, key in PARAMETERS.items():
+            for (target, key) in PARAMETERS.items():
                 for shape in ("make", "shell"):
                     with self.subTest(target=target, variable=key, payload=shape):
                         marker = root / (target.replace("/", "_") + "_" + shape)

@@ -23,6 +23,7 @@ def _name(value):
 
 
 def direct_versions(requirements):
+    """Identify exact root requirements without resolving dependencies."""
     found = {}
     for requirement in requirements:
         result = DIRECT.fullmatch(requirement)
@@ -37,6 +38,7 @@ def direct_versions(requirements):
 
 
 def lock_versions(content):
+    """Require a single version and artifact hash per canonical package name."""
     found = {}
     for line in content.splitlines():
         line = line.strip()
@@ -56,6 +58,7 @@ def lock_versions(content):
 
 
 def verify_requirements(project, runtime, build):
+    """Check that recorded wheels cover the issuer's direct requirements."""
     for expected, actual, label in (
         (direct_versions(project["project"]["dependencies"]), lock_versions(runtime), "runtime"),
         (direct_versions(project["build-system"]["requires"]), lock_versions(build), "build"),
@@ -68,6 +71,8 @@ def verify_requirements(project, runtime, build):
 
 
 class OfflineInputChecks(unittest.TestCase):
+    """Verify source and image admission without pip, Docker or network."""
+
     def test_source_and_artifact_pins_agree(self):
         project = tomllib.loads((ROOT / "pyproject.toml").read_text())
         verify_requirements(

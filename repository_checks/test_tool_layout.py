@@ -32,6 +32,8 @@ ENTRYPOINTS = {
 
 
 class ToolLayoutContracts(unittest.TestCase):
+    """Keep operator packages importable without starting a Docker process."""
+
     def test_all_tools_have_a_clear_owner(self):
         existing = {
             path.relative_to(ROOT).as_posix()
@@ -54,6 +56,7 @@ class ToolLayoutContracts(unittest.TestCase):
                 self.assertIn("usage:", result.stdout.lower())
 
     def test_importing_operators_has_no_container_effects(self):
+        """Import is read-only: engine selection must remain an explicit action."""
         script = (
             "from tools.containers.operator import Docker, OperationError;"
             "from tools.fixtures.pay_to_play import Campaign;"

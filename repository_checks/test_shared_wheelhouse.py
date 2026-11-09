@@ -9,15 +9,17 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
-from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parent.parent
 from tools.wheelhouse import policy as pool
 
 
 class SharedWheelhouseContracts(unittest.TestCase):
+    """Prove admission and least privilege without a real package index."""
+
     def test_explicit_existing_private_pool_and_no_symlink_ancestor(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -44,6 +46,8 @@ class SharedWheelhouseContracts(unittest.TestCase):
         from tools.wheelhouse import operations as operation
 
         class Engine:
+            """Model only rootless identity and a contained selector response."""
+
             def __init__(self, rootless):
                 self.calls = []
                 self.rootless = rootless
@@ -166,7 +170,6 @@ class SharedWheelhouseContracts(unittest.TestCase):
             self.assertIsNone(_public_stream_diagnostic(trace))
 
     def test_warm_failure_does_not_authorize_network_without_missing_code(self):
-        from unittest.mock import patch
         from tools.wheelhouse import operations as operation
         fake = object.__new__(operation.SharedWheelhouse)
         fake.pin = {"name": "wheelhouse-tool-0.5.14.pyz"}
@@ -181,6 +184,8 @@ class SharedWheelhouseContracts(unittest.TestCase):
                     fake.acquire()
 
     def test_acquisition_and_offline_workers_have_nonoverlapping_permissions(self):
+        # A warm check gets neither egress nor a writable pool; explicit
+        # acquisition receives those permissions in a separate lane.
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "wheels"
             cache.mkdir()
