@@ -36,6 +36,7 @@ class CampaignError(Exception):
 
 
 def sibling_checkout(value):
+    """Admit an existing dapp32 checkout; never synthesize a producer."""
     if type(value) is not str or not value or "\n" in value or "\r" in value:
         raise CampaignError("Choose a concrete DAPP32_DIR checkout, with no line breaks.")
     path = Path(value)
@@ -103,7 +104,7 @@ def _progress(message):
 
 
 def owned_command(argv, *, output, error_file, env, timeout, payload=None, label="fixture command"):
-    """Bound/reap a child, keep its private output off terminal, report liveness."""
+    """Bound and reap one child; leave private receipts out of terminal output."""
     started = time.monotonic()
     _progress(f"{label}: started")
     with output.open("wb") as out, error_file.open("wb") as err:
@@ -114,7 +115,7 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
             argv, cwd=ROOT, env=env, stdin=subprocess.PIPE if payload is not None else subprocess.DEVNULL,
             stdout=out, stderr=err, start_new_session=True,
         )
-        first = True
+        send_payload = True
         try:
             while True:
                 remaining = timeout - (time.monotonic() - started)
@@ -122,11 +123,13 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
                     raise subprocess.TimeoutExpired(argv, timeout)
                 try:
                     child.communicate(
-                        input=payload if first else None, timeout=min(15, remaining)
+                        input=payload if send_payload else None, timeout=min(15, remaining)
                     )
                     break
                 except subprocess.TimeoutExpired:
-                    first = False
+                    # communicate() resumes the same process after a timeout;
+                    # input is passed only once, never replayed to the child.
+                    send_payload = False
                     if time.monotonic() - started >= timeout:
                         raise
                     _progress(f"{label}: running ({int(time.monotonic() - started)}s)")
@@ -160,6 +163,7 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
 
 
 def verify_network(docker, descriptor):
+    """Prove that the descriptor identifies a live, producer-owned Anvil."""
     project = descriptor["composeProject"]
     name = descriptor["dockerNetwork"]
     expected = f"true {project} {name}"
@@ -260,6 +264,7 @@ def read_borrowed_descriptor(value):
 
 
 def _compose(docker, project):
+    """Select only Conix's disposable SQL/test Compose project."""
     return (
         "compose", "--env-file", "/dev/null", "--project-directory", str(ROOT),
         "-p", project, "-f", str(ROOT / "compose/test-pay-to-play.yml"),
@@ -267,6 +272,7 @@ def _compose(docker, project):
 
 
 def _json_request(descriptor, state):
+    """Pass private fixture keys through stdin, never argv or environment."""
     return (json.dumps({"descriptor": descriptor, "state": state}, separators=(",", ":")) + "\n").encode()
 
 
@@ -302,6 +308,7 @@ class PayToPlayTest:
                 )
 
     def sql(self):
+        """Prepare isolated SQL, owner enrollment and the restricted test user."""
         images = pinned_images()
         self.docker.require_role(self.runner_image, "evm-test-runner")
         self.docker.require_image(images["postgres"])
@@ -335,19 +342,20 @@ class PayToPlayTest:
         self._phase("initialize", "initialize", state=None, need_receipt=False)
 
     def _phase(self, service, phase, *, state, need_receipt):
+        """Run the installed fixture phase and admit only its checked receipt."""
         argv = list(self.docker.base) + list(_compose(self.docker, self.project)) + [
             "run", "--rm", "--no-deps", "--pull", "never", "-T",
             service, *([] if phase == "bootstrap" else [phase]),
         ]
-        body = _json_request(self.descriptor, state) if phase != "bootstrap" else None
+        payload = _json_request(self.descriptor, state) if phase != "bootstrap" else None
         self.consumer_retired = False
         try:
-            result = owned_command(
+            phase_output = owned_command(
                 argv,
                 output=self._file("conix-" + phase + ".out"),
                 error_file=self._file("conix-" + phase + ".err"),
                 env=self.env, timeout=180 if phase in ("collected", "reorg") else 75,
-                payload=body, label=f"Conix phase/{phase}",
+                payload=payload, label=f"Conix phase/{phase}",
             )
             self.consumer_retired = True
         except CampaignError as error:
@@ -364,12 +372,13 @@ class PayToPlayTest:
             raise CampaignError(f"Conix phase/{phase} failed: {error}") from error
         if not need_receipt:
             return None
-        current = receipt(result)
-        if current["phase"] != phase:
+        phase_receipt = receipt(phase_output)
+        if phase_receipt["phase"] != phase:
             raise CampaignError("Contained fixture returned the wrong phase result.")
-        return current
+        return phase_receipt
 
     def execute(self):
+        """Run all phases without acquiring or retiring the dapp32 fixture."""
         # This is a borrower: the producer's fixture is never started or retired.
         # The test changes its exclusive chain state through real transactions.
         verify_network(self.docker, self.descriptor)
@@ -384,8 +393,8 @@ class PayToPlayTest:
             if phase == "reorg" and previous["collection_count"] != 0:
                 raise CampaignError("Orphaned collections remain after checked reorganization repair.")
 
-
     def cleanup(self):
+        """Retire only this test's owned SQL project, regardless of outcome."""
         if not self.sql_started:
             return []
         try:
@@ -406,7 +415,7 @@ class PayToPlayTest:
 
 
 class Campaign:
-    """Own producer up/info/down around the SAME PayToPlayTest executor."""
+    """Own producer fixture creation and retirement around the same test."""
 
     def __init__(self, docker, context, sibling, runner_image, scratch):
         self.docker = docker
@@ -440,6 +449,7 @@ class Campaign:
         )
 
     def acquire(self):
+        """Create and independently verify a new producer fixture."""
         # Never adopt an existing fixture or infer ownership from its ID.
         self.creation_attempted = True
         raw = self._dapp32("up")
@@ -452,13 +462,13 @@ class Campaign:
         self.descriptor = descriptor
         self.producer_owned = True
 
-
     def execute(self):
         self.acquire()
         self.test = PayToPlayTest(self.docker, self.runner_image, self.scratch, self.descriptor)
         self.test.execute()
 
     def cleanup(self):
+        """Retire consumers before the producer; report uncertain ownership."""
         errors = self.test.cleanup() if self.test is not None else []
         consumers_retired = (
             self.test is None or (self.test.sql_retired and self.test.consumer_retired)
@@ -478,6 +488,7 @@ class Campaign:
         return errors
 
     def recovery(self):
+        """Give exact operator coordinates without reproducing private JSON."""
         sql = self.test.project if self.test is not None else "none"
         return (
             f"Producer fixture ID={self.fixture_id}; Conix project={sql}; "
@@ -494,6 +505,7 @@ def _signal_interruption(_signum, _frame):
 
 
 def main():
+    """Keep the primary failure last, after cleanup and recovery evidence."""
     signal.signal(signal.SIGTERM, _signal_interruption)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--from-make", action="store_true")

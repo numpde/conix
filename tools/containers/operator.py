@@ -23,6 +23,7 @@ CONTEXT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 IMAGE_ID = re.compile(r"sha256:[a-f0-9]{64}\Z")
 
 def pinned_images():
+    """Read reviewed digest pins; this operation never pulls an image."""
     document = json.loads((ROOT / "containers/images.json").read_text(encoding="utf-8"))
     if set(document) != {"python_base", "postgres", "foundry", "dockerfile_frontend"}:
         raise OperationError("Reviewed manifest must contain python_base, postgres, foundry and dockerfile_frontend.")
@@ -33,15 +34,16 @@ def pinned_images():
     return document
 
 
-
-
 class OperationError(Exception):
+    """Safe operator failure with a separate subprocess exit status."""
+
     def __init__(self, detail, *, exit_code=None):
         super().__init__(detail)
         self.exit_code = exit_code
 
 
 def local_socket(endpoint):
+    """Admit a local Unix-socket endpoint, not a remote Docker authority."""
     try:
         uri = urlsplit(endpoint)
         return (uri.scheme == "unix" and not uri.netloc and not uri.query
@@ -53,6 +55,7 @@ def local_socket(endpoint):
 
 
 def environment(client_config=None):
+    """Remove ambient Docker, Compose and proxy selection before execution."""
     # Ambient client/Compose overrides are not authority to select an Engine,
     # Compose file, project, profile or build path.
     result = {k: v for k, v in os.environ.items()
@@ -110,6 +113,7 @@ def _docker_operation(argv):
 
 
 def command(argv, *, env, timeout=60, capture=False, progress_to_stderr=False, public_diagnostic=False):
+    """Execute bounded Docker commands; never echo private captured text."""
     try:
         result = subprocess.run(argv, cwd=ROOT, env=env, timeout=timeout,
                                 text=capture or public_diagnostic,
@@ -139,6 +143,7 @@ def command(argv, *, env, timeout=60, capture=False, progress_to_stderr=False, p
 
 
 def select_endpoint(name, origin):
+    """Resolve one local Engine, prompting only when selection is interactive."""
     if os.geteuid() == 0:
         raise OperationError(
             "Conix container operations refuse host root (UID 0). Use the selected "
@@ -168,8 +173,8 @@ def select_endpoint(name, origin):
         with open("/dev/tty", "r") as reader, open("/dev/tty", "w") as writer:
             keys = sorted(available)
             writer.write("Choose a local Docker context (none selected automatically):\n")
-            for i, key in enumerate(keys, 1):
-                writer.write(f"  {i}) {key}\n")
+            for (number, context_name) in enumerate(keys, 1):
+                writer.write(f"  {number}) {context_name}\n")
             writer.write("Context number: ")
             writer.flush()
             answer = reader.readline().strip()
@@ -184,6 +189,8 @@ def select_endpoint(name, origin):
 
 
 class Docker:
+    """Pin one admitted local Engine for every operation and cleanup."""
+
     def __init__(self, endpoint, config_dir):
         self.endpoint = endpoint
         self.config_dir = config_dir
@@ -289,6 +296,7 @@ class Docker:
               file=sys.stderr)
 
     def private_bytes(self, value, max_size, *, secret):
+        """Read operator-owned source bytes without following the final link."""
         path = Path(value)
         if not path.is_absolute():
             raise OperationError("Staged input files must use absolute host paths.")
@@ -314,6 +322,8 @@ class Docker:
         if not IMAGE_ID.fullmatch(image or ""):
             raise OperationError("INDEXER_IMAGE must select a prebuilt immutable indexer image.")
         self.require_role(image, "indexer")
+        # No operator input becomes a bind mount into the runtime. Stage a
+        # one-time snapshot and then prove access as the actual runtime UID.
         config = self.private_bytes(config_path, 64 * 1024, secret=False)
         dsn = self.private_bytes(dsn_path, 8192, secret=True)
         try:
@@ -359,7 +369,7 @@ class Docker:
                 remove = False
                 if announce:
                     print(volume)
-        except Exception as original:
+        except Exception:
             remove = True
             raise
         finally:
@@ -406,6 +416,7 @@ class Docker:
         )
 
     def remove_inputs(self, volume, *, token=None):
+        """Remove only the exact volume whose ownership label still matches."""
         if not re.fullmatch(r"conix-inputs-[a-f0-9]{24}", volume or ""):
             raise OperationError("Only conix-owned input-volume identities can be removed.")
         values = json.loads(self.run("volume", "inspect", volume, timeout=10, capture=True))
@@ -588,6 +599,7 @@ class Docker:
         )
 
     def test(self, image, images):
+        """Run isolated PostgreSQL tests without adopting external resources."""
         if not IMAGE_ID.fullmatch(image):
             raise OperationError("test/postgres/run requires immutable RUNNER_IMAGE=sha256:<id>.")
         self.require_role(image, "test-runner")
@@ -672,6 +684,7 @@ class Docker:
 
 
 def main():
+    """Dispatch only the operation explicitly selected through Make or CLI."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--from-make", action="store_true")
     parser.add_argument("--context", default="")
