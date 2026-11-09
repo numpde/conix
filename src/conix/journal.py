@@ -6,11 +6,11 @@ happen outside transactions. All history is rebuildable; no financial records
 are stored here.
 """
 
+import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
-import json
 from uuid import UUID, uuid4
 
 from eth_utils import to_checksum_address
@@ -27,13 +27,13 @@ ABI_PROFILE = "PayToPlay/2|asset()|viewPosition(address,uint256,address)|Voucher
 
 def source_digest(settings: Settings) -> bytes:
     """Bind retained history to chain, contract, origin and ABI—not RPC URL."""
-    document = {
+    source_identity = {
         "chain_id": settings.deployment.chain_id,
         "contract": settings.deployment.address.lower(),
         "start_block": settings.start_block,
         "abi": ABI_PROFILE,
     }
-    return sha256(json.dumps(document, sort_keys=True, separators=(",", ":")).encode()).digest()
+    return sha256(json.dumps(source_identity, sort_keys=True, separators=(",", ":")).encode()).digest()
 
 
 def advisory_key(settings: Settings) -> int:
@@ -55,73 +55,89 @@ class Basis:
     head_observed_at: datetime | None
 
 
-def _block(row) -> Block:
-    return Block(int(row["number"]), bytes(row["hash"]), bytes(row["parent_hash"]), int(row["timestamp"]))
+def _block(block_row) -> Block:
+    return Block(
+        number=int(block_row["number"]),
+        hash=bytes(block_row["hash"]),
+        parent_hash=bytes(block_row["parent_hash"]),
+        timestamp=int(block_row["timestamp"]),
+    )
 
 
 async def _state(connection: AsyncConnection, settings: Settings) -> Basis:
-    """Read progress and reject a mismatched or structurally incomplete source."""
-    progress = await (await connection.execute("SELECT * FROM conix.source_progress WHERE id = 1")).fetchone()
-    if progress is None:
+    """Read source_progress_row and reject a mismatched or structurally incomplete source."""
+    source_progress_row = await (await connection.execute("SELECT * FROM conix.source_progress WHERE id = 1")).fetchone()
+    if source_progress_row is None:
         raise ConfigurationError("conix schema is not initialized. Run conix init.")
 
     if (
-        progress["schema_version"] != VERSION
-        or bytes(progress["source_digest"]) != source_digest(settings)
-        or int(progress["chain_id"]) != settings.deployment.chain_id
-        or bytes(progress["contract_address"]) != bytes.fromhex(settings.deployment.address[2:])
-        or int(progress["start_block"]) != settings.start_block
+        source_progress_row["schema_version"] != VERSION
+        or bytes(source_progress_row["source_digest"]) != source_digest(settings)
+        or int(source_progress_row["chain_id"]) != settings.deployment.chain_id
+        or bytes(source_progress_row["contract_address"]) != bytes.fromhex(settings.deployment.address[2:])
+        or int(source_progress_row["start_block"]) != settings.start_block
     ):
         raise ConfigurationError(
             "Stored conix schema/source identity differs from configuration; select the original source or migrate explicitly."
         )
 
-    checkpoint = None
-    if progress["completed_height"] is not None:
-        block_row = await (await connection.execute(
-            "SELECT * FROM conix.blocks WHERE number = %s", (progress["completed_height"],)
+    completed_block = None
+    if source_progress_row["completed_height"] is not None:
+        checkpoint_block_row = await (await connection.execute(
+            "SELECT * FROM conix.blocks WHERE number = %s", (source_progress_row["completed_height"],)
         )).fetchone()
-        if block_row is None or bytes(block_row["hash"]) != bytes(progress["completed_hash"]):
-            raise CorruptStore("Completed checkpoint has no matching stored block.")
+        if checkpoint_block_row is None or bytes(checkpoint_block_row["hash"]) != bytes(source_progress_row["completed_hash"]):
+            raise CorruptStore("Completed completed_block has no matching stored block.")
 
-        checkpoint = _block(block_row)
-    elif int(progress["collection_count"]) != 0:
+        completed_block = _block(checkpoint_block_row)
+    elif int(source_progress_row["collection_count"]) != 0:
         raise CorruptStore("Unstarted source has a nonzero collection count.")
 
-    head = None
-    if progress["head_height"] is not None:
-        head = Block(int(progress["head_height"]), bytes(progress["head_hash"]),
-                     bytes(progress["head_parent_hash"]), int(progress["head_timestamp"]))
+    observed_upstream_head = None
+    if source_progress_row["head_height"] is not None:
+        observed_upstream_head = Block(int(source_progress_row["head_height"]), bytes(source_progress_row["head_hash"]),
+                     bytes(source_progress_row["head_parent_hash"]), int(source_progress_row["head_timestamp"]))
 
     return Basis(
-        progress["generation"], int(progress["revision"]), checkpoint,
-        int(progress["collection_count"]), progress["blocked_reason"],
-        head, progress["head_observed_at"],
+        generation=source_progress_row["generation"],
+        revision=int(source_progress_row["revision"]),
+        checkpoint=completed_block,
+        collection_count=int(source_progress_row["collection_count"]),
+        blocked_reason=source_progress_row["blocked_reason"],
+        upstream_head=observed_upstream_head,
+        head_observed_at=source_progress_row["head_observed_at"],
     )
 
 
 async def _check_basis(connection: AsyncConnection, settings: Settings, expected: Basis) -> Basis:
     """Discard prepared work when any committed publication basis has moved."""
-    current = await _state(connection, settings)
-    if (current.generation, current.revision, current.checkpoint, current.collection_count) != (
+    current_basis = await _state(connection, settings)
+    if (current_basis.generation, current_basis.revision, current_basis.checkpoint, current_basis.collection_count) != (
         expected.generation, expected.revision, expected.checkpoint, expected.collection_count
     ):
         raise StateChanged("The source publication basis changed; discard prepared work and reread progress.")
 
-    return current
+    return current_basis
 
 
-def _address(value: str) -> bytes:
-    return bytes.fromhex(value[2:])
+def _address(checksum_address: str) -> bytes:
+    return bytes.fromhex(checksum_address[2:])
 
 
-def _collection(row) -> Collection:
+def _collection(collection_row) -> Collection:
     return Collection(
-        int(row["block_number"]), bytes(row["block_hash"]), int(row["block_timestamp"]),
-        bytes(row["transaction_hash"]), int(row["transaction_index"]), int(row["log_index"]),
-        to_checksum_address(bytes(row["customer"])), int(row["channel_id"]),
-        to_checksum_address(bytes(row["payee"])), int(row["amount"]),
-        int(row["voucher_paid"]), bytes(row["invoice_hash"]),
+        block_number=int(collection_row["block_number"]),
+        block_hash=bytes(collection_row["block_hash"]),
+        block_timestamp=int(collection_row["block_timestamp"]),
+        transaction_hash=bytes(collection_row["transaction_hash"]),
+        transaction_index=int(collection_row["transaction_index"]),
+        log_index=int(collection_row["log_index"]),
+        customer=to_checksum_address(bytes(collection_row["customer"])),
+        channel_id=int(collection_row["channel_id"]),
+        payee=to_checksum_address(bytes(collection_row["payee"])),
+        amount=int(collection_row["amount"]),
+        voucher_paid=int(collection_row["voucher_paid"]),
+        invoice_hash=bytes(collection_row["invoice_hash"]),
     )
 
 
@@ -136,22 +152,24 @@ class Journal:
     async def _connection(self):
         """Open only the selected restricted login with server-side time limits."""
         async with await AsyncConnection.connect(
-            self._dsn, autocommit=True, row_factory=dict_row,
+            conninfo=self._dsn,
+            autocommit=True,
+            row_factory=dict_row,
             connect_timeout=10,
         ) as connection:
             # The server enforces time limits even if Python cancellation or
             # transport loss makes client-side timeouts ineffective.
-            timeout_ms = max(1, int(self.settings.operation_timeout_seconds * 1000))
+            statement_timeout_ms = max(1, int(self.settings.operation_timeout_seconds * 1000))
             await connection.execute(
                 "SELECT set_config('statement_timeout', %s, false)",
-                (f"{timeout_ms}ms",),
+                (f"{statement_timeout_ms}ms",),
             )
             await connection.execute(
                 "SELECT set_config('lock_timeout', %s, false)",
-                (f"{min(timeout_ms, 5000)}ms",),
+                (f"{min(statement_timeout_ms, 5000)}ms",),
             )
 
-            role = await (await connection.execute(
+            runtime_role_row = await (await connection.execute(
                 "SELECT r.rolname, r.rolsuper, r.rolcreatedb, r.rolcreaterole, "
                 "r.rolreplication, r.rolbypassrls, "
                 "pg_has_role(current_user, pg_get_userbyid(n.nspowner), 'member') AS owner_member, "
@@ -160,10 +178,10 @@ class Journal:
                 "WHERE r.rolname = current_user"
             )).fetchone()
             if (
-                role is None
-                or role["rolname"] != self.settings.runtime_role
-                or role["owner_member"] or role["schema_create"]
-                or any(role[name] for name in (
+                runtime_role_row is None
+                or runtime_role_row["rolname"] != self.settings.runtime_role
+                or runtime_role_row["owner_member"] or runtime_role_row["schema_create"]
+                or any(runtime_role_row[name] for name in (
                     "rolsuper", "rolcreatedb", "rolcreaterole",
                     "rolreplication", "rolbypassrls"
                 ))
@@ -187,9 +205,9 @@ class Journal:
     async def writer(self):
         """Hold the same PostgreSQL session lock for the lifetime of all writes."""
         async with self._connection() as connection:
-            key = advisory_key(self.settings)
-            row = await (await connection.execute("SELECT pg_try_advisory_lock(%s) AS acquired", (key,))).fetchone()
-            if not row["acquired"]:
+            advisory_lock_key = advisory_key(self.settings)
+            lock_result = await (await connection.execute("SELECT pg_try_advisory_lock(%s) AS acquired", (advisory_lock_key,))).fetchone()
+            if not lock_result["acquired"]:
                 raise WriterBusy("Another conix writer or repair operation owns this source.")
 
             # Closing this dedicated connection releases the advisory lock.
@@ -210,29 +228,29 @@ class Journal:
             raise HistoryUnavailable("Checkpoint names another source.")
 
         async with self._snapshot() as connection:
-            state = await _state(connection, self.settings)
-            if state.blocked_reason or state.generation != checkpoint.generation:
+            current_basis = await _state(connection, self.settings)
+            if current_basis.blocked_reason or current_basis.generation != checkpoint.generation:
                 raise HistoryUnavailable("History is blocked or belongs to a retired generation.")
 
-            if state.checkpoint is None or checkpoint.block.number > state.checkpoint.number:
+            if current_basis.checkpoint is None or checkpoint.block.number > current_basis.checkpoint.number:
                 raise HistoryUnavailable("Checkpoint is ahead of completed history.")
 
-            row = await (await connection.execute(
+            checkpoint_block_row = await (await connection.execute(
                 "SELECT * FROM conix.blocks WHERE number = %s", (checkpoint.block.number,)
             )).fetchone()
-            if row is None or _block(row) != checkpoint.block:
+            if checkpoint_block_row is None or _block(checkpoint_block_row) != checkpoint.block:
                 raise HistoryUnavailable("Checkpoint block was replaced or is not retained.")
 
-            # The exact event count makes a retained block into a complete
+            # The exact event collection_count_row makes a retained block into a complete
             # prefix, not merely a matching block height and hash.
-            count = await (await connection.execute(
+            collection_count_row = await (await connection.execute(
                 "SELECT COUNT(*) AS n FROM conix.collections WHERE block_number <= %s",
                 (checkpoint.block.number,),
             )).fetchone()
-            if int(count["n"]) != checkpoint.collection_count:
+            if int(collection_count_row["n"]) != checkpoint.collection_count:
                 raise HistoryUnavailable("Checkpoint collection prefix no longer agrees with retained history.")
 
-            return state
+            return current_basis
 
     async def page(self, checkpoint: Checkpoint, cursor: CollectionCursor | None, limit: int) -> CollectionPage:
         """Page a dense generation-local sequence from one complete SQL snapshot."""
@@ -248,51 +266,53 @@ class Journal:
             or cursor.next_sequence > checkpoint.collection_count
         ):
             raise HistoryUnavailable("Collection cursor is foreign, ahead or invalid; resynchronize.")
-        offset = 0 if cursor is None else cursor.next_sequence
+        starting_sequence = 0 if cursor is None else cursor.next_sequence
         async with self._snapshot() as connection:
-            state = await _state(connection, self.settings)
-            if state.blocked_reason or state.generation != checkpoint.generation:
+            current_basis = await _state(connection, self.settings)
+            if current_basis.blocked_reason or current_basis.generation != checkpoint.generation:
                 raise HistoryUnavailable("Collection generation was invalidated; resynchronize.")
 
-            if state.checkpoint is None or checkpoint.block.number > state.checkpoint.number:
+            if current_basis.checkpoint is None or checkpoint.block.number > current_basis.checkpoint.number:
                 raise HistoryUnavailable("Requested checkpoint has not been published.")
 
-            block_row = await (await connection.execute(
+            checkpoint_block_row = await (await connection.execute(
                 "SELECT * FROM conix.blocks WHERE number = %s", (checkpoint.block.number,)
             )).fetchone()
-            if block_row is None or _block(block_row) != checkpoint.block:
+            if checkpoint_block_row is None or _block(checkpoint_block_row) != checkpoint.block:
                 raise HistoryUnavailable("Collection checkpoint block was replaced.")
 
-            first = await (await connection.execute(
+            opening_block_row = await (await connection.execute(
                 "SELECT * FROM conix.blocks WHERE number = %s", (self.settings.start_block,)
             )).fetchone()
-            if first is None:
+            if opening_block_row is None:
                 raise CorruptStore("Retained history has no declared opening block.")
 
-            rows = await (await connection.execute(
+            collection_rows = await (await connection.execute(
                 "SELECT * FROM conix.collections WHERE sequence >= %s AND sequence < %s "
                 "ORDER BY sequence LIMIT %s",
-                (offset, checkpoint.collection_count, limit),
+                (starting_sequence, checkpoint.collection_count, limit),
             )).fetchall()
-            # A missing offset is corruption, not a permissible pagination gap.
-            next_offset = offset + len(rows)
-            if [int(row["sequence"]) for row in rows] != list(range(offset, next_offset)):
+            # A missing starting_sequence is corruption, not a permissible pagination gap.
+            next_sequence = starting_sequence + len(collection_rows)
+            if [int(collection_row["sequence"]) for collection_row in collection_rows] != list(range(starting_sequence, next_sequence)):
                 raise CorruptStore("Collection history has a missing or duplicate sequence.")
 
-            if next_offset < checkpoint.collection_count and len(rows) < limit:
+            if next_sequence < checkpoint.collection_count and len(collection_rows) < limit:
                 raise CorruptStore("Collection page ended before its complete retained prefix.")
 
             return CollectionPage(
-                checkpoint, _block(first), tuple(_collection(row) for row in rows),
-                CollectionCursor(checkpoint.generation, next_offset),
-                next_offset == checkpoint.collection_count,
+                checkpoint=checkpoint,
+                history_start=_block(opening_block_row),
+                voucher_collected_events=tuple(_collection(collection_row) for collection_row in collection_rows),
+                cursor=CollectionCursor(checkpoint.generation, next_sequence),
+                complete=(next_sequence == checkpoint.collection_count),
             )
 
     async def headers_at(self, checkpoint: Checkpoint, numbers: tuple[int, ...]) -> tuple[Block, ...]:
         """Read selected retained headers from one snapshot of a completed chain prefix.
 
         The writer has already validated and published every intermediate parent
-        link. A reader need not load millions of unchanged intermediate rows.
+        link. A reader need not load millions of unchanged intermediate header_rows.
         """
         if (
             type(checkpoint) is not Checkpoint
@@ -309,26 +329,26 @@ class Journal:
         ):
             raise HistoryUnavailable("Selected headers must be distinct, retained and bounded.")
         async with self._snapshot() as connection:
-            state = await _state(connection, self.settings)
+            current_basis = await _state(connection, self.settings)
             if (
-                state.blocked_reason
-                or state.generation != checkpoint.generation
-                or state.checkpoint is None
-                or state.checkpoint.number < checkpoint.block.number
+                current_basis.blocked_reason
+                or current_basis.generation != checkpoint.generation
+                or current_basis.checkpoint is None
+                or current_basis.checkpoint.number < checkpoint.block.number
             ):
                 raise HistoryUnavailable("Requested chain generation/checkpoint is no longer usable.")
-            rows = await (await connection.execute(
-                "SELECT * FROM conix.blocks WHERE number = ANY(%s::bigint[])",
+            header_rows = await (await connection.execute(
+                "SELECT * FROM conix.headers_by_number WHERE number = ANY(%s::bigint[])",
                 (list(numbers),),
             )).fetchall()
-            blocks = {int(row["number"]): _block(row) for row in rows}
-            if len(blocks) != len(numbers):
+            headers_by_number = {int(header_row["number"]): _block(header_row) for header_row in header_rows}
+            if len(headers_by_number) != len(numbers):
                 raise CorruptStore("Retained complete prefix is missing a requested block.")
 
-            if blocks.get(checkpoint.block.number, checkpoint.block) != checkpoint.block:
+            if headers_by_number.get(checkpoint.block.number, checkpoint.block) != checkpoint.block:
                 raise HistoryUnavailable("Completed checkpoint block was replaced.")
 
-            return tuple(blocks[number] for number in numbers)
+            return tuple(headers_by_number[number] for number in numbers)
 
     async def stored_headers(self, first: int, last: int) -> tuple[Block, ...]:
         """Read a connected retained prefix for deliberate repair inspection."""
@@ -339,21 +359,22 @@ class Journal:
             raise HistoryUnavailable("Requested header range exceeds max_evidence_blocks.")
 
         async with self._snapshot() as connection:
-            state = await _state(connection, self.settings)
-            if state.blocked_reason or state.checkpoint is None or first < self.settings.start_block or last > state.checkpoint.number:
+            current_basis = await _state(connection, self.settings)
+            if current_basis.blocked_reason or current_basis.checkpoint is None or first < self.settings.start_block or last > current_basis.checkpoint.number:
                 raise HistoryUnavailable("Requested ancestry is not covered by usable stored history.")
 
-            rows = await (await connection.execute(
-                "SELECT * FROM conix.blocks WHERE number BETWEEN %s AND %s ORDER BY number",
+            stored_block_rows = await (await connection.execute(
+                "SELECT * FROM conix.stored_blocks WHERE number BETWEEN %s AND %s ORDER BY number",
                 (first, last),
             )).fetchall()
-            blocks = tuple(map(_block, rows))
-            if len(blocks) != last - first + 1 or any(
-                b.number != a.number + 1 or b.parent_hash != a.hash for (a, b) in zip(blocks, blocks[1:])
+            stored_blocks = tuple(map(_block, stored_block_rows))
+            if len(stored_blocks) != last - first + 1 or any(
+                next_block.number != previous_block.number + 1 or next_block.parent_hash != previous_block.hash
+                for (previous_block, next_block) in zip(stored_blocks, stored_blocks[1:])
             ):
                 raise CorruptStore("Stored block ancestry has a gap or broken parent connection.")
 
-            return blocks
+            return stored_blocks
 
 
 class Writer:
