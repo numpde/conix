@@ -17,6 +17,7 @@ class MissingSelection(Exception):
 
 
 def run(pool, release, runtime, build):
+    """Select exact locked wheels offline; exit 10 only for missing artifacts."""
     pin = json.loads(release.read_text())
     tool = pool / ("wheelhouse-tool-" + pin["version"] + ".pyz")
     if sha256(tool.read_bytes()).hexdigest() != pin["sha256"]:
@@ -31,12 +32,12 @@ def run(pool, release, runtime, build):
         "--find-links", str(pool), "--report", "/tmp/wheelhouse-pip.json",
         "-r", str(runtime), "-r", str(build),
     ]
-    result = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, timeout=90)
-    if result.returncode:
+    pip_selection = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, timeout=90)
+    if pip_selection.returncode:
         # Missing is the ONLY offline status that permits explicit acquisition.
         # Hash mismatches, invalid locks, file permission errors and other
         # installer failures must never escalate to a network-enabled worker.
-        explanation = result.stderr.decode("utf-8", errors="replace")
+        explanation = pip_selection.stderr.decode("utf-8", errors="replace")
         if (
             "No matching distribution found" in explanation
             and "THESE PACKAGES DO NOT MATCH THE HASHES" not in explanation
@@ -47,7 +48,7 @@ def run(pool, release, runtime, build):
             "The selected target interpreter rejected cached wheel integrity "
             "or requirements; do not start network acquisition."
         )
-    converted = subprocess.run(
+    manifest_conversion = subprocess.run(
         [
             sys.executable, "-I", str(tool), "report",
             "--report", "/tmp/wheelhouse-pip.json",
@@ -55,15 +56,16 @@ def run(pool, release, runtime, build):
         ],
         stdin=subprocess.DEVNULL, capture_output=True, timeout=30,
     )
-    if converted.returncode:
+    if manifest_conversion.returncode:
         raise ValueError("Pinned wheelhouse-tool refused the contained pip selection report.")
-    result = json.loads(converted.stdout)
-    if type(result) is not list or not result:
+    artifacts = json.loads(manifest_conversion.stdout)
+    if type(artifacts) is not list or not artifacts:
         raise ValueError("The contained selector returned no wheel artifact identities.")
-    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    print(json.dumps(artifacts, sort_keys=True, separators=(",", ":")))
 
 
 def main():
+    """Keep missing-wheels distinct from integrity and tool failures."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pool", type=Path, required=True)
     parser.add_argument("--release", type=Path, required=True)

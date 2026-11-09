@@ -6,9 +6,9 @@ tar context directly to BuildKit; host pip never installs packages or wheels.
 """
 import hashlib
 import json
-import re
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -23,6 +23,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class SharedWheelhouse:
+    """Reuse one admitted host pool through the already selected Docker Engine."""
+
     def __init__(self, docker, images, path):
         self.docker = docker
         self.images = images
@@ -50,6 +52,7 @@ class SharedWheelhouse:
         return self.pool / self.pin["name"]
 
     def input_mounts(self):
+        """Provide only issuer locks and the reviewed release pin to workers."""
         return (
             "--mount", f"type=bind,src={ROOT / 'requirements/runtime.lock'},dst=/input/runtime.lock,readonly",
             "--mount", f"type=bind,src={ROOT / 'requirements/build.lock'},dst=/input/build.lock,readonly",
@@ -57,6 +60,7 @@ class SharedWheelhouse:
         )
 
     def run(self, *argv, network=False, write=False, timeout=120, capture=False, extra_mounts=()):
+        """Invoke contained target Python, never a host-side package installer."""
         # All worker commands use the same selected endpoint and private Docker
         # client configuration. No --privileged, rootful UID0, Docker socket or
         # network when a warm read is sufficient.
@@ -68,6 +72,7 @@ class SharedWheelhouse:
         )
 
     def check(self):
+        """Verify a warm pool using networkless, read-only target Python."""
         if not has_tool(self.pool, self.pin):
             raise PoolError(
                 "Pinned NMR wheelhouse-tool is missing from WHEELHOUSE; run explicit wheelhouse/acquire."
@@ -83,6 +88,7 @@ class SharedWheelhouse:
         return selection_manifest(raw.encode("utf-8"))
 
     def acquire(self):
+        """Use the network only for an explicitly missing pinned artifact."""
         # Warm caches must not launch any network-enabled worker, even for an
         # index lookup. The released tool itself is reused by SHA-256.
         if not has_tool(self.pool, self.pin):
@@ -146,6 +152,7 @@ class SharedWheelhouse:
         return self.check()
 
     def build(self, target):
+        """Stream admitted sources to offline BuildKit, tag only after success."""
         if target not in ("indexer", "test-runner", "evm-test-runner"):
             raise PoolError("The shared wheelhouse supports only the three declared installed-image targets.")
         selected = self.check()
@@ -154,10 +161,10 @@ class SharedWheelhouse:
         # Capture source exactly once: the released streamer checks every
         # source hash and wheel digest before writing it to Docker's stdin.
         sources = source_allowlist(ROOT)
-        names = [{"name": item["destination"], "sha256": item["sha256"], "exec": item["executable"]}
-                 for item in sources]
+        source_inventory = [{"name": item["destination"], "sha256": item["sha256"], "exec": item["executable"]}
+                            for item in sources]
         source_identity = hashlib.sha256(
-            json.dumps(names, sort_keys=True, separators=(",", ":")).encode()
+            json.dumps(source_inventory, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
         wheel_identity = hashlib.sha256(
             json.dumps(selected, sort_keys=True, separators=(",", ":")).encode()
@@ -166,7 +173,7 @@ class SharedWheelhouse:
             directory = Path(tmp)
             allowlist = directory / "sources.json"
             manifest = directory / "wheels.json"
-            iid = directory / "image-id"
+            image_id_file = directory / "image-id"
             diagnostics = directory / "stream.err"
             allowlist.write_text(json.dumps(sources), encoding="utf-8")
             manifest.write_text(json.dumps(selected), encoding="utf-8")
@@ -184,7 +191,7 @@ class SharedWheelhouse:
                 "--label", "io.conix.source-inputs=" + source_identity,
                 "--label", "io.conix.wheel-selection=" + wheel_identity,
                 "--label", "io.conix.image-role=" + target,
-                "--iidfile", str(iid),
+                "--iidfile", str(image_id_file),
             ]
             if target == "evm-test-runner":
                 build_argv.extend(("--build-arg", "FOUNDRY_IMAGE=" + self.images["foundry"]))
@@ -205,8 +212,8 @@ class SharedWheelhouse:
                     raise
                 producer.stdout.close()
                 try:
-                    status = build.wait(timeout=600)
-                    selected_status = producer.wait(timeout=60)
+                    builder_status = build.wait(timeout=600)
+                    stream_status = producer.wait(timeout=60)
                 except BaseException as error:
                     _retire(build)
                     _retire(producer)
@@ -217,17 +224,17 @@ class SharedWheelhouse:
                         "processes were signalled for retirement. Reconcile selected "
                         "Engine before reusing intermediate artifacts."
                     ) from error
-            if status or selected_status:
+            if builder_status or stream_status:
                 # Only the reviewed local wheel streamer produces this log.
                 # Never print arbitrary BuildKit output or credential-shaped
                 # substrings as a supposedly safe failure explanation.
-                reason = _public_stream_diagnostic(diagnostics) if selected_status else None
+                reason = _public_stream_diagnostic(diagnostics) if stream_status else None
                 extra = f" Shared stream: {reason}." if reason else ""
                 raise PoolError(
-                    f"Offline build rejected: BuildKit exit={status}, shared stream exit={selected_status}; "
+                    f"Offline build rejected: BuildKit exit={builder_status}, shared stream exit={stream_status}; "
                     f"no image tag was changed.{extra}"
                 )
-            raw = iid.read_text().strip() if iid.is_file() else ""
+            raw = image_id_file.read_text().strip() if image_id_file.is_file() else ""
             if len(raw) != 71 or not raw.startswith("sha256:") or any(
                 ch not in "0123456789abcdef" for ch in raw[7:]
             ):
@@ -239,7 +246,6 @@ class SharedWheelhouse:
         # confirmed their outcomes. Shared wheel bytes stay in the pool.
         self.docker.run("image", "tag", raw, f"conix-{target}:local", timeout=20)
         return raw
-
 
 
 def _public_stream_diagnostic(path):
@@ -261,7 +267,9 @@ def _public_stream_diagnostic(path):
             return value
     return None
 
+
 def _retire(process):
+    """Terminate and reap an owned process group after an interrupted build."""
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:

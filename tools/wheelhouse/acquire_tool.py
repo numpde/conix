@@ -1,6 +1,5 @@
 # Ported from numpde/magnet-deploy@fcb9459ca1facd8a6fc18a5acda271549f3a5e6e
 # scripts/acquire-wheelhouse-tool.py; same published wheelhouse-tool v0.5.14.
-#!/usr/bin/env python3
 """Acquire the pinned shared tool before it can acquire wheelhouse artifacts."""
 
 import fcntl
@@ -25,16 +24,19 @@ import urllib.request
 
 
 class InsecureRedirect(ValueError):
-    pass
+    """The published tool's HTTPS-only retrieval policy was violated."""
 
 
 class TransientDownload(OSError):
+    """A classified failure that permits a bounded retry of acquisition."""
+
     def __init__(self, detail, retry_after=0):
         super().__init__(detail)
         self.retry_after = retry_after
 
 
 def retry_after_seconds(headers):
+    """Parse a bounded Retry-After hint without trusting arbitrary headers."""
     value = headers.get('Retry-After') if headers else None
     if not isinstance(value, str) or len(value) > 128:
         return 0
@@ -50,6 +52,7 @@ def retry_after_seconds(headers):
 
 
 def network_failure(error):
+    """Classify only known transient transport faults for acquisition retries."""
     if isinstance(error, urllib.error.URLError):
         error = error.reason
     if isinstance(error, ssl.SSLError):
@@ -74,6 +77,7 @@ def network_failure(error):
 
 
 def download(url, target, expected):
+    """Stream a bounded HTTPS asset and verify its complete pinned digest."""
     try:
         source = urllib.request.build_opener(HttpsRedirects()).open(url, timeout=60)
     except urllib.error.HTTPError as error:
@@ -120,6 +124,8 @@ def download(url, target, expected):
 
 
 class HttpsRedirects(urllib.request.HTTPRedirectHandler):
+    """Refuse an HTTPS-to-HTTP redirect before any follow-up request."""
+
     def redirect_request(self, request, fp, code, message, headers, new_url):
         if urllib.parse.urlsplit(new_url).scheme != "https":
             raise InsecureRedirect("the release asset redirected to a non-HTTPS URL")
@@ -127,6 +133,7 @@ class HttpsRedirects(urllib.request.HTTPRedirectHandler):
 
 
 def cached(directory, name, expected):
+    """Admit an existing regular file only by exact released SHA-256."""
     try:
         descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
     except FileNotFoundError:
@@ -143,6 +150,7 @@ def cached(directory, name, expected):
 
 
 def acquire(pool, pin):
+    """Publish one pinned tool without clobbering concurrent pool users."""
     release = json.loads(pin.read_text(encoding="utf-8"))
     version, expected = release["version"], release["sha256"]
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) or not re.fullmatch(r"[0-9a-f]{64}", expected):
@@ -150,6 +158,8 @@ def acquire(pool, pin):
     name = f"wheelhouse-tool-{version}.pyz"
     directory = os.open(pool, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
+        # Check under a shared lock; upgrade to exclusive only for a missing
+        # tool, then recheck because another producer may have won the race.
         fcntl.flock(directory, fcntl.LOCK_SH)
         if cached(directory, name, expected):
             return
@@ -168,6 +178,8 @@ def acquire(pool, pin):
                     target.flush()
                     os.fchmod(target.fileno(), 0o644)
                     os.fsync(target.fileno())
+                # Hardlink creation is atomic and cannot overwrite a cache
+                # entry published by another acquisition worker.
                 try:
                     os.link(temporary, name, src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False)
                 except FileExistsError:

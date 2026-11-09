@@ -98,12 +98,13 @@ def has_tool(path, pin):
 
 def source_allowlist(root=ROOT):
     """Capture only Dockerfile inputs, with exact hashes and executable flags."""
+    # The build context is an allowlist, never the checkout root.
     relative = (
         "Dockerfile", "pyproject.toml", "requirements/runtime.lock",
         "requirements/build.lock", *TEST_SOURCES,
     )
-    src = root / "src" / "conix"
-    modules = tuple(sorted(file.relative_to(root).as_posix() for file in src.rglob("*.py")))
+    source_directory = root / "src" / "conix"
+    modules = tuple(sorted(file.relative_to(root).as_posix() for file in source_directory.rglob("*.py")))
     if not modules or "src/conix/__init__.py" not in modules:
         raise PoolError("Conix source package is absent from the selected build context.")
     try:
@@ -113,6 +114,7 @@ def source_allowlist(root=ROOT):
         ).stdout.decode("utf-8").split("\0")
     except (OSError, UnicodeError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         raise PoolError("Cannot establish the declared Git source inventory.") from None
+    # An untracked module must not enter the image merely because rglob found it.
     declared = {name for name in tracked if name}
     if declared != set(modules):
         raise PoolError(
@@ -206,6 +208,7 @@ def worker_grants(pool, *, user, network=False, write=None):
     unprivileged host account. A rootful CI engine instead uses the host
     account's numeric uid/gid. Neither worker receives Docker or host sockets.
     """
+    # Warm readers cannot gain a writable pool even if a caller asks for it.
     if write is None:
         write = network
     if write and not network:

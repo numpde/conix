@@ -21,12 +21,14 @@ BUILD = ("setuptools==82.0.1",)
 
 
 def selected_target():
+    """Refuse generating a lock for the wrong Python/platform tag set."""
     if (sys.version_info[:2] != (3, 12) or
             platform.system() != "Linux" or platform.machine() != "x86_64"):
         raise ValueError("Lock regeneration requires CPython 3.12 on Linux x86_64.")
 
 
 def inventory(requirements, temp: Path, label: str) -> str:
+    """Resolve once, then pin one exact wheel digest per package identity."""
     request = temp / (label + ".in")
     request.write_text("\n".join(requirements) + "\n", encoding="utf-8")
     wheels = temp / label
@@ -60,6 +62,7 @@ def inventory(requirements, temp: Path, label: str) -> str:
 
 
 def generate():
+    """Produce runtime and build locks from their independent root sets."""
     selected_target()
     with (ROOT / "pyproject.toml").open("rb") as stream:
         source = tomllib.load(stream)
@@ -75,6 +78,7 @@ def generate():
 
 
 def main():
+    """Regenerate only when explicitly requested; regular builds stay offline."""
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--write", action="store_true")
