@@ -5,7 +5,8 @@ from pathlib import Path
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests"))
-from fixture_protocol import FixtureError, decode, receipt
+from fixture_protocol import (FixtureError, ScenarioFailure, decode, parse_phase_failure,
+                              phase_failure_record, receipt)
 
 IDENTITY = "conix-fixture01"
 CONTRACT = "0x" + "12" * 20
@@ -82,6 +83,37 @@ class FixtureContractTests(unittest.TestCase):
         for value in (b"", baseline + baseline, baseline + b"garbage", b'{"schema":1,"schema":2}'):
             with self.subTest(length=len(value)), self.assertRaises(FixtureError):
                 decode(value, fixture_id=IDENTITY)
+
+    def test_safe_scenario_cause_is_carried_with_exact_phase(self):
+        original = ScenarioFailure("Indexed collection differs from the real receipt")
+        record = phase_failure_record("collected", original)
+        self.assertIn(
+            "ScenarioFailure: Indexed collection differs from the real receipt",
+            parse_phase_failure(record, phase="collected"),
+        )
+        self.assertIsNone(parse_phase_failure(record, phase="restart"))
+        self.assertIsNone(parse_phase_failure(
+            b"CONIX_PHASE_FAILURE not-json", phase="collected"
+        ))
+
+    def test_untrusted_exception_messages_cannot_reach_public_failure(self):
+        fake_key = "0x" + "ab" * 32
+        for original in (
+            ValueError("postgresql://owner:password@private.example/" + fake_key),
+            ScenarioFailure("privateKey=" + fake_key),
+        ):
+            with self.subTest(category=type(original).__name__):
+                record = phase_failure_record("collected", original)
+                self.assertNotIn(fake_key.encode(), record)
+                self.assertNotIn(b"password", record)
+                explanation = parse_phase_failure(record, phase="collected")
+                self.assertIsNotNone(explanation)
+                self.assertIn(type(original).__name__, explanation)
+        forged = (
+            b'CONIX_PHASE_FAILURE {"phase":"collected","category":"ScenarioFailure",'
+            b'"reason":"privateKey=0x' + b"ab" * 32 + b'"}'
+        )
+        self.assertIsNone(parse_phase_failure(forged, phase="collected"))
 
     def test_phase_receipt_may_not_include_fixture_secrets(self):
         source = {"phase": "baseline", "generation": "a" * 36,
