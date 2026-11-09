@@ -352,6 +352,7 @@ class Journal:
                 b.number != a.number + 1 or b.parent_hash != a.hash for (a, b) in zip(blocks, blocks[1:])
             ):
                 raise CorruptStore("Stored block ancestry has a gap or broken parent connection.")
+
             return blocks
 
 
@@ -397,6 +398,7 @@ class Writer:
                 current.checkpoint is not None and block.parent_hash != current.checkpoint.hash
             ):
                 raise StateChanged("Publication does not extend the current completed block by exactly one.")
+
             if len({event.log_index for event in collections}) != len(collections):
                 raise ValueError("Duplicate block-global log index in one block.")
 
