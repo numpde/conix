@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import stat
 import shutil
 import signal
 import subprocess
@@ -23,7 +24,7 @@ from tools.containers.operator import (
 )
 
 sys.path.insert(0, str(ROOT / "tests"))
-from fixture_protocol import FixtureError, decode, receipt
+from fixture_protocol import FixtureError, _bad_constant, _pairs, decode, receipt
 
 ID = re.compile(r"conix-[0-9a-f]{12}\Z")
 GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -150,7 +151,7 @@ def verify_network(docker, descriptor):
         raise CampaignError("Expected exactly one running producer-owned Anvil service.")
 
 
-def admit(rendered, *, fixture_image, postgres_image, rpc_network):
+def admit(rendered, *, runner_image, postgres_image, rpc_network):
     """Review the actual rendered Compose graph before creating SQL resources."""
     try:
         services = rendered["services"]
@@ -164,7 +165,7 @@ def admit(rendered, *, fixture_image, postgres_image, rpc_network):
         ):
             raise CampaignError("Fixture graph includes an unknown service or network.")
         for name, service in services.items():
-            expected_image = postgres_image if name in ("postgres", "bootstrap") else fixture_image
+            expected_image = postgres_image if name in ("postgres", "bootstrap") else runner_image
             required_user = "999:999" if name in ("postgres", "bootstrap") else "65532:65532"
             if (
                 service.get("image") != expected_image
@@ -195,10 +196,45 @@ def admit(rendered, *, fixture_image, postgres_image, rpc_network):
         raise CampaignError("Cannot validate the rendered fixture service graph.") from None
 
 
+def read_borrowed_descriptor(value):
+    """Read a private, immutable handle to a producer-verified source descriptor.
+
+    The descriptor authorizes an exclusive *test* against the supplied chain.
+    It never grants Conix the right to stop or remove dapp32 resources.
+    """
+    if type(value) is not str or not value or "\x00" in value:
+        raise CampaignError("FIXTURE_DESCRIPTOR must be an explicit absolute private JSON file.")
+    path = Path(value)
+    if not path.is_absolute() or any(part.is_symlink() for part in (path, *path.parents)):
+        raise CampaignError("FIXTURE_DESCRIPTOR must have an absolute path without symlink ancestors.")
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_mode & 0o077 or not 0 < info.st_size <= 1048576):
+                raise CampaignError("Fixture JSON must be an owner-owned, mode-0600-or-stricter regular file.")
+            raw = os.read(fd, 1048577)
+        finally:
+            os.close(fd)
+    except OSError:
+        raise CampaignError("Cannot open the selected private fixture descriptor.") from None
+    if len(raw) > 1048576:
+        raise CampaignError("Private fixture descriptor exceeds its byte limit.")
+    try:
+        decoded = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs,
+                             parse_constant=_bad_constant)
+    except (UnicodeError, ValueError, RecursionError):
+        raise CampaignError("Fixture descriptor must be unique-key UTF-8 JSON.") from None
+    if type(decoded) is not dict:
+        raise CampaignError("Fixture descriptor must be a JSON object.")
+    return decode(raw, fixture_id=decoded.get("fixtureId"))
+
+
 def _compose(docker, project):
     return (
         "compose", "--env-file", "/dev/null", "--project-directory", str(ROOT),
-        "-p", project, "-f", str(ROOT / "compose/fixture.yml"),
+        "-p", project, "-f", str(ROOT / "compose/test-pay-to-play.yml"),
     )
 
 
@@ -206,17 +242,16 @@ def _json_request(descriptor, state):
     return (json.dumps({"descriptor": descriptor, "state": state}, separators=(",", ":")) + "\n").encode()
 
 
-class Campaign:
-    def __init__(self, docker, context, sibling, fixture_image, scratch):
+class PayToPlayTest:
+    """Only owned disposable SQL/test resources; never dapp32 lifecycle."""
+
+    def __init__(self, docker, runner_image, scratch, descriptor):
         self.docker = docker
-        self.context = context
-        self.sibling = sibling
-        self.fixture_image = fixture_image
+        self.runner_image = runner_image
         self.scratch = scratch
-        self.fixture_id = "conix-" + secrets.token_hex(6)
-        self.project = "conix-fixture-" + secrets.token_hex(6)
-        self.descriptor = None
-        self.producer_owned = False
+        self.descriptor = descriptor
+        self.fixture_id = descriptor["fixtureId"]
+        self.project = "conix-test-" + secrets.token_hex(6)
         self.sql_started = False
         self.sql_retired = True
         self.consumer_retired = True
@@ -224,32 +259,6 @@ class Campaign:
 
     def _file(self, name):
         return self.scratch / name
-
-    def _dapp32(self, action):
-        if action not in ("up", "info", "down"):
-            raise CampaignError("Unknown producer fixture lifecycle action.")
-        return owned_command(
-            ["make", "--silent", "--no-print-directory", "-C", str(self.sibling),
-             "pay-to-play/local/fixture/" + action,
-             "DOCKER_CONTEXT=" + self.context,
-             "FIXTURE_ID=" + self.fixture_id],
-            output=self._file("producer-" + action + ".out"),
-            error_file=self._file("producer-" + action + ".err"),
-            env={**_clean_env(), "DOCKER_CONFIG": str(self.docker.config_dir)},
-            timeout=480 if action == "up" else 150,
-        )
-
-    def acquire(self):
-        # A deliberately new, unpredictable identity: never attach to or
-        # automatically reset an existing user's fixture.
-        raw = self._dapp32("up")
-        descriptor = decode(raw, fixture_id=self.fixture_id)
-        verify_network(self.docker, descriptor)
-        same = decode(self._dapp32("info"), fixture_id=self.fixture_id)
-        if same != descriptor:
-            raise CampaignError("Producer fixture changed between creation and independent inspection.")
-        self.descriptor = descriptor
-        self.producer_owned = True
 
     def check_new_sql_project(self):
         """Refuse to adopt or destroy any pre-existing Compose project assets."""
@@ -266,11 +275,11 @@ class Campaign:
 
     def sql(self):
         images = pinned_images()
-        self.docker.require_image(self.fixture_image)
+        self.docker.require_role(self.runner_image, "evm-test-runner")
         self.docker.require_image(images["postgres"])
         self.env = self.docker.env.copy()
         self.env.update(
-            CONIX_FIXTURE_IMAGE=self.fixture_image,
+            CONIX_EVM_TEST_RUNNER_IMAGE=self.runner_image,
             CONIX_POSTGRES_IMAGE=images["postgres"],
             CONIX_FIXTURE_ID=self.fixture_id,
             CONIX_RPC_NETWORK=self.descriptor["dockerNetwork"],
@@ -283,7 +292,7 @@ class Campaign:
         except ValueError:
             raise CampaignError("Compose returned invalid rendered fixture JSON.") from None
         admit(
-            definition, fixture_image=self.fixture_image,
+            definition, runner_image=self.runner_image,
             postgres_image=images["postgres"], rpc_network=self.descriptor["dockerNetwork"],
         )
         self.check_new_sql_project()
@@ -323,7 +332,9 @@ class Campaign:
         return current
 
     def execute(self):
-        self.acquire()
+        # This is a borrower: the producer's fixture is never started or retired.
+        # The test changes its exclusive chain state through real transactions.
+        verify_network(self.docker, self.descriptor)
         self.sql()
         previous = None
         for phase in ("baseline", "collected", "restart", "reorg"):
@@ -335,112 +346,180 @@ class Campaign:
             if phase == "reorg" and previous["collection_count"] != 0:
                 raise CampaignError("Orphaned collections remain after checked reorganization repair.")
 
+
     def cleanup(self):
-        errors = []
-        if self.sql_started:
-            try:
-                self.docker.run(*_compose(self.docker, self.project),
-                    "down", "--volumes", "--remove-orphans", "--timeout", "30",
-                    env=self.env, timeout=100)
-                self.sql_retired = True
-                self.consumer_retired = True
-            except Exception:
-                errors.append("Conix SQL/consumer teardown is unconfirmed.")
-        if self.producer_owned and self.sql_retired and self.consumer_retired:
+        if not self.sql_started:
+            return []
+        try:
+            self.docker.run(*_compose(self.docker, self.project),
+                "down", "--volumes", "--remove-orphans", "--timeout", "30",
+                env=self.env, timeout=100)
+            self.sql_retired = True
+            self.consumer_retired = True
+            return []
+        except Exception:
+            return ["Conix-owned SQL/consumer teardown is unconfirmed."]
+
+    def recovery(self):
+        return (f"Borrowed fixture ID={self.fixture_id}; Conix project={self.project}; "
+                "no rights to remove or replace the producer fixture; "
+                f"selected Engine={self.docker.endpoint}.")
+
+
+class Campaign:
+    """Own producer up/info/down around the SAME PayToPlayTest executor."""
+
+    def __init__(self, docker, context, sibling, runner_image, scratch):
+        self.docker = docker
+        self.context = context
+        self.sibling = sibling
+        self.runner_image = runner_image
+        self.scratch = scratch
+        self.fixture_id = "conix-" + secrets.token_hex(6)
+        self.descriptor = None
+        self.producer_owned = False
+        self.creation_attempted = False
+        self.test = None
+
+    def _file(self, name):
+        return self.scratch / name
+
+    def _dapp32(self, action):
+        if action not in ("up", "info", "down"):
+            raise CampaignError("Unknown producer fixture lifecycle action.")
+        return owned_command(
+            ["make", "--silent", "--no-print-directory", "-C", str(self.sibling),
+             "pay-to-play/local/fixture/" + action,
+             "DOCKER_CONTEXT=" + self.context,
+             "FIXTURE_ID=" + self.fixture_id],
+            output=self._file("producer-" + action + ".out"),
+            error_file=self._file("producer-" + action + ".err"),
+            env={**_clean_env(), "DOCKER_CONFIG": str(self.docker.config_dir)},
+            timeout=480 if action == "up" else 150,
+        )
+
+    def acquire(self):
+        # Never adopt an existing fixture or infer ownership from its ID.
+        self.creation_attempted = True
+        raw = self._dapp32("up")
+        descriptor = decode(raw, fixture_id=self.fixture_id)
+        verify_network(self.docker, descriptor)
+        same = decode(self._dapp32("info"), fixture_id=self.fixture_id)
+        if same != descriptor:
+            raise CampaignError("Producer fixture changed between creation and independent inspection.")
+        self.descriptor = descriptor
+        self.producer_owned = True
+
+
+    def execute(self):
+        self.acquire()
+        self.test = PayToPlayTest(self.docker, self.runner_image, self.scratch, self.descriptor)
+        self.test.execute()
+
+    def cleanup(self):
+        errors = self.test.cleanup() if self.test is not None else []
+        consumers_retired = (
+            self.test is None or (self.test.sql_retired and self.test.consumer_retired)
+        )
+        if self.producer_owned and consumers_retired:
             try:
                 self._dapp32("down")
                 self.producer_owned = False
             except Exception:
-                errors.append("dapp32 fixture teardown is unconfirmed.")
-        if self.producer_owned or self.descriptor is None:
-            # Never delete a fixture named only by a partial, failed descriptor:
-            # ownership cannot be inferred from the chosen name alone.
+                errors.append("dapp32 producer fixture teardown is unconfirmed.")
+        if self.producer_owned or (self.creation_attempted and self.descriptor is None):
             errors.append(
-                "Inspect the producer fixture with the exact dapp32 fixture/info command "
-                "before operator-authorized retirement."
+                "Inspect the original dapp32 fixture ID on the selected Engine; "
+                "creation/retirement ownership cannot be inferred from its name."
             )
         return errors
 
     def recovery(self):
+        sql = self.test.project if self.test is not None else "none"
         return (
-            f"Fixture ID={self.fixture_id}; Conix project={self.project}; "
-            f"selected Docker context={self.context}. "
+            f"Producer fixture ID={self.fixture_id}; Conix project={sql}; "
+            f"Docker context={self.context}; selected Engine={self.docker.endpoint}. "
             f"Inspect: make -C {self.sibling} pay-to-play/local/fixture/info "
             f"DOCKER_CONTEXT={self.context} FIXTURE_ID={self.fixture_id}. "
-            f"If ownership is confirmed and all consumers are retired, remove with "
-            f"pay-to-play/local/fixture/down using those same inputs."
+            "Retire with the sibling's fixture/down only after verifying creation "
+            "ownership and retirement of every consumer."
         )
 
 
 def _signal_interruption(_signum, _frame):
-    raise KeyboardInterrupt("Fixture operation interrupted; ownership must be reconciled.")
+    raise KeyboardInterrupt("Real-chain test interrupted; resources require reconciliation.")
 
 
 def main():
-    # SIGTERM must unwind the same owned-resource cleanup as ordinary failure.
     signal.signal(signal.SIGTERM, _signal_interruption)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--from-make", action="store_true")
     parser.add_argument("--origin", required=True)
+    parser.add_argument("action", choices=("test/pay-to-play/run", "campaign/pay-to-play/run"))
     parser.add_argument("--context")
     parser.add_argument("--dapp32-dir")
-    parser.add_argument("--fixture-image")
+    parser.add_argument("--runner-image")
+    parser.add_argument("--fixture-descriptor")
     args = parser.parse_args()
     try:
         if args.from_make:
             args.context = os.environ.get("CONIX_MAKE_DOCKER_CONTEXT", "")
             args.dapp32_dir = os.environ.get("CONIX_MAKE_DAPP32_DIR", "")
-            args.fixture_image = os.environ.get("CONIX_MAKE_CONIX_FIXTURE_IMAGE", "")
-        if not IMAGE_ID.fullmatch(args.fixture_image or ""):
-            raise CampaignError("Provide exact CONIX_FIXTURE_IMAGE=sha256:<id> built by tests/fixture/image/build.")
-        sibling = sibling_checkout(args.dapp32_dir)
-        # The sibling Make handoff requires a concrete context *name*, not
-        # just an interactively selected Unix endpoint. An empty forwarded
-        # DOCKER_CONTEXT would allow the producer to select another Engine.
-        if args.origin != "command line" or not args.context:
-            raise CampaignError(
-                "The dapp32 fixture campaign requires explicit "
-                "DOCKER_CONTEXT=<local-name> on the Make command line."
-            )
+            args.runner_image = os.environ.get("CONIX_MAKE_RUNNER_IMAGE", "")
+            args.fixture_descriptor = os.environ.get("CONIX_MAKE_FIXTURE_DESCRIPTOR", "")
+        if not IMAGE_ID.fullmatch(args.runner_image or ""):
+            raise CampaignError("Select a prebuilt immutable RUNNER_IMAGE=sha256:<id> with role evm-test-runner.")
+        owned = args.action == "campaign/pay-to-play/run"
+        if owned:
+            sibling = sibling_checkout(args.dapp32_dir)
+            if args.origin != "command line" or not args.context:
+                raise CampaignError("The dapp32 campaign requires an explicit DOCKER_CONTEXT=<local-name>.")
+        else:
+            # Admission precedes ALL Docker access; no sibling checkout is used.
+            borrowed = read_borrowed_descriptor(args.fixture_descriptor)
         endpoint = select_endpoint(args.context, args.origin)
-        with tempfile.TemporaryDirectory(prefix="conix-fixture-client-") as directory:
+        with tempfile.TemporaryDirectory(prefix="conix-test-client-") as directory:
             config = Path(directory)
-            (config / "config.json").write_text('{"auths":{},"proxies":{}}\n')
+            (config / "config.json").write_text('{"auths":{},"proxies":{}}\n', encoding="utf-8")
             docker = Docker(endpoint, config)
             docker.require_rootless_engine()
-            docker.require_image(args.fixture_image)
-            pin_sibling_context(docker, args.context)
-            scratch = Path(tempfile.mkdtemp(prefix="conix-fixture-", dir="/tmp"))
+            docker.require_role(args.runner_image, "evm-test-runner")
+            if owned:
+                pin_sibling_context(docker, args.context)
+            scratch = Path(tempfile.mkdtemp(prefix="conix-pay-to-play-", dir="/tmp"))
             os.chmod(scratch, 0o700)
-            campaign = Campaign(docker, args.context, sibling, args.fixture_image, scratch)
+            operation = (
+                Campaign(docker, args.context, sibling, args.runner_image, scratch) if owned
+                else PayToPlayTest(docker, args.runner_image, scratch, borrowed)
+            )
             failure = None
             try:
-                campaign.execute()
+                operation.execute()
             except BaseException as error:
                 failure = error
-            cleanup = campaign.cleanup()
+            cleanup = operation.cleanup()
             if failure is None and not cleanup:
                 shutil.rmtree(scratch)
-                print("PASS: real dapp32 PayToPlay, installed Conix SQL, collections, restart and manual reorg repair.")
+                print("PASS: PayToPlay collections, durable Conix indexing, "
+                      "separate-session restart and checked manual reorganization repair.")
                 return
             print(
-                f"Conix fixture campaign is not qualified; private receipts retained at {scratch}. "
-                + campaign.recovery(),
+                f"PayToPlay test did not qualify; private receipts retained at {scratch}. "
+                + operation.recovery(),
                 file=sys.stderr,
             )
-            if cleanup:
-                for message in cleanup:
-                    print(message, file=sys.stderr)
+            for message in cleanup:
+                print(message, file=sys.stderr)
             if failure is not None:
                 if isinstance(failure, KeyboardInterrupt):
-                    raise CampaignError("Fixture campaign was interrupted; inspect exact ownership and receipts.")
+                    raise CampaignError("Test was interrupted; inspect exact resource ownership.")
                 raise CampaignError(
-                    f"Fixture campaign failed ({type(failure).__name__}); "
-                    "inspect private receipts without publishing fixture keys."
+                    f"Real-chain test failed ({type(failure).__name__}); "
+                    "inspect retained private receipts without publishing fixture keys."
                 ) from None
-            raise CampaignError("Fixture campaign cleanup could not be confirmed.")
+            raise CampaignError("Real-chain test cleanup could not be confirmed.")
     except (CampaignError, FixtureError, OperationError, OSError, ValueError) as error:
-        raise SystemExit(f"Conix fixture refused or failed: {error}") from None
+        raise SystemExit(f"Conix PayToPlay test refused or failed: {error}") from None
 
 
 if __name__ == "__main__":
