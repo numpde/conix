@@ -1,5 +1,4 @@
 """Behavioral contract for the operation-owned Docker client; never contact a daemon."""
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -11,10 +10,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
-TOOL = ROOT / "tools/container.py"
-spec = importlib.util.spec_from_file_location("conix_container_operator", TOOL)
-operator = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(operator)
+from tools.containers import operator
 
 FAKE = r'''#!/usr/bin/env python3
 import json, os, sys
@@ -172,7 +168,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 env["CONIX_FAKE_BAD_NETWORK"] = "1"
             image = "sha256:" + "a" * 64
             run = subprocess.run([
-                sys.executable, str(TOOL),
+                sys.executable, "-m", "tools.containers.operator",
                 "--context", "science", "--origin", "command line",
                 "tests/container", "--test-image", image,
             ], env=env, capture_output=True, text=True, timeout=15)
@@ -235,7 +231,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
             if missing_resources:
                 env["CONIX_FAKE_MISSING_RESOURCE"] = "1"
             result = subprocess.run([
-                sys.executable, str(TOOL),
+                sys.executable, "-m", "tools.containers.operator",
                 "--context", "science", "--origin", "command line",
                 "runtime/" + operation, "--deployment", "pilot",
                 "--image", "sha256:" + "a" * 64,

@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Compile source (no acquisition)
-        run: python -m compileall -q src tests repository_checks
+        run: python -m compileall -q src tests tools repository_checks
       - name: Qualify host-side Docker context and teardown contracts
         run: make check/container
       - name: Acquire pinned images and hashed wheelhouse; build and test offline

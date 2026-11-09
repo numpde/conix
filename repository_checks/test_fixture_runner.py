@@ -3,7 +3,6 @@
 Exercises failures before acquisition, descriptor/endpoint provenance, rendered
 privileges and teardown order without inventing a fake indexer or signed logs.
 """
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -14,9 +13,8 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tests"))
-import fixture as runner
+from tools.fixtures import pay_to_play as runner
 from fixture_protocol import FixtureError
 from test_fixture_protocol import valid
 

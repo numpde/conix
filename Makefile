@@ -64,51 +64,51 @@ check/inputs:
 # Only preparation lanes may acquire images or wheels. Python validates all
 # raw inputs after Make starts it; no user-controlled value enters shell code.
 deps/images/prepare:
-	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" deps/images/prepare
+	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" deps/images/prepare
 
 deps/wheelhouse/check deps/wheelhouse/acquire:
-	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
+	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
 
 image/build:
-	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" image/build
+	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" image/build
 
 tests/image/build:
-	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" tests/image/build
+	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" tests/image/build
 
 image/smoke:
-	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" image/smoke
+	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" image/smoke
 
 tests/container:
-	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" tests/container
+	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" tests/container
 
 inputs/stage:
-	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" inputs/stage
+	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" inputs/stage
 
 inputs/proof:
-	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" inputs/proof
+	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" inputs/proof
 
 inputs/remove:
-	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" inputs/remove
+	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" inputs/remove
 
 runtime/start runtime/status runtime/stop runtime/render:
-	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
+	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
 
 # Owner credentials are staged in a disposable engine volume and never enter
 # the persistent runtime worker's configuration volume.
 schema/init:
-	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" schema/init
+	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" schema/init
 
 # Optional integration image only. The normal runtime image has no signing tool.
 deps/fixture-image/prepare:
-	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" deps/fixture-image/prepare
+	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" deps/fixture-image/prepare
 
 tests/fixture/image/build:
-	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" tests/fixture/image/build
+	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" tests/fixture/image/build
 
 # The host orchestrator owns the sibling fixture; no Conix worker mounts a
 # Docker socket, contract source checkout, or test signing account keys.
 tests/fixture:
-	@python3 tools/fixture.py --from-make --origin "$(origin DOCKER_CONTEXT)"
+	@python3 -m tools.fixtures.pay_to_play --from-make --origin "$(origin DOCKER_CONTEXT)"
 
 tests/fixture/image/smoke:
-	@python3 tools/container.py --from-make --origin "$(origin DOCKER_CONTEXT)" tests/fixture/image/smoke
+	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" tests/fixture/image/smoke

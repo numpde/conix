@@ -14,8 +14,7 @@ from unittest.mock import patch
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
-import shared_wheelhouse as pool
+from tools.wheelhouse import policy as pool
 
 
 class SharedWheelhouseContracts(unittest.TestCase):
@@ -42,7 +41,7 @@ class SharedWheelhouseContracts(unittest.TestCase):
                 pool.source_allowlist(ROOT)
 
     def test_selected_engine_determines_pool_worker_identity(self):
-        import wheelhouse_operations as operation
+        from tools.wheelhouse import operations as operation
 
         class Engine:
             def __init__(self, rootless):
@@ -114,7 +113,7 @@ class SharedWheelhouseContracts(unittest.TestCase):
         self.assertIn("requirements/build.lock", selected)
         self.assertIn("src/conix/journal.py", selected)
         self.assertIn("tests/fixture_campaign.py", selected)
-        self.assertNotIn("tools/container.py", selected)
+        self.assertNotIn("tools/containers/operator.py", selected)
         self.assertNotIn("containers/wheelhouse/Dockerfile", selected)
         self.assertTrue(all(item["sha256"] == hashlib.sha256(Path(item["path"]).read_bytes()).hexdigest()
                             for item in sources))
@@ -157,7 +156,7 @@ class SharedWheelhouseContracts(unittest.TestCase):
 
     def test_warm_failure_does_not_authorize_network_without_missing_code(self):
         from unittest.mock import patch
-        import wheelhouse_operations as operation
+        from tools.wheelhouse import operations as operation
         fake = object.__new__(operation.SharedWheelhouse)
         fake.pin = {"name": "wheelhouse-tool-0.5.14.pyz"}
         fake.pool = Path("/not/used")

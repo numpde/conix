@@ -95,8 +95,11 @@ class MakeInputSafety(unittest.TestCase):
                         self.assertTrue(trace.is_file(), "Make did not reach the operator entry point.")
                         record = json.loads(trace.read_text(encoding="utf-8"))
                         self.assertEqual(record["vars"]["CONIX_MAKE_" + key], value)
-                        expected = "tools/fixture.py" if target == "tests/fixture" else "tools/container.py"
-                        self.assertEqual(record["argv"][0], expected)
+                        expected = (
+                            "tools.fixtures.pay_to_play" if target == "tests/fixture"
+                            else "tools.containers.operator"
+                        )
+                        self.assertEqual(record["argv"][:2], ["-m", expected])
                         if target == "tests/fixture":
                             self.assertIn("--from-make", record["argv"])
                         else:
