@@ -300,6 +300,36 @@ class FixtureRunnerTests(unittest.TestCase):
                 self.assertTrue(campaign.cleanup())
             producer.assert_not_called()
 
+    def test_borrowed_make_action_never_uses_producer_or_context_reselection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "existing.json"
+            path.write_text(json.dumps(descriptor_for("exclusive-1")) + "\n")
+            path.chmod(0o600)
+            image = "sha256:" + "a" * 64
+            arguments = [
+                "pay_to_play", "--origin", "command line",
+                "--context", "agentic", "test/pay-to-play/run",
+                "--runner-image", image, "--fixture-descriptor", str(path),
+            ]
+            with patch.object(sys, "argv", arguments), patch.object(
+                runner, "select_endpoint", return_value="unix:///tmp/selected.sock"
+            ), patch.object(runner, "Docker") as engine, patch.object(
+                runner, "sibling_checkout", side_effect=AssertionError("Borrowed test looked up dapp32")
+            ), patch.object(
+                runner, "pin_sibling_context", side_effect=AssertionError("Borrowed test touched producer Docker context")
+            ), patch.object(
+                runner, "Campaign", side_effect=AssertionError("Borrowed test created a campaign")
+            ), patch.object(
+                runner.PayToPlayTest, "execute"
+            ) as execute, patch.object(
+                runner.PayToPlayTest, "cleanup", return_value=[]
+            ) as cleanup, patch.object(runner.signal, "signal"):
+                runner.main()
+            engine.return_value.require_rootless_engine.assert_called_once()
+            engine.return_value.require_role.assert_called_once_with(image, "evm-test-runner")
+            execute.assert_called_once()
+            cleanup.assert_called_once()
+
     def test_timed_out_owned_process_is_reaped_before_retirement(self):
         import time
         with tempfile.TemporaryDirectory() as directory:

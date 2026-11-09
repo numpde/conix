@@ -150,7 +150,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 with self.assertRaises(operator.OperationError):
                     operator.select_endpoint("science", "environment")
 
-    def run_fake(self, *, fail_up=False, fail_down=False, bad_network=False):
+    def run_fake(self, *, fail_up=False, fail_down=False, bad_network=False, role="test-runner"):
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)
             fake = directory / "docker"
@@ -169,7 +169,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 env["CONIX_FAKE_DOWN_FAIL"] = "1"
             if bad_network:
                 env["CONIX_FAKE_BAD_NETWORK"] = "1"
-            env["CONIX_FAKE_ROLE"] = "test-runner"
+            env["CONIX_FAKE_ROLE"] = role
             image = "sha256:" + "a" * 64
             run = subprocess.run([
                 sys.executable, "-m", "tools.containers.operator",
@@ -195,6 +195,14 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertEqual(len(set(projects)), 1)
         self.assertTrue(projects[0].startswith("conix-tier0-"))
 
+    def test_wrong_role_image_fails_before_database_or_runtime_side_effects(self):
+        pg, sql_calls = self.run_fake(role="indexer")
+        self.assertNotEqual(pg.returncode, 0)
+        self.assertFalse(any("up" in x["args"] or "down" in x["args"] for x in sql_calls))
+        deployment, calls = self.run_runtime_fake(role="evm-test-runner")
+        self.assertNotEqual(deployment.returncode, 0)
+        self.assertFalse(any("up" in x["args"] or "stop" in x["args"] for x in calls))
+
     def test_failed_test_still_tears_down(self):
         completed, calls = self.run_fake(fail_up=True)
         self.assertNotEqual(completed.returncode, 0)
@@ -209,6 +217,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertIn("network", completed.stderr)
 
     def run_runtime_fake(self, *, bad_bind=False, operation="apply", missing_resources=False,
+                         role="indexer",
                          bad_cap=False, bad_privileges=False, bad_runtime_network=False,
                          rootful=False):
         with tempfile.TemporaryDirectory() as folder:
@@ -220,7 +229,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
             env = os.environ.copy()
             env["PATH"] = str(directory) + os.pathsep + env["PATH"]
             env["CONIX_FAKE_LOG"] = str(log)
-            env["CONIX_FAKE_ROLE"] = "indexer"
+            env["CONIX_FAKE_ROLE"] = role
             env["DOCKER_HOST"] = "tcp://malicious.invalid:2375"
             env["COMPOSE_FILE"] = "/tmp/foreign.yml"
             if bad_bind:
