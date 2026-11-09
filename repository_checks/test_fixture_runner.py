@@ -493,3 +493,31 @@ class GenericAcceptanceOperatorContracts(unittest.TestCase):
             )
             self.assertFalse(consumer.sql_started)
             self.assertEqual(consumer.cleanup(), [])
+
+
+    def test_generic_owner_receives_no_private_fixture_descriptor(self):
+        with tempfile.TemporaryDirectory() as path:
+            descriptor = descriptor_for("conix-abcdef123456")
+            docker = SimpleNamespace(docker_command_prefix=("docker",), docker_environment={})
+            consumer = runner.PayToPlayTest(
+                docker, "sha256:" + "a" * 64, Path(path), descriptor, acceptance=True,
+            )
+            consumer.compose_environment = {}
+            genesis = {
+                "schema": "conix.acceptance.preflight.v1",
+                "chainId": 31337, "genesisHash": "0x" + "ab" * 32,
+            }
+            with patch.object(runner, "owned_command", return_value=b"") as invoked:
+                consumer._phase("initialize", "initialize", prior_receipt=genesis, expect_receipt=False)
+            payload = json.loads(invoked.call_args.kwargs["payload"].decode())
+            self.assertEqual(payload["state"], genesis)
+            self.assertEqual(
+                set(payload["descriptor"]),
+                {"schema", "chainId", "rpcUrl", "payment"},
+            )
+            self.assertEqual(
+                set(payload["descriptor"]["payment"]),
+                {"address", "deploymentBlock"},
+            )
+            self.assertNotIn("privateKey", invoked.call_args.kwargs["payload"].decode())
+            self.assertNotIn("publicFixtureAccounts", invoked.call_args.kwargs["payload"].decode())

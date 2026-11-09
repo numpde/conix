@@ -154,3 +154,23 @@ class AcceptancePreflightContracts(unittest.TestCase):
         ):
             with self.subTest(record=malformed), self.assertRaises(FixtureError):
                 acceptance_preflight((json.dumps(malformed) + "\n").encode(), chain_id=31337)
+
+
+class AcceptancePublicSourceContracts(unittest.TestCase):
+    """Require an exact, credential-free schema-owner input."""
+
+    def test_public_projection_and_admission(self):
+        from fixture_protocol import public_acceptance_source, admit_public_acceptance_source
+        fixture = valid()
+        projected = public_acceptance_source(fixture)
+        self.assertEqual(admit_public_acceptance_source(projected), projected)
+        self.assertNotIn("publicFixtureAccounts", json.dumps(projected))
+        self.assertNotIn("privateKey", json.dumps(projected))
+        for mutation in (
+            {**projected, "privateKey": "0x" + "99" * 32},
+            {**projected, "chainId": True},
+            {**projected, "rpcUrl": "https://untrusted.example"},
+            {**projected, "payment": {"address": "0xdead", "deploymentBlock": 1}},
+        ):
+            with self.subTest(case=mutation), self.assertRaises(FixtureError):
+                admit_public_acceptance_source(mutation)

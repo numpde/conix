@@ -12,7 +12,8 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fixture_protocol import FixtureError, ScenarioFailure, _bad_constant, _pairs, decode, phase_failure_record
+from fixture_protocol import (FixtureError, ScenarioFailure, _bad_constant, _pairs,
+                              admit_public_acceptance_source, decode, phase_failure_record)
 from abi_golden_vectors import ERC20, ERC721
 from abi_contract_vectors import PAY_TO_PLAY, COMPOUND
 import httpx
@@ -32,6 +33,9 @@ def request():
     descriptor = document["descriptor"]
     if type(descriptor) is not dict:
         raise FixtureError("Generic acceptance descriptor is malformed.")
+    if sys.argv[1] == "initialize":
+        return admit_public_acceptance_source(descriptor), document["state"]
+
     fixture_id = os.environ.get("CONIX_FIXTURE_ID", "")
     return decode((json.dumps(descriptor, separators=(",", ":")) + "\n").encode(), fixture_id=fixture_id), document["state"]
 
@@ -80,10 +84,16 @@ def catalog_path(descriptor, genesis_hash):
     """Stage only verified public ABI and source metadata in contained tmpfs."""
     root = Path("/tmp/conix-acceptance")
     root.mkdir(mode=0o700, exist_ok=True)
+    # Both owner and reader use one reviewed ABI snapshot bundled in the
+    # installed test image, not data from the private fixture handoff.
+    reviewed_abi = Path("/tests/fixtures/abi/pay_to_play.json")
     abi = root / "payment.json"
-    abi.write_text(json.dumps(descriptor["contracts"]["PayToPlay"]["abi"], sort_keys=True), encoding="utf-8")
+    abi.write_bytes(reviewed_abi.read_bytes())
     abi.chmod(0o600)
-    deployment = descriptor["contracts"]["PayToPlay"]
+    deployment = (
+        descriptor["payment"] if "payment" in descriptor
+        else descriptor["contracts"]["PayToPlay"]
+    )
     config = root / "source.toml"
     config.write_text(
         'version = 1\n[chain]\n'

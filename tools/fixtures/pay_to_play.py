@@ -25,7 +25,8 @@ from tools.containers.operator import (
 )
 
 sys.path.insert(0, str(ROOT / "tests"))
-from fixture_protocol import FixtureError, _bad_constant, _pairs, acceptance_preflight, decode, parse_phase_failure, receipt
+from fixture_protocol import (FixtureError, _bad_constant, _pairs, acceptance_preflight,
+                              public_acceptance_source, decode, parse_phase_failure, receipt)
 
 ID = re.compile(r"conix-[0-9a-f]{12}\Z")
 GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -439,7 +440,14 @@ class PayToPlayTest:
             "run", "--rm", "--no-deps", "--pull", "never", "-T",
             *runner_arguments,
         ]
-        phase_payload = _json_request(self.fixture_descriptor, prior_receipt) if phase != "bootstrap" else None
+        # The owner phase receives no wallet credentials or arbitrary
+        # producer ABI contents. Its ABI is the reviewed test-image fixture.
+        source = (
+            public_acceptance_source(self.fixture_descriptor)
+            if self.acceptance and phase == "initialize"
+            else self.fixture_descriptor
+        )
+        phase_payload = _json_request(source, prior_receipt) if phase != "bootstrap" else None
         self.consumer_retired = False
 
         try:

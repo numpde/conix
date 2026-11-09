@@ -270,3 +270,39 @@ def acceptance_preflight(raw: bytes, *, chain_id: int) -> dict:
     ):
         raise FixtureError("Preflight has an invalid source identity or extra fields.")
     return result
+
+
+def public_acceptance_source(descriptor: dict) -> dict:
+    """Project a validated private fixture onto owner-safe chain coordinates.
+
+    The ABI used by acceptance is a reviewed, installed JSON fixture. Wallet
+    accounts, producer identity, private keys and arbitrary ABI fields never
+    cross into the schema owner's stdin.
+    """
+    deployed = descriptor["contracts"]["PayToPlay"]
+    return {
+        "schema": "conix.acceptance.public-source.v1",
+        "chainId": descriptor["chainId"],
+        "rpcUrl": descriptor["rpcUrl"],
+        "payment": {
+            "address": deployed["address"],
+            "deploymentBlock": deployed["deploymentBlock"],
+        },
+    }
+
+
+def admit_public_acceptance_source(value: dict) -> dict:
+    """Validate the minimal public source admitted by the owner phase."""
+    payment = value.get("payment") if type(value) is dict else None
+    if (
+        type(value) is not dict
+        or set(value) != {"schema", "chainId", "rpcUrl", "payment"}
+        or value["schema"] != "conix.acceptance.public-source.v1"
+        or type(value["chainId"]) is not int or value["chainId"] != 31337
+        or value["rpcUrl"] != "http://pay-to-play-anvil:8545"
+        or type(payment) is not dict or set(payment) != {"address", "deploymentBlock"}
+        or not _address(payment["address"])
+        or not _uint(payment["deploymentBlock"])
+    ):
+        raise FixtureError("Owner phase requires exact public source metadata.")
+    return value

@@ -823,7 +823,10 @@ Test harness from commit D:
   tests/generic_acceptance.py        (installed-image phases)
 
 The opt-in gate obtains public genesis via a genuine RPC-connected Anvil
-consumer, initializes via separate owner-only identity, and invokes named
+consumer. The owner phase receives only a separately admitted public
+chain/contract-coordinate envelope and checked genesis, NOT the private
+producer descriptor or accounts. Both phases use one reviewed installed ABI
+fixture. It initializes via a separate owner-only identity, and invokes named
 installed-code checks under a restricted runtime identity. It deliberately
 fails at catalog import until the new code exists. This is not a skipped test
 and the old prototype has no compatibility fallback. The legacy PayToPlay
