@@ -3,15 +3,24 @@ Conix repository instructions
 
 Scope
 -----
-Conix is a focused PayToPlay collection observer. It owns rebuildable chain
-history, exact checkpoints, canonicality evidence and guarded observations.
-It does not own invoice acceptance, accounting, wallet keys, nonce management
-or collection decisions.
+Conix's target is one generic EVM event indexer: a single-ABI-driven scanner,
+one complete-block PostgreSQL raw-log journal, and one checkpoint-bound reader
+supporting PayToPlay, ERC-20 and ERC-721 without contract-specific source code.
+The current implementation is an EXPERIMENTAL PayToPlay-only prototype,
+disposable without migration or compatibility layers.
 
-The governing contracts are notes/000_architecture_guidelines.txt and
-notes/001_implementation_plan.txt. Tier 0 is the concrete program in every
-future composition. Do not replace its scanner, publisher, observation guards
-or repair with alternative implementations behind compatible interfaces.
+notes/004_rpc_evidence_and_raw_log_indexer_plan.txt governs the new Tier-0
+implementation and qualification. notes/002_make_operator_contract.txt governs
+the existing Make/Docker authority. notes/000_architecture_guidelines.txt
+governs future Tier-1/2 concrete delegation ONLY AFTER generic Tier 0 exists.
+notes/001_implementation_plan.txt and notes/003_declarative_evm_indexer_design.txt
+are historical references, not competing product contracts.
+
+Tier 0 owns rebuildable selected event history, exact checkpoints, guarded
+canonicality evidence and read-only block-pinned contract calls. Accounting,
+signing, invoice acceptance, payment policy and wallet keys belong elsewhere.
+Do not freeze, preserve or adapt the existing PayToPlay-specific scanner and
+reader merely to maintain prototype test compatibility.
 
 Implementation discipline
 -------------------------

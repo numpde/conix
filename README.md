@@ -1,18 +1,33 @@
-Conix — focused PayToPlay collection observer
-===============================================
+Conix — generic EVM raw-log indexer (Tier 0 under construction)
+===============================================================
 
 Make targets follow <resource>[/<role-or-subject>]/<action>, with effects,
 permissions and outputs defined in notes/002_make_operator_contract.txt.
 Plain make prints help without using Docker.
 
-Status: Tier 0 under qualification. Branch 20261108-tier0-executable-core.
-The implementation observes one explicitly configured chain, one PayToPlay
-contract, one trusted Ethereum RPC and one PostgreSQL database. It does not
-validate independent consensus, supply financial finality policy, send
-transactions, allocate invoices or administer the payment ledger.
+Status (2026-11-09): main contains the EXPERIMENTAL PayToPlay-only observer,
+not the target generic Tier 0. The previous implementation and database schema
+may be replaced outright: no production source, history or API needs migration.
 
-See notes/000_architecture_guidelines.txt for the mandatory concrete-delegation
-rule and notes/001_implementation_plan.txt for scope and acceptance gates.
+The current authoritative plan is
+notes/004_rpc_evidence_and_raw_log_indexer_plan.txt. It specifies one installed
+ABI-driven scanner and raw-log journal, a single complete block checkpoint
+across selected contracts, exact indexed equality filtering, and block-pinned
+view/pure calls. ERC-20, ERC-721 and PayToPlay must work without Conix source
+changes. The supported type matrix and independent literal fixtures live in
+tests/fixtures/abi/, tests/abi_golden_vectors.py and
+tests/abi_contract_vectors.py. Neither passing fixture tests nor existing
+PayToPlay tests qualifies the generic implementation.
+
+notes/000_architecture_guidelines.txt applies to Tier-1/2 delegation after
+generic Tier 0 is implemented; notes/002_make_operator_contract.txt governs
+the operator API. Notes 001 and 003 document earlier work.
+
+The operational instructions below describe the CURRENT PROTOTYPE only.
+Preserve their security/packaging infrastructure, but do not mistake the
+current PayToPlay-only data model, CLI or tests for the intended public API.
+Conix never independently validates consensus or financial finality and never
+owns wallet keys, signing, invoice acceptance, or accounting.
 
 Run only the exact deployment and configured history origin
 -----------------------------------------------------------
@@ -284,8 +299,11 @@ It attempts to remove its own resources on success/failure; uncertain teardown
 reports the owned project for manual recovery. The Docker operator tests run
 without a Docker daemon. CI independently installs and checks the wheel.
 
-Real PayToPlay/Anvil and payment-ledger end-to-end qualification is outstanding:
-source-only or controlled-RPC tests do not substitute for that proof.
+The existing PayToPlay/Anvil fixture exercises the legacy prototype. A green
+prototype campaign is not proof of generic ABI decoding, raw-log completeness,
+filtered history, historical read calls or real accounting integration.
+The opt-in generic acceptance runner is deliberately RED until the new core
+exists; it reuses the same contained Anvil/PostgreSQL authority.
 
 Not in Tier 0: retries, automatic fork recovery, prefetch, caches, alternative
 payment logic, parallel/range scanning, multiple writers, other chains or
@@ -293,8 +311,8 @@ automatic schema upgrades. An unsupported observation fails rather than
 manufacturing complete history, current canonicality or finality evidence.
 
 
-PayToPlay real-chain test and owned fixture campaign
------------------------------------------------------
+Existing PayToPlay real-chain test and opt-in generic acceptance
+----------------------------------------------------------------
 
 Conix consumes dapp32's existing pay-to-play.local-fixture.v1 interface. The
 producer checkout, contracts and Anvil Compose stack are NOT copied or edited.
@@ -303,6 +321,16 @@ The owned campaign invokes dapp32's fixture/up, validates the private JSON
 Docker network and producer-owned Anvil container, then invokes fixture/info
 independently. It creates an unpredictable fixture ID and delegates down only
 after confirmed consumer retirement.
+
+The generic test/indexer/acceptance/run and
+campaign/indexer/acceptance/run targets reuse the same validated fixture,
+selected Docker engine, disposable PostgreSQL, private stdin and cleanup
+protocol. Unlike the passing prototype lane, they run
+/tests/generic_acceptance.py inside the installed image. First an unprivileged
+RPC consumer verifies genesis and emits only a bounded public receipt for
+the database-only owner. The new generic public API and schema are not yet
+installed, so these gates MUST fail; they are not part of the passing CI
+suite. No legacy indexer fallback is permitted.
 
 The separate test/pay-to-play/run consumes an explicitly selected private
 fixture JSON descriptor, requires an owner-owned mode-0600 file, verifies the

@@ -2,7 +2,7 @@ name: conix Tier 0 checks
 
 on:
   push:
-    branches: [20261108-tier0-executable-core]
+    branches: [main]
   pull_request:
 
 jobs:
