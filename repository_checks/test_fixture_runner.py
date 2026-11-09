@@ -3,6 +3,7 @@
 Exercises failures before acquisition, descriptor/endpoint provenance, rendered
 privileges and teardown order without inventing a fake indexer or signed logs.
 """
+import io
 import json
 import os
 from pathlib import Path
@@ -10,12 +11,13 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from contextlib import redirect_stderr
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
 from tools.fixtures import pay_to_play as runner
-from fixture_protocol import FixtureError
+from fixture_protocol import FixtureError, ScenarioFailure, phase_failure_record
 from test_fixture_protocol import valid
 
 
@@ -329,6 +331,48 @@ class FixtureRunnerTests(unittest.TestCase):
             engine.return_value.require_role.assert_called_once_with(image, "evm-test-runner")
             execute.assert_called_once()
             cleanup.assert_called_once()
+
+    def test_failed_fixture_phase_reports_its_verified_cause(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = runner.PayToPlayTest(
+                FakeDocker(), "sha256:" + "a" * 64, Path(directory),
+                descriptor_for("conix-abcdef123456"),
+            )
+            fixture.env = {}
+            fixture.docker.base = ["docker"]
+
+            def failed(_argv, *, error_file, **_kwargs):
+                error_file.write_bytes(phase_failure_record(
+                    "collected", ScenarioFailure("Indexed collection differs from real receipt")
+                ) + b"\n")
+                raise runner.CampaignError("Conix phase/collected exited with status 1.")
+
+            with patch.object(runner, "owned_command", side_effect=failed):
+                with self.assertRaises(runner.CampaignError) as raised:
+                    fixture._phase("consumer", "collected", state=None, need_receipt=True)
+            self.assertIn("phase/collected", str(raised.exception))
+            self.assertIn("Indexed collection differs", str(raised.exception))
+            self.assertFalse(fixture.consumer_retired)
+
+    def test_failed_subprocess_keeps_private_output_out_of_terminal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            secret = "0x" + "ab" * 32
+            output = Path(directory) / "out"
+            stderr = Path(directory) / "err"
+            terminal = io.StringIO()
+            with redirect_stderr(terminal):
+                with self.assertRaises(runner.CampaignError) as raised:
+                    runner.owned_command(
+                        [sys.executable, "-c",
+                         "import sys; print(sys.argv[1]); print(sys.argv[1], file=sys.stderr); sys.exit(7)",
+                         secret],
+                        output=output, error_file=stderr,
+                        env=os.environ.copy(), timeout=5, label="scenario/checked",
+                    )
+            self.assertIn("scenario/checked", str(raised.exception))
+            self.assertIn("status 7", str(raised.exception))
+            self.assertNotIn(secret, terminal.getvalue() + str(raised.exception))
+            self.assertIn(secret.encode(), stderr.read_bytes())
 
     def test_timed_out_owned_process_is_reaped_before_retirement(self):
         import time
