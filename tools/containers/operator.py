@@ -842,7 +842,7 @@ class Docker:
 
 
 def main():
-    """Dispatch only the operation explicitly selected through Make or CLI."""
+    """Dispatch the selected operation without interpreting Make values as code."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--from-make", action="store_true")
     parser.add_argument("--context", default="")
@@ -869,83 +869,95 @@ def main():
     parser.add_argument("--deployment")
     parser.add_argument("--database-network")
     parser.add_argument("--rpc-network")
-    args = parser.parse_args()
+    options = parser.parse_args()
 
     try:
-        if args.from_make:
-            # Make exports simple, literally captured values via $(value VAR).
-            # No operator text is ever interpolated into a shell recipe.
-            raw = {key: os.environ.get("CONIX_MAKE_" + key, "") for key in (
+        if options.from_make:
+            # Make forwards literal variables via $(value VAR); the operator
+            # alone constructs argv, never a shell recipe using their contents.
+            make_inputs = {name: os.environ.get("CONIX_MAKE_" + name, "") for name in (
                 "DOCKER_CONTEXT", "WHEELHOUSE", "IMAGE", "RUNNER_IMAGE",
                 "INDEXER_IMAGE", "CONFIG_FILE", "DSN_FILE",
                 "OWNER_DSN_FILE", "INPUT_VOLUME", "DEPLOYMENT",
                 "DATABASE_NETWORK", "RPC_NETWORK",
             )}
 
-            args.context = raw["DOCKER_CONTEXT"]
-            args.wheelhouse = raw["WHEELHOUSE"]
-            args.image = raw["IMAGE"]
-            args.runner_image = raw["RUNNER_IMAGE"]
-            args.indexer_image = raw["INDEXER_IMAGE"]
-            args.config_file = raw["CONFIG_FILE"]
-            args.dsn_file = raw["DSN_FILE"]
-            args.owner_dsn_file = raw["OWNER_DSN_FILE"]
-            args.volume = raw["INPUT_VOLUME"]
-            args.deployment = raw["DEPLOYMENT"]
-            args.database_network = raw["DATABASE_NETWORK"]
-            args.rpc_network = raw["RPC_NETWORK"]
+            options.context = make_inputs["DOCKER_CONTEXT"]
+            options.wheelhouse = make_inputs["WHEELHOUSE"]
+            options.image = make_inputs["IMAGE"]
+            options.runner_image = make_inputs["RUNNER_IMAGE"]
+            options.indexer_image = make_inputs["INDEXER_IMAGE"]
+            options.config_file = make_inputs["CONFIG_FILE"]
+            options.dsn_file = make_inputs["DSN_FILE"]
+            options.owner_dsn_file = make_inputs["OWNER_DSN_FILE"]
+            options.volume = make_inputs["INPUT_VOLUME"]
+            options.deployment = make_inputs["DEPLOYMENT"]
+            options.database_network = make_inputs["DATABASE_NETWORK"]
+            options.rpc_network = make_inputs["RPC_NETWORK"]
 
-        endpoint = select_endpoint(args.context, args.origin)
+        docker_endpoint = select_endpoint(options.context, options.origin)
+
         with tempfile.TemporaryDirectory(prefix="conix-docker-client-") as directory:
-            config = Path(directory)
-            (config / "config.json").write_text('{"auths":{},"proxies":{}}\n', encoding="utf-8")
-            docker = Docker(endpoint, config)
-            images = pinned_images()
+            client_config_directory = Path(directory)
+            (client_config_directory / "config.json").write_text('{"auths":{},"proxies":{}}\n', encoding="utf-8")
 
-            if args.action.startswith("image/") and args.action.endswith("/acquire"):
-                docker.acquire_image(args.action.split("/")[1], images)
+            docker = Docker(docker_endpoint, client_config_directory)
+            image_manifest = pinned_images()
 
-            elif args.action in ("wheelhouse/check", "wheelhouse/acquire"):
+            if options.action.startswith("image/") and options.action.endswith("/acquire"):
+                image_role = options.action.split("/")[1]
+                docker.acquire_image(image_role, image_manifest)
+
+            elif options.action in ("wheelhouse/check", "wheelhouse/acquire"):
                 from tools.wheelhouse.operations import SharedWheelhouse
-                pool = SharedWheelhouse(docker, images, args.wheelhouse)
-                selected = pool.check() if args.action.endswith("/check") else pool.acquire()
-                print(f"Verified {len(selected)} hash-locked artifacts in WHEELHOUSE.",
-                      file=sys.stderr)
 
-            elif args.action == "test/postgres/run":
-                docker.test(args.runner_image or "", images)
+                wheel_pool = SharedWheelhouse(docker, image_manifest, options.wheelhouse)
+                selected_wheels = wheel_pool.check() if options.action.endswith("/check") else wheel_pool.acquire()
+                print(f"Verified {len(selected_wheels)} hash-locked artifacts in WHEELHOUSE.", file=sys.stderr)
 
-            elif args.action == "image/indexer/check":
-                docker.check_indexer(args.image)
+            elif options.action == "test/postgres/run":
+                docker.test(options.runner_image or "", image_manifest)
 
-            elif args.action == "image/evm-test-runner/check":
-                docker.check_evm_test_runner(args.image)
+            elif options.action == "image/indexer/check":
+                docker.check_indexer(options.image)
 
-            elif args.action in ("deployment/inputs/create", "test/input-staging/run"):
-                docker.stage_inputs(args.indexer_image, args.config_file, args.dsn_file,
-                                    proof=args.action == "test/input-staging/run")
+            elif options.action == "image/evm-test-runner/check":
+                docker.check_evm_test_runner(options.image)
 
-            elif args.action == "deployment/inputs/remove":
-                docker.remove_inputs(args.volume)
+            elif options.action in ("deployment/inputs/create", "test/input-staging/run"):
+                docker.stage_inputs(
+                    image=options.indexer_image,
+                    config_path=options.config_file,
+                    dsn_path=options.dsn_file,
+                    proof=(options.action == "test/input-staging/run"),
+                )
 
-            elif args.action == "database/schema/initialize":
+            elif options.action == "deployment/inputs/remove":
+                docker.remove_inputs(options.volume)
+
+            elif options.action == "database/schema/initialize":
                 docker.initialize_schema(
-                    args.indexer_image, args.config_file, args.owner_dsn_file,
-                    args.database_network,
+                    image=options.indexer_image,
+                    config_path=options.config_file,
+                    owner_dsn_path=options.owner_dsn_file,
+                    database=options.database_network,
                 )
 
-            elif args.action.startswith("deployment/"):
+            elif options.action.startswith("deployment/"):
                 docker.deployment(
-                    operation=args.action.removeprefix("deployment/"),
-                    name=args.deployment, image=args.indexer_image,
-                    volume=args.volume, database=args.database_network,
-                    rpc=args.rpc_network,
+                    operation=options.action.removeprefix("deployment/"),
+                    name=options.deployment,
+                    image=options.indexer_image,
+                    volume=options.volume,
+                    database=options.database_network,
+                    rpc=options.rpc_network,
                 )
-
             else:
-                target = args.action.split("/")[1]
                 from tools.wheelhouse.operations import SharedWheelhouse
-                print(SharedWheelhouse(docker, images, args.wheelhouse).build(target))
+
+                image_role = options.action.split("/")[1]
+                wheel_pool = SharedWheelhouse(docker, image_manifest, options.wheelhouse)
+                print(wheel_pool.build(image_role))
     except (OperationError, PoolError, OSError) as error:
         raise SystemExit(f"Conix container operation failed ({type(error).__name__}): {error}") from None
 
