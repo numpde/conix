@@ -1,17 +1,16 @@
-"""One-shot, stdin-only provisioning of fixed inputs in an engine-owned volume.
+"""Provision fixed private inputs once, through an isolated stdin-only process.
 
-This module is NOT part of the conix worker entry point. The operator invokes
-it in the selected runtime image as uid 0 with only CAP_CHOWN, network none, a
-read-only root filesystem, and a newly created private data volume. The worker
-later runs as uid 65532 with no capabilities and the volume mounted read-only.
+The operator runs this module as UID 0 with CAP_CHOWN, no network and a
+read-only root filesystem. It passes ownership to the restricted runtime UID
+before the worker receives the volume read-only.
 """
 
 import os
-from pathlib import Path
 import stat
 import struct
 import sys
 import tomllib
+from pathlib import Path
 
 MAGIC = b"CONIX-INPUTS-V1\n"
 MAX_CONFIG = 64 * 1024
@@ -23,63 +22,70 @@ OWNER = 65532
 
 
 class InputError(ValueError):
-    """Source-controlled staging failure whose text contains no credential bytes."""
+    """A source-controlled diagnostic that cannot contain credential bytes."""
 
 
 def decode(payload: bytes) -> tuple[bytes, bytes]:
-    """Validate a length-prefixed envelope without changing the secret bytes."""
+    """Validate the length-prefixed envelope while preserving the original bytes."""
     if not payload.startswith(MAGIC) or len(payload) < len(MAGIC) + 8:
         raise InputError("Staged input envelope has an invalid version or length.")
 
     (config_size, dsn_size) = struct.unpack_from("!II", payload, len(MAGIC))
+
     if not 0 < config_size <= MAX_CONFIG or not 0 < dsn_size <= MAX_DSN:
         raise InputError("Staged configuration or credential input exceeds its bound.")
 
-    start = len(MAGIC) + 8
-    if len(payload) != start + config_size + dsn_size:
+    content_offset = len(MAGIC) + 8
+
+    if len(payload) != content_offset + config_size + dsn_size:
         raise InputError("Staged inputs were truncated or have trailing bytes.")
 
-    config = payload[start:start + config_size]
-    secret = payload[start + config_size:]
+    config_bytes = payload[content_offset:content_offset + config_size]
+    dsn_bytes = payload[content_offset + config_size:]
 
     try:
-        table = tomllib.loads(config.decode("utf-8"))
+        config_document = tomllib.loads(config_bytes.decode("utf-8"))
     except (UnicodeError, ValueError) as error:
         raise InputError("Staged configuration is not valid UTF-8 TOML.") from error
 
-    if (type(table) is not dict
-            or type(table.get("database")) is not dict
-            or table["database"].get("dsn_file") != str(TARGET / DSN)):
+    if (
+        type(config_document) is not dict
+        or type(config_document.get("database")) is not dict
+        or config_document["database"].get("dsn_file") != str(TARGET / DSN)
+    ):
         raise InputError("Staged config must select /run/conix/connection.dsn explicitly.")
 
     try:
-        decoded_dsn = secret.decode("utf-8").strip()
+        dsn_text = dsn_bytes.decode("utf-8").strip()
     except UnicodeError as error:
         raise InputError("Staged credential bytes must be UTF-8.") from error
 
-    if not decoded_dsn or "\x00" in decoded_dsn:
+    if not dsn_text or "\x00" in dsn_text:
         raise InputError("Staged credential file is empty or contains a NUL byte.")
 
-    return config, secret
+    return config_bytes, dsn_bytes
 
 
 def create_file(directory: int, filename: str, content: bytes):
-    """Create a private file exclusively within an already-open directory."""
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
-    descriptor = os.open(filename, flags, 0o600, dir_fd=directory)
+    """Create a new private file relative to an already opened directory."""
+    open_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+    file_fd = os.open(filename, open_flags, 0o600, dir_fd=directory)
+
     try:
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "wb", closefd=False) as stream:
+        os.fchmod(file_fd, 0o600)
+
+        with os.fdopen(file_fd, "wb", closefd=False) as stream:
             stream.write(content)
             stream.flush()
-        os.fsync(descriptor)
+
+        os.fsync(file_fd)
     finally:
-        os.close(descriptor)
+        os.close(file_fd)
 
 
 def stage(payload: bytes, target: Path = TARGET):
-    """Reject reusing an initialized volume; no overwrite or hot reload."""
-    config, secret = decode(payload)
+    """Reject an already populated volume; never overwrite or reload inputs."""
+    (config_bytes, dsn_bytes) = decode(payload)
 
     if os.geteuid() != 0:
         raise InputError("Input staging must use the isolated provisioning identity.")
@@ -90,49 +96,50 @@ def stage(payload: bytes, target: Path = TARGET):
     if any(target.iterdir()):
         raise InputError("Input volume is already populated; stage into a new volume.")
 
-    fd = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    directory_fd = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+
     try:
-        mode = os.fstat(fd).st_mode
-        if not stat.S_ISDIR(mode):
+        directory_mode = os.fstat(directory_fd).st_mode
+
+        if not stat.S_ISDIR(directory_mode):
             raise InputError("Mounted input destination is not a directory.")
 
-        create_file(fd, CONFIG, config)
-        create_file(fd, DSN, secret)
+        create_file(directory_fd, CONFIG, config_bytes)
+        create_file(directory_fd, DSN, dsn_bytes)
 
-        # Validate while the staging identity still owns both private files.
-        # A uid-0 process with only CAP_CHOWN cannot bypass DAC checks after
-        # ownership changes to the runtime uid.
+        # Validate before changing ownership: this temporary UID 0 process
+        # has CAP_CHOWN but cannot bypass DAC after the handoff.
         from conix.configuration import load_settings, read_dsn
 
-        parsed = load_settings(target / CONFIG)
-        if parsed.database_dsn_file != target / DSN:
+        staged_settings = load_settings(target / CONFIG)
+
+        if staged_settings.database_dsn_file != target / DSN:
             raise InputError("Staged settings point outside the private credential file.")
 
         read_dsn(target / DSN)
 
-        # CAP_CHOWN does not imply CAP_FOWNER: set permissions before handing
-        # the directory to UID 65532, and never widen them for UID mapping.
-        os.chown(CONFIG, OWNER, OWNER, dir_fd=fd, follow_symlinks=False)
-        os.chown(DSN, OWNER, OWNER, dir_fd=fd, follow_symlinks=False)
-        os.fchmod(fd, 0o700)
-        os.fchown(fd, OWNER, OWNER)
-        os.fsync(fd)
+        # CAP_CHOWN does not imply CAP_FOWNER. Set directory permissions while
+        # still its owner; never widen them to compensate for UID mapping.
+        os.chown(CONFIG, OWNER, OWNER, dir_fd=directory_fd, follow_symlinks=False)
+        os.chown(DSN, OWNER, OWNER, dir_fd=directory_fd, follow_symlinks=False)
+        os.fchmod(directory_fd, 0o700)
+        os.fchown(directory_fd, OWNER, OWNER)
+        os.fsync(directory_fd)
     finally:
-        os.close(fd)
+        os.close(directory_fd)
 
 
 def main():
-    # Subprocess stderr is operator-visible; never print the input bytes.
+    # These inputs are private; subprocess stderr may only expose fixed errors.
     try:
-        payload = sys.stdin.buffer.read(len(MAGIC) + 8 + MAX_CONFIG + MAX_DSN + 1)
-        stage(payload)
+        staged_payload = sys.stdin.buffer.read(len(MAGIC) + 8 + MAX_CONFIG + MAX_DSN + 1)
+        stage(staged_payload)
     except InputError as error:
-        # InputError messages are fixed by this source file: they never embed
-        # credential bytes, JSON payloads or arbitrary external exception text.
         raise SystemExit(f"Conix input staging failed (InputError): {error}") from None
     except (OSError, ValueError) as error:
-        # External exception messages may contain paths or credential contents.
-        raise SystemExit(f"Conix input staging failed ({type(error).__name__}): inspect volume permissions and the private configuration.") from None
+        raise SystemExit(
+            f"Conix input staging failed ({type(error).__name__}): inspect volume permissions and the private configuration."
+        ) from None
 
 
 if __name__ == "__main__":
