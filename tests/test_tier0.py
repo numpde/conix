@@ -37,6 +37,7 @@ KEY = to_checksum_address(bytes.fromhex("44" * 20))
 
 
 def settings():
+    """Provide one fixed test source and bounded operation deadlines."""
     return Settings(
         Deployment(31337, ADDR), 1, "http://127.0.0.1:8545",
         Path("/tmp/conix-test-dsn-file"), "conix_runtime", 0.05, 2, 1024 * 1024,
@@ -65,6 +66,8 @@ def position():
 
 
 class Contract:
+    """Deterministic contract reads; the real engine still validates every block."""
+
     def __init__(self, records):
         self.records = records
         self.calls = []
@@ -119,6 +122,8 @@ class Chain:
 
 
 class BasicContractTests(unittest.TestCase):
+    """Validate source identity and operator input without a database."""
+
     def test_repair_selector_requires_full_identity(self):
         assert _target("12:0x" + "ab" * 32) == (12, bytes.fromhex("ab" * 32))
         for value in ("12", "-1:0x" + "aa" * 32, "01:0x" + "bb" * 32, "1:0x00"):
@@ -145,6 +150,8 @@ class BasicContractTests(unittest.TestCase):
 
 
 class OperationDeadlineContracts(unittest.IsolatedAsyncioTestCase):
+    """Prove cancellation closes owned sessions and rejects hanging reads."""
+
     async def test_one_block_operation_has_an_internal_deadline(self):
         configured = replace(settings(), operation_timeout_seconds=0.05)
         retired = asyncio.Event()
@@ -312,6 +319,8 @@ class FixtureReceiptContracts(unittest.IsolatedAsyncioTestCase):
 
 @unittest.skipUnless(os.getenv("CONIX_TEST_DSN"), "Set CONIX_TEST_DSN for isolated PostgreSQL integration")
 class PostgreSQLContracts(unittest.IsolatedAsyncioTestCase):
+    """Exercise the real journal with owner-installed, runtime-only SQL rights."""
+
     async def asyncSetUp(self):
         self.dsn = os.environ["CONIX_TEST_DSN"]
         self.config = settings()
@@ -457,6 +466,7 @@ class PostgreSQLContracts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(new.collection_count, 1)
 
     async def test_unknown_commit_recovery_reads_durable_progress(self):
+        """Prove post-commit restart logic, not transport loss during COMMIT."""
         first = block(1, 1, bytes(32))
         fake = Chain(self.config, (first,), {1: (event(first),)})
         async with self.journal.writer() as writer:

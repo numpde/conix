@@ -18,12 +18,13 @@ from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 
 from conix.errors import ConfigurationError, WriterBusy
-from conix.schema import initialize
 from conix.journal import _state, advisory_key
+from conix.schema import initialize
 from test_tier0 import settings
 
 
 async def main():
+    """Verify idempotent owner enrollment and exclusion by a live writer."""
     source = settings()
     owner = os.environ["CONIX_TEST_OWNER_DSN"]
     await initialize(owner, source)
@@ -39,7 +40,8 @@ async def main():
     if first != second:
         raise AssertionError("Repeated owner initialization changed the durable source or its generation.")
 
-    # Different source selection must not adopt/overwrite this database.
+    # An existing source is immutable: a different start height must fail
+    # without adopting, resetting or rewriting its durable state.
     try:
         await initialize(owner, replace(source, start_block=source.start_block + 1))
     except ConfigurationError:
@@ -47,8 +49,8 @@ async def main():
     else:
         raise AssertionError("Owner initialization accepted another source on an occupied database.")
 
-    # The installation lock is exactly the normal Tier-0 writer lock.
-    # Another session cannot install DDL while a writer owns the source.
+    # Schema installation uses the same advisory lock as the concrete writer.
+    # This is tested against PostgreSQL, not a mocked lock implementation.
     async with await AsyncConnection.connect(
         owner, autocommit=True, row_factory=dict_row
     ) as connection:
@@ -67,7 +69,6 @@ async def main():
                 raise AssertionError("Owner DDL did not respect an active writer's lock.")
         finally:
             await connection.execute("SELECT pg_advisory_unlock(%s)", (key,))
-
 
 
 if __name__ == "__main__":

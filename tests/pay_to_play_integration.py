@@ -13,7 +13,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fixture_protocol import (
@@ -39,12 +38,13 @@ GAS = "0x1e8480"
 
 
 def _input():
-    source = sys.stdin.buffer.read(ONE_MIB + 1)
-    if len(source) > ONE_MIB:
+    """Read a bounded private descriptor and prior phase receipt from stdin."""
+    request_bytes = sys.stdin.buffer.read(ONE_MIB + 1)
+    if len(request_bytes) > ONE_MIB:
         raise FixtureError("Contained fixture request exceeded 1 MiB.")
     try:
         content = json.loads(
-            source.decode("utf-8"), object_pairs_hook=_pairs,
+            request_bytes.decode("utf-8"), object_pairs_hook=_pairs,
             parse_constant=_bad_constant,
         )
     except (ValueError, UnicodeError) as error:
@@ -66,6 +66,7 @@ def _input():
 
 
 def _settings(descriptor):
+    """Bind the installed Conix runtime to the deployed fixture's exact origin."""
     contract = descriptor["contracts"]["PayToPlay"]
     return Settings(
         deployment=Deployment(descriptor["chainId"], to_checksum_address(contract["address"])),
@@ -84,7 +85,8 @@ def _settings(descriptor):
 
 
 def _summary(phase, checkpoint, snapshot):
-    value = {
+    """Emit a nonsecret receipt for the next fresh test process."""
+    summary = {
         "phase": phase,
         "generation": str(checkpoint.generation),
         "height": checkpoint.block.number,
@@ -92,11 +94,12 @@ def _summary(phase, checkpoint, snapshot):
         "collection_count": checkpoint.collection_count,
         "snapshot": snapshot,
     }
-    receipt((json.dumps(value) + "\n").encode())
-    return value
+    receipt((json.dumps(summary) + "\n").encode())
+    return summary
 
 
 def _confirm(checkpoint, prior):
+    """Require exactly the previous process's durable generation and count."""
     if (
         str(checkpoint.generation) != prior["generation"]
         or checkpoint.block.number != prior["height"]
@@ -134,10 +137,12 @@ async def _follow(journal, chain, height):
 
 
 def _calldata(signature, types=(), arguments=()):
+    """Encode test-only calls using the deployed Solidity signatures."""
     return "0x" + (keccak(text=signature)[:4] + encode(types, arguments)).hex()
 
 
 async def _call_uint(chain, signature, types=(), arguments=()):
+    """Read the disposable contract's scalar setup state, not indexed data."""
     value = await chain.rpc.call("eth_call", [
         {"to": chain.settings.deployment.address,
          "data": _calldata(signature, types, arguments)}, "latest",
@@ -186,7 +191,7 @@ async def _revert_reason(chain, tx, errors):
 
 
 async def _send(chain, sender, signature, types=(), arguments=(), *, value=0, errors=None):
-    """Anvil-only transaction; require an actual successful mined receipt."""
+    """Submit once to disposable Anvil; distinguish mined failure from unknown outcome."""
     rpc = chain.rpc
     await rpc.call("anvil_impersonateAccount", [sender])
     try:
@@ -281,6 +286,7 @@ async def _send(chain, sender, signature, types=(), arguments=(), *, value=0, er
 
 
 async def _voucher_signature(chain, key, customer, channel, cumulative, invoice):
+    """Sign the contract-computed EIP-712 digest with the fixture-only Cast."""
     # The real deployed contract, not a second Python EIP-712 implementation,
     # defines the domain and voucher digest.
     digest = data(await chain.rpc.call("eth_call", [
@@ -309,6 +315,7 @@ async def _voucher_signature(chain, key, customer, channel, cumulative, invoice)
 
 
 async def _events(observer, checkpoint):
+    """Consume one complete dense event prefix through the public observer API."""
     observed = []
     cursor = None
     for _ in range(checkpoint.collection_count + 1):
@@ -323,6 +330,7 @@ async def _events(observer, checkpoint):
 
 
 async def _baseline(journal, chain, observer, _descriptor, prior):
+    """Establish collection-free coverage and a pre-payment Anvil snapshot."""
     if prior is not None:
         raise FixtureError("Baseline has no earlier fixture phase.")
     head = await chain.current_head()
@@ -337,6 +345,7 @@ async def _baseline(journal, chain, observer, _descriptor, prior):
 
 
 async def _collect(journal, chain, observer, descriptor, prior):
+    """Check real signed collections, historical payees and an empty block."""
     if prior is None or prior["phase"] != "baseline":
         raise FixtureError("Collection requires a verified baseline receipt.")
     starting = await observer.latest_checkpoint()
@@ -397,8 +406,8 @@ async def _collect(journal, chain, observer, descriptor, prior):
     )
     if tuple(item.hash for item in evidence.blocks) != tuple(item.block_hash for item in observed):
         raise ScenarioFailure("Collection evidence is inconsistent with the indexed branch.")
-    # An explicit empty block must still advance durable coverage without
-    # creating a collection. Run the SAME Tier-0 session again to process it.
+    # Empty blocks still advance coverage. The ordinary Tier-0 session must
+    # publish that height without inventing a collection.
     await chain.rpc.call("evm_mine", [])
     head = await chain.current_head()
     await _follow(journal, chain, head.number)
@@ -409,14 +418,13 @@ async def _collect(journal, chain, observer, descriptor, prior):
 
 
 async def _restart(journal, chain, observer, _descriptor, prior):
+    """Resume from the same PostgreSQL volume in a separate process."""
     if prior is None or prior["phase"] != "collected":
         raise FixtureError("Restart must follow a completed real collection scan.")
     state = await observer.latest_checkpoint()
     _confirm(state, prior)
-    # A separate disposable container invokes the real run_session against
-    # the SAME PostgreSQL volume. Mine one new *empty* block so the concrete
-    # advance_one() path must run after process restart, not merely return an
-    # already complete checkpoint.
+    # Mine a new empty block to require an actual publication after restart;
+    # merely reading the old checkpoint would not exercise resumption.
     await chain.rpc.call("evm_mine", [])
     head = await chain.current_head()
     if head.number <= state.block.number:
@@ -434,6 +442,7 @@ async def _restart(journal, chain, observer, _descriptor, prior):
 
 
 async def _reorg(journal, chain, observer, _descriptor, prior):
+    """Replace the collected branch and invoke the concrete manual repair."""
     if prior is None or prior["phase"] != "restart":
         raise FixtureError("Reorganization must follow the successful separate-session restart.")
     old = await observer.latest_checkpoint()
@@ -441,10 +450,8 @@ async def _reorg(journal, chain, observer, _descriptor, prior):
     if old.collection_count != 2:
         raise ScenarioFailure("Reorg fixture lacks the two actual indexed collection events.")
     before = await journal.stored_headers(chain.settings.start_block, old.block.number)
-    # The snapshot was taken at baseline before creating any channel/collection.
-    # Only the prefix through the saved snapshot height survives reorganization.
-    # Find the saved snapshot boundary by its original source identity.
-    # Deployment itself is always before the chosen snapshot.
+    # The baseline snapshot predates both collections. The retained prefix
+    # through that snapshot is the only eligible repair ancestry.
     snapshot = prior["snapshot"]
     if await chain.rpc.call("evm_revert", [snapshot]) is not True:
         raise ScenarioFailure("Anvil did not confirm fixture snapshot restoration.")
@@ -494,6 +501,7 @@ async def _reorg(journal, chain, observer, _descriptor, prior):
 
 
 async def execute(phase):
+    """Dispatch one phase against the installed, unchanged Tier-0 package."""
     descriptor, prior = _input()
     settings = _settings(descriptor)
     if phase == "initialize":
@@ -516,6 +524,7 @@ async def execute(phase):
 
 
 def main():
+    """Return only checked nonsecret phase receipts or bounded diagnostics."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=("initialize", "baseline", "collected", "restart", "reorg"))
     selected = parser.parse_args()

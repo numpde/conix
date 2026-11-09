@@ -38,6 +38,7 @@ class FixtureError(ValueError):
 
 
 def _pairs(rows):
+    """Reject duplicate JSON keys before accepting any source identity."""
     result = {}
     for name, value in rows:
         if name in result:
@@ -59,6 +60,7 @@ def _uint(value, maximum=2**63 - 1):
 
 
 def decode(raw: bytes, *, fixture_id: str):
+    """Admit one complete dapp32 descriptor, including ABI and test accounts."""
     if type(fixture_id) is not str or IDENTITY.fullmatch(fixture_id) is None:
         raise FixtureError("Fixture identity must use the dapp32 supported lowercase name format.")
     if type(raw) is not bytes or not 0 < len(raw) <= LIMIT or len(raw.splitlines()) != 1:
@@ -86,6 +88,8 @@ def decode(raw: bytes, *, fixture_id: str):
         or type(document["chainId"]) is not int or document["chainId"] != 31337
     ):
         raise FixtureError("Fixture source identity, network or RPC endpoint differs from the selected fixture.")
+    # Names and ABI alone are not proof of a live deployment; the campaign
+    # separately checks the producer network and actual RPC instance.
     contracts = document["contracts"]
     if type(contracts) is not dict or set(contracts) != REQUIRED_CONTRACTS:
         raise FixtureError("Fixture must declare exactly the verified base deployment contracts.")
@@ -168,6 +172,7 @@ class ScenarioFailure(AssertionError):
 
 
 def _public_reason(value):
+    """Allow only bounded diagnostics without credential-shaped content."""
     return (
         type(value) is str and _PUBLIC_TEXT.fullmatch(value) is not None
         and not any(marker in value.lower() for marker in _PRIVATE_MARKERS)
@@ -191,10 +196,10 @@ def phase_failure_record(phase: str, error: Exception) -> bytes:
         reason = "Operation deadline exceeded."
     else:
         frames = traceback.extract_tb(error.__traceback__)
-        final = frames[-1] if frames else None
+        origin = frames[-1] if frames else None
         location = (
-            f"{Path(final.filename).name}:{final.lineno} in {final.name}"
-            if final else "the current phase"
+            f"{Path(origin.filename).name}:{origin.lineno} in {origin.name}"
+            if origin else "the current phase"
         )
         reason = f"Unexpected error at {location}; inspect the selected operation."
         if not _public_reason(reason):

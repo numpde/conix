@@ -6,6 +6,8 @@ from conix.input_staging import MAGIC, MAX_CONFIG, MAX_DSN, InputError, decode
 
 
 class InputEnvelopeTests(unittest.TestCase):
+    """Prove exact byte preservation and fail-closed secret envelope parsing."""
+
     def payload(self, config=None, secret=b"postgresql://example.invalid/db"):
         if config is None:
             config = b'[database]\ndsn_file="/run/conix/connection.dsn"\n'
