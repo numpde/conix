@@ -31,7 +31,7 @@ from conix.errors import BranchConflict
 from conix.journal import Journal
 from conix.models import Deployment, HistoryUnavailable, ObservationUnavailable
 from conix.observer import Observer
-from conix.rpc import data, quantity
+from conix.rpc import RpcError, RpcProtocolError, RpcUnavailable, data, quantity
 from conix.schema import initialize
 
 ONE_MIB = 1024 * 1024
@@ -198,9 +198,27 @@ async def _send(chain, sender, signature, types=(), arguments=(), *, value=0, er
         }
         if value:
             transaction["value"] = hex(value)
-        tx_hash = data(await rpc.call("eth_sendTransaction", [transaction]), "transaction hash", size=32)
-        mined = await rpc.call("eth_getTransactionReceipt", ["0x" + tx_hash.hex()])
         action = signature.split("(", 1)[0]
+        try:
+            tx_hash = data(await rpc.call("eth_sendTransaction", [transaction]),
+                           "transaction hash", size=32)
+        except RpcError as error:
+            raise ScenarioFailure(
+                f"Fixture {action} submission returned RPC code {error.code}; "
+                "outcome unconfirmed; do not resubmit."
+            ) from error
+        except (RpcProtocolError, RpcUnavailable, TimeoutError) as error:
+            raise ScenarioFailure(
+                f"Fixture {action} submission failed ({type(error).__name__}); "
+                "outcome unconfirmed; do not resubmit."
+            ) from error
+        try:
+            mined = await rpc.call("eth_getTransactionReceipt", ["0x" + tx_hash.hex()])
+        except (RpcError, RpcProtocolError, RpcUnavailable, TimeoutError) as error:
+            raise ScenarioFailure(
+                f"Fixture {action} receipt lookup failed ({type(error).__name__}); "
+                "transaction outcome unconfirmed; do not resubmit."
+            ) from error
         if mined is None:
             raise ScenarioFailure(
                 f"Fixture {action} has no mined receipt after submission; "
