@@ -76,8 +76,10 @@ class OfflineInputChecks(unittest.TestCase):
             (ROOT / "requirements/build.lock").read_text(),
         )
         images = json.loads((ROOT / "containers/images.json").read_text())
-        self.assertEqual(set(images), {"postgres", "python_base", "foundry"})
+        self.assertEqual(set(images), {"postgres", "python_base", "foundry", "dockerfile_frontend"})
         self.assertTrue(all(type(value) is str and IMAGE.fullmatch(value) for value in images.values()))
+        self.assertEqual((ROOT / "Dockerfile").read_text().splitlines()[0],
+                         "# syntax=" + images["dockerfile_frontend"])
 
     def test_duplicate_missing_and_malformed_wheel_pins_are_rejected(self):
         pin = "foo==1.0 --hash=sha256:" + "a" * 64

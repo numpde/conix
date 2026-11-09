@@ -145,10 +145,10 @@ class SharedWheelhouse:
         return self.check()
 
     def build(self, target):
-        if target not in ("runtime", "tests", "fixture"):
+        if target not in ("indexer", "test-runner", "evm-test-runner"):
             raise PoolError("The shared wheelhouse supports only the three declared installed-image targets.")
         selected = self.check()
-        if target == "fixture":
+        if target == "evm-test-runner":
             self.docker.require_image(self.images["foundry"])
         # Capture source exactly once: the released streamer checks every
         # source hash and wheel digest before writing it to Docker's stdin.
@@ -182,9 +182,10 @@ class SharedWheelhouse:
                 "--build-arg", "PYTHON_BASE_IMAGE=" + self.images["python_base"],
                 "--label", "io.conix.source-inputs=" + source_identity,
                 "--label", "io.conix.wheel-selection=" + wheel_identity,
+                "--label", "io.conix.image-role=" + target,
                 "--iidfile", str(iid),
             ]
-            if target == "fixture":
+            if target == "evm-test-runner":
                 build_argv.extend(("--build-arg", "FOUNDRY_IMAGE=" + self.images["foundry"]))
             build_argv.append("-")
             with diagnostics.open("wb") as stream_errors:
@@ -227,7 +228,7 @@ class SharedWheelhouse:
                 raise PoolError("Selected image identity changed after BuildKit completion.")
         # Never overwrite a usable tag before both streamer and builder
         # confirmed their outcomes. Shared wheel bytes stay in the pool.
-        self.docker.run("image", "tag", raw, f"conix-tier0-{target}:local", timeout=20)
+        self.docker.run("image", "tag", raw, f"conix-{target}:local", timeout=20)
         return raw
 
 

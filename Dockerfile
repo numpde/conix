@@ -17,7 +17,8 @@ COPY src ./src
 RUN --network=none python -m pip wheel --no-deps --no-build-isolation \
     --no-index --wheel-dir /dist .
 
-FROM ${PYTHON_BASE_IMAGE} AS runtime
+FROM ${PYTHON_BASE_IMAGE} AS indexer
+LABEL io.conix.image-role=indexer
 ENV HOME=/tmp PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONSAFEPATH=1
 RUN --network=none \
     --mount=type=bind,source=requirements/runtime.lock,target=/tmp/conix-runtime.lock,readonly \
@@ -33,7 +34,8 @@ USER 65532:65532
 WORKDIR /tmp
 ENTRYPOINT ["conix"]
 
-FROM runtime AS tests
+FROM indexer AS test-runner
+LABEL io.conix.image-role=test-runner
 COPY tests /tests
 ENTRYPOINT ["python", "-m", "unittest", "discover", "-s", "/tests", "-v"]
 
@@ -41,7 +43,8 @@ ENTRYPOINT ["python", "-m", "unittest", "discover", "-s", "/tests", "-v"]
 # The deployed PayToPlay contract supplies voucherDigest. Cast signs that
 # prehashed EIP-712 digest using only dapp32's public fixture key.
 FROM ${FOUNDRY_IMAGE} AS fixture_signer
-FROM runtime AS fixture
+FROM indexer AS evm-test-runner
+LABEL io.conix.image-role=evm-test-runner
 COPY --from=fixture_signer /usr/local/bin/cast /usr/local/bin/cast
 COPY tests /tests
 RUN --network=none cast --version
