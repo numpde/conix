@@ -3,7 +3,7 @@ Conix — pristine generic Tier 0: design, evidence, and execution plan
 
 Date: 2026-11-09
 Status: TARGET GENERIC TIER 0, NOT YET IMPLEMENTED IN FULL; T0-1 ABI,
-T0-2 offline catalog/SQL journal and T0-3 blockHash log scanner exist.
+T0-2 catalog/SQL journal, T0-3 blockHash scanner and T0-4 reader exist.
 This note owns product scope, correctness, public API,
 source identity, journal and release gates. Note 005 is the SINGLE authority
 for historical RPC acquisition methods, admitted evidence and Tier-2 method
@@ -841,12 +841,12 @@ chain/contract-coordinate envelope and checked genesis, NOT the private
 producer descriptor or accounts. Both phases use one reviewed installed ABI
 fixture. It initializes via a separate owner-only identity and invokes named
 installed-code checks under a restricted runtime identity. Catalog,
-owner-only schema and scanner now exist, but this dapp32 acceptance remains
-RED until a checkpoint reader and the signed collection scenario exist.
+owner-only schema, scanner and reader now exist, but this dapp32
+acceptance remains RED pending signed collection and filtered history.
 The old PayToPlay observer was deleted without a compatibility fallback.
 
 Still REQUIRED beyond today's acceptance skeleton before T0-6 release:
-  - real-PostgreSQL restricted SELECT-only reader role and concurrent repair;
+  - scale-oriented PostgreSQL query plans, sparse pages and concurrent repair campaigns;
   - full compound ABI property/canonical-error matrix, seeded regressions;
   - actual ERC-20 AND ERC-721 on-chain emissions;
   - signed PayToPlay collection + customer/channel filtered history;
@@ -972,18 +972,20 @@ models, RPC wrapper and CLI are deleted. Its prior integration/test suites
 are retired; do not resurrect them to keep a superficial test count.
 The installed package now includes the generic ABI codec, offline
 TOML/ABI catalog, owner-only PostgreSQL schema installer, raw-history
-journal, one concrete blockHash eth_getLogs scanner, and private-input
-staging primitive. Disposable PostgreSQL tests use separate owner and
-runtime/read credentials. An isolated Anvil test mines a real Transfer
-and verifies its original raw bytes, empty-block advancement, checked
-suffix repair and reindexing through the installed writer and SQL journal.
+journal, blockHash eth_getLogs scanner, checkpoint-bound SELECT-only reader,
+and private-input staging primitive. Disposable PostgreSQL tests use
+separate owner and runtime/read credentials. An isolated Anvil test mines
+real Transfer events and checks raw bytes, empty-block advancement, indexed
+topic-filtered keyset pages, EIP-1898 pinned calls, canonical ancestry,
+generation invalidation, suffix repair and reindexing.
 
 The owner initializer remains a Python administrative API, not a Make
-action. No checkpoint reader or production worker CLI is installed.
-The image check alone proves only installed symbols/ABI behavior; the
-separate contained Anvil+PostgreSQL suite qualifies T0-3 ingestion.
-The opt-in dapp32 real-chain acceptance is still RED pending the reader
-and actual signed voucher collection, not a green payment-workflow claim.
+action. No production worker CLI exists. The image smoke check only
+establishes imports/ABI behavior; the contained Anvil+PostgreSQL suite
+qualifies T0-3 and T0-4 against tested event/view combinations.
+The opt-in dapp32 real-chain acceptance remains RED pending the signed
+voucher collection and matching filtered history, not a green
+payment-workflow claim.
 
 Deployment input transport still stages TOML and DSN only. Before
 activating a real worker, it must also supply the immutable ABI snapshot

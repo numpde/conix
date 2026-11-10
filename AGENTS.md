@@ -6,8 +6,9 @@ Scope
 Conix's target is one generic EVM event indexer: a single-ABI-driven scanner,
 one complete-block PostgreSQL raw-log journal, and one checkpoint-bound reader
 supporting PayToPlay, ERC-20 and ERC-721 without contract-specific source code.
-T0-1 ABI, T0-2 offline catalog/owner-only journal and T0-3
-blockHash-pinned scanner are implemented. The experimental
+T0-1 ABI, T0-2 offline catalog/owner-only journal, T0-3
+blockHash-pinned scanner and T0-4 checkpoint-bound reader are implemented.
+The experimental
 PayToPlay-only runtime was deleted without migration or adapters.
 
 notes/004_rpc_evidence_and_raw_log_indexer_plan.txt governs the new Tier-0
@@ -105,8 +106,9 @@ Container and dependency authority
 - T0-2 provides owner-only schema.initialize() and a distinct one-shot
   initializer container for qualification. The installed runtime and reader
   must not receive that credential or execute DDL.
-- The installed generic journal and T0-3 scanner perform no DDL. Keep
-  owner-only schema establishment separate from the scanner/reader.
+- The installed journal, scanner and checkpoint reader perform no DDL.
+  The reader uses only conix_reader SELECT privileges and an explicit,
+  checked RPC source. Keep schema establishment owner-only.
 - Disposable resources have exact owners and must be retired on success/failure.
   Report uncertain cleanup rather than claiming it succeeded.
 - Do not infer runtime egress isolation, UID mapping or genuine chain finality
@@ -134,9 +136,10 @@ the deployed contract's voucherDigest over a duplicate EIP-712 implementation.
 Only Conix-owned SQL and verified newly created producer fixtures may be
 retired automatically; preserve exact recovery records on uncertain outcomes.
 The borrowed and owned generic acceptance gates are distinct qualifications.
-Both remain intentionally RED pending the checkpoint reader and actual
-signed PayToPlay collection; the contained Anvil Transfer test qualifies
-T0-3 indexing but not economic accounting or payment reconciliation.
+Both remain intentionally RED pending actual signed PayToPlay collection,
+consumer-filtered history and recovery against the dapp32 fixture. The
+contained Anvil PostgreSQL tests qualify the generic T0-3 scanner/T0-4
+reader, not economic accounting or payment reconciliation.
 
 Shared wheelhouse
 -----------------

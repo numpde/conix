@@ -2,9 +2,9 @@ Conix — generic EVM raw-log indexer
 ===================================
 
 Current status (2026-11-10): T0-1 ABI, T0-2 offline catalog and
-PostgreSQL journal, and T0-3 blockHash-pinned EVM log scanner are
-implemented. The obsolete PayToPlay-only runtime was deleted, with
-no production data to migrate.
+PostgreSQL journal, T0-3 blockHash-pinned scanner, and T0-4 checkpoint-bound
+reader are implemented. The obsolete PayToPlay-only runtime was deleted,
+with no production data to migrate.
 
 The authoritative end-state specification is
 notes/004_rpc_evidence_and_raw_log_indexer_plan.txt. The separate
@@ -33,10 +33,20 @@ ABI data, and rechecks canonicality before publishing one complete block.
 Missing evidence, unavailable history and changed branches never become
 a successful empty block. No receipts, range queries or retries are used.
 
-The indexer image remains a library image: image/indexer/check imports
-the installed scanner and checks a real ABI operation, but does not scan
-RPC by itself. No checkpoint reader or deployment worker CLI exists.
-Owner schema initialization remains a separate Python API, not a Make action.
+src/conix/reader.py provides a SELECT-only open_reader() context manager.
+checkpoint() identifies the complete stored prefix; events() applies
+indexed-topic equality in SQL with bounded keyset cursor pages. Old
+checkpoints remain usable after appends but fail after generation-changing
+repairs, including A->B->A. call() executes only declared view/pure
+functions using EIP-1898 canonical block hashes and never falls back to
+latest. evidence() checks stored ancestors against the selected provider
+and distinguishes provider-reported finality from unavailable finality.
+These are provider-relative facts, not consensus proofs.
+
+The indexer image remains a library image: image/indexer/check exercises
+an installed ABI operation and imports writer/reader APIs, but does not
+run a worker. No deployment worker CLI exists. Owner schema initialization
+remains a separate Python API, not a Make action.
 
 Build and checks
 ----------------
@@ -67,8 +77,10 @@ cache in the finished image.
 
 test/postgres/run uses a confined PostgreSQL and Anvil stack, with separate
 owner-initialized SQL databases for generic journal tests and real EVM
-ingestion. The scanner stores an actual Anvil-emitted Transfer, processes
-an empty block, repairs its suffix and reindexes it. Controlled HTTP tests
+ingestion. The scanner stores real Anvil-emitted Transfers, processes
+an empty block, repairs its suffix and reindexes it. The reader checks
+indexed-topic pages, historical view calls, ancestry, post-snapshot
+repair invalidation, and old cursors after A->B->A. Controlled HTTP tests
 also reject malformed selectors, duplicate logs, missing history and reorgs.
 The test runner never receives an owner DSN. Owned containers, network and
 volumes are retired after each run. No Docker socket mount, host port,
@@ -93,9 +105,9 @@ not a new PayToPlay-specific Conix code path.
 The generic acceptance runner uses the installed package, a real Anvil RPC,
 private stdin handoff, and a separate schema-owner/consumer lifecycle.
 Private account data never reaches schema initialization. This acceptance
-campaign remains intentionally RED until the checkpoint reader and
-actual dapp32 signed collection scenario are implemented. The ordinary
-CI Anvil event-emission test does not claim to qualify that workflow.
+campaign remains intentionally RED pending the actual dapp32 signed
+collection, reader filtering and recovery scenario. The ordinary CI
+Anvil test proves the generic reader/writer, not that external workflow.
 
 Security and next step
 ----------------------
@@ -105,9 +117,10 @@ independently. Existing retained deployments may be inspected or removed
 using ownership-constrained deployment/status and deployment/remove; no
 new generic worker may be started until it is implemented and qualified.
 
-Next is T0-4: implement the checkpoint-bound reader, including indexed
-topic equality, stable cursor pages, EIP-1898 historical calls and ancestry
-evidence over the complete retained prefix. The signer, economic policy,
-deployment worker and private ABI-snapshot staging remain separate work.
+Next is T0-5: qualify real ERC-20/ERC-721 and signed PayToPlay events,
+consumer-filtered history, multi-contract recovery and checkpoint queries
+against the externally owned dapp32 fixture. The signer and economic
+policy remain external. A production worker CLI and private immutable ABI
+snapshot staging are separate prerequisites for deployment.
 Do not reintroduce Collection models, PayToPlay-specific decoders or
 unqualified completeness shortcuts.
