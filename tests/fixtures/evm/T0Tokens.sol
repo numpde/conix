@@ -78,7 +78,7 @@ contract ConixToken721 {
     }
 
     function supportsInterface(bytes4 id) external pure returns (bool) {
-        return id == 0x01ffc9a7 || id == 0x80ac58cd || id == 0x5b5e139f;
+        return id == 0x01ffc9a7 || id == 0x80ac58cd;
     }
 
     function balanceOf(address owner) external view returns (uint256) {
