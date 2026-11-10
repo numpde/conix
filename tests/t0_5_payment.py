@@ -18,6 +18,7 @@ from conix.catalog import prepare_catalog
 from conix.core import BranchConflict, open_writer
 from conix.journal import Block
 from conix.reader import Checkpoint, CursorInvalid, open_reader
+from abi_contract_vectors import VOUCHER_SIGNATURE as VOUCHER
 from fixture_protocol import ScenarioFailure
 from t0_5_chain import assert_event_matches_receipt, calldata, receipt as waited_receipt, require, send
 from t0_5_tokens import (
@@ -25,7 +26,6 @@ from t0_5_tokens import (
     verify_after_restart, verify_token_history,
 )
 
-VOUCHER = "VoucherCollected(address,uint256,address,uint256,uint256,bytes32)"
 COLLECT = "collect(address,uint256,uint256,bytes32,uint256,bytes)"
 TRANSFER_BYTES = re.compile(r"0x[0-9a-fA-F]{64}\Z")
 SIGNATURE_BYTES = re.compile(r"0x[0-9a-fA-F]{130}\Z")
