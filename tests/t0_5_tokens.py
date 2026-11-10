@@ -34,7 +34,7 @@ async def call_token_view(rpc, descriptor, contract: str, signature: str, types:
     return decode(results, bytes.fromhex(raw[2:]))
 
 
-def token_creation_bytecode() -> dict:
+def token_fixture_bytecode() -> dict:
     """Require the source revision recorded with these precompiled fixtures.
 
     The Git blob identity detects source edits without artifact review. It
@@ -54,31 +54,48 @@ def token_creation_bytecode() -> dict:
         and set(artifact["bytecode"]) == {"ConixToken20", "ConixToken721"},
         "Reviewed Solidity source and pinned creation artifacts disagree.",
     )
-    for bytecode in artifact["bytecode"].values():
-        require(type(bytecode) is str and bytecode.startswith("0x")
-                and 0 < len(bytecode) <= 30000 and len(bytecode) % 2 == 0
-                and all(char in "0123456789abcdef" for char in bytecode[2:]),
-                "Reviewed token creation bytecode is malformed.")
-    return artifact["bytecode"]
+    creation = artifact["bytecode"]
+    deployed = artifact["runtimeBytecode"]
+
+    require(
+        set(deployed) == set(creation),
+        "Reviewed token creation and deployed bytecode sets differ.",
+    )
+    for (name, bytecode) in (*creation.items(), *deployed.items()):
+        require(
+            type(bytecode) is str
+            and bytecode.startswith("0x")
+            and 0 < len(bytecode) <= 30000
+            and len(bytecode) % 2 == 0
+            and all(char in "0123456789abcdef" for char in bytecode[2:]),
+            f"{name} compiled bytecode is malformed.",
+        )
+
+    return {
+        name: {"creation": creation[name], "runtime": deployed[name]}
+        for name in creation
+    }
 
 
 async def deploy_token_fixtures(descriptor, rpc) -> dict:
     """Deploy real ERC-20/721 test code before owner schema initialization."""
-    bytecode = token_creation_bytecode()
+    bytecode = token_fixture_bytecode()
     creator = descriptor["publicFixtureAccounts"]["admin"]["address"]
     contracts = {}
     for (name, alias) in (("ConixToken20", "token20"), ("ConixToken721", "token721")):
         receipt = await submit_test_transaction(
             rpc, descriptor, creator,
-            {"data": bytecode[name], "gas": hex(3_000_000)},
+            {"data": bytecode[name]["creation"], "gas": hex(3_000_000)},
         )
         tx_hash = receipt["transactionHash"]
         address = receipt.get("contractAddress")
         require(type(address) is str and address.startswith("0x") and len(address) == 42,
                 "Deployed Solidity fixture has no contract address.")
         runtime = await rpc(descriptor, "eth_getCode", [address, "latest"])
-        require(type(runtime) is str and len(runtime) > 2 and runtime != "0x",
-                "Deployed Solidity fixture has no EVM runtime code.")
+        require(
+            type(runtime) is str and runtime.lower() == bytecode[name]["runtime"],
+            f"{name} deployed runtime differs from the reviewed compiled artifact.",
+        )
         contracts[alias] = {
             "address": address, "deploymentBlock": int(receipt["blockNumber"], 16),
             "creationTransaction": tx_hash,
