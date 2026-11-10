@@ -1,5 +1,5 @@
-# Disposable SQL campaign. The bootstrap superuser never runs product tests.
-# Role creation and schema preparation happen in a separate one-shot container.
+# Disposable PostgreSQL roles and installed ABI suite. No obsolete
+# PayToPlay journal schema or generic T0-2 tables are installed here.
 services:
   postgres:
     image: ${CONIX_POSTGRES_IMAGE:?reviewed pinned PostgreSQL image is required}
@@ -46,7 +46,9 @@ services:
           NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
         CREATE ROLE conix_runtime WITH LOGIN PASSWORD 'conix-disposable-runtime'
           NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-        GRANT CONNECT ON DATABASE conix_test TO conix_owner, conix_runtime;
+        CREATE ROLE conix_reader WITH LOGIN PASSWORD 'conix-disposable-reader'
+          NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+        GRANT CONNECT ON DATABASE conix_test TO conix_owner, conix_runtime, conix_reader;
         CREATE SCHEMA conix AUTHORIZATION conix_owner;
         GRANT USAGE ON SCHEMA conix TO conix_runtime, conix_reader;
         CREATE SCHEMA ledger AUTHORIZATION postgres;
@@ -62,30 +64,12 @@ services:
       - /tmp:rw,nosuid,nodev,noexec,mode=1777,size=8m
     networks: [tests]
 
-  initialize:
-    image: ${CONIX_TEST_RUNNER_IMAGE:?select exact installed test image}
-    pull_policy: never
-    entrypoint: ["python", "/tests/prepare_schema.py"]
-    environment:
-      CONIX_TEST_OWNER_DSN: postgresql://conix_owner:conix-disposable-owner@postgres:5432/conix_test
-    user: "65532:65532"
-    read_only: true
-    init: true
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    pids_limit: 64
-    mem_limit: 256m
-    memswap_limit: 256m
-    cpus: 0.25
-    tmpfs:
-      - /tmp:rw,nosuid,nodev,noexec,mode=1777,size=8m
-    networks: [tests]
-
   tests:
     image: ${CONIX_TEST_RUNNER_IMAGE:?select exact installed test image}
     pull_policy: never
     environment:
       CONIX_TEST_DSN: postgresql://conix_runtime:conix-disposable-runtime@postgres:5432/conix_test
+      CONIX_TEST_READ_DSN: postgresql://conix_reader:conix-disposable-reader@postgres:5432/conix_test
     user: "65532:65532"
     read_only: true
     init: true

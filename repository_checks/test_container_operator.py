@@ -267,7 +267,9 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 "--volume", "conix-inputs-" + "b" * 24,
                 "--database-network", "db-conix", "--rpc-network", "rpc-conix",
             ], env=env, capture_output=True, text=True, timeout=15)
-            return result, [json.loads(line) for line in log.read_text().splitlines()]
+            return result, [
+                json.loads(line) for line in log.read_text().splitlines()
+            ] if log.exists() else []
 
     def test_runtime_config_checks_containment_without_starting_obsolete_worker(self):
         run, calls = self.run_runtime_fake()

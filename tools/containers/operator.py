@@ -333,11 +333,21 @@ class Docker:
 
     def check_indexer(self, image):
         self.require_role(image, "indexer")
-        self.run("run", "--rm", "--pull", "never", "--network", "none", "--read-only",
-                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
-                 "--pids-limit", "64", "--memory", "256m",
-                 "--user", "65532:65532", image, "--help", timeout=30, capture=True)
-        print("Verified offline indexer image and installed command.", file=sys.stderr)
+        # Verify the generic codec, not a nonexistent worker entry point.
+        smoke = (
+            "import conix.abi as abi;"
+            "event=abi.compile_event({'type':'event','name':'Ready','anonymous':False,"
+            "'inputs':[{'name':'value','type':'uint256','indexed':True}]});"
+            "assert len(abi.encode_indexed_filter(event,'value',7))==32"
+        )
+        self.run(
+            "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
+            "--pids-limit", "64", "--memory", "256m", "--user", "65532:65532",
+            "--entrypoint", "python", image, "-I", "-c", smoke,
+            timeout=30, capture=True,
+        )
+        print("Verified installed generic ABI package, not an indexer worker.", file=sys.stderr)
 
     def check_evm_test_runner(self, image):
         """Verify offline test-runner Python and Cast without fixture secrets."""
@@ -351,8 +361,10 @@ class Docker:
         )
         self.run(*confinement_args, "--entrypoint", "cast", image, "--version", timeout=20, capture=True)
         self.run(
-            *confinement_args, "--entrypoint", "python", image,
-            "-I", "/tests/pay_to_play_integration.py", "--help", timeout=20, capture=True,
+            *confinement_args, "--entrypoint", "python", image, "-I", "-c",
+            "import sys;sys.path.insert(0,'/tests');"
+            "import generic_acceptance as acceptance;assert callable(acceptance.main)",
+            timeout=20, capture=True,
         )
 
         # Exercise the exact digest-signing command without contacting a live
@@ -370,7 +382,7 @@ class Docker:
         self.run(*confinement_args, "--entrypoint", "python", image,
                  "-I", "-c", signing_check_script, timeout=20)
 
-        print("Verified offline EVM test-runner image, Cast signing and scenario entry point.", file=sys.stderr)
+        print("Verified offline EVM acceptance runner image and Cast signer.", file=sys.stderr)
 
     def private_bytes(self, value, max_size, *, secret):
         """Read an operator-owned regular file without following its final symlink."""
@@ -502,14 +514,16 @@ class Docker:
         validation_script = (
             "import os,stat;"
             "from pathlib import Path;"
-            "from conix.configuration import load_settings,read_dsn;"
+            "import struct;"
+            "from conix.input_staging import MAGIC,decode;"
             "input_dir=Path('/run/conix');"
             "assert os.getuid()==65532;"
             "assert stat.S_IMODE(input_dir.stat().st_mode)==0o700;"
             "assert stat.S_IMODE((input_dir/'connection.dsn').stat().st_mode)==0o600;"
             "assert (input_dir/'connection.dsn').stat().st_uid==65532;"
-            "assert load_settings(input_dir/'config.toml').database_dsn_file==input_dir/'connection.dsn';"
-            "assert read_dsn(input_dir/'connection.dsn')"
+            "config=(input_dir/'config.toml').read_bytes();"
+            "secret=(input_dir/'connection.dsn').read_bytes();"
+            "assert decode(MAGIC+struct.pack('!II',len(config),len(secret))+config+secret)==(config,secret)"
         )
 
         self.run(
@@ -535,76 +549,6 @@ class Docker:
             raise OperationError("Private input-volume label does not match its identity; refusing removal.")
 
         self.run("volume", "rm", volume, timeout=30)
-
-    def initialize_schema(self, image, config_path, owner_dsn_path, database):
-        """Run schema enrollment with a separate owner credential and temporary volume."""
-        if not IMAGE_ID.fullmatch(image or ""):
-            raise OperationError("Owner initialization requires immutable INDEXER_IMAGE=sha256:<id>.")
-
-        if type(database) is not str or not CONTEXT_NAME.fullmatch(database):
-            raise OperationError("Choose one existing database network for schema initialization.")
-
-        self.require_rootless_engine()
-        self.require_role(image, "indexer")
-
-        observed_database_network = self.run(
-            "network", "inspect", "--format", "{{.Name}}", database,
-            timeout=10, capture=True,
-        ).strip()
-
-        if observed_database_network != database:
-            raise OperationError("Selected owner-init database network is missing or has another identity.")
-
-        # The ordinary worker never receives this temporary owner credential.
-        owner_input_volume = self.stage_inputs(image, config_path, owner_dsn_path, announce=False)
-        schema_failure = None
-
-        try:
-            self.run(
-                "run", "--rm", "--init", "--pull", "never",
-                "--network", database,
-                "--read-only", "--user", "65532:65532",
-                "--cap-drop", "ALL",
-                "--security-opt", "no-new-privileges:true",
-                "--pids-limit", "64", "--memory", "256m",
-                "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=16m",
-                "--mount", f"type=volume,source={owner_input_volume},target=/run/conix-owner,readonly",
-                image, "init", "--config", "/run/conix-owner/config.toml",
-                "--owner-dsn-file", "/run/conix-owner/connection.dsn",
-                timeout=90,
-            )
-        except Exception as error:
-            schema_failure = error
-
-        cleanup_failure = None
-
-        try:
-            self.remove_inputs(owner_input_volume)
-        except Exception as error:
-            cleanup_failure = error
-
-        if cleanup_failure is not None:
-            original_failure_note = (
-                f" Original schema init failed: {schema_failure}."
-                if isinstance(schema_failure, OperationError) else
-                f" Original schema init failed ({type(schema_failure).__name__})."
-                if schema_failure is not None else ""
-            )
-
-            raise OperationError(
-                f"Schema init input-volume cleanup is unconfirmed for {owner_input_volume} "
-                f"on selected Engine {self.endpoint}.{original_failure_note} Inspect exact volume ownership."
-            ) from cleanup_failure
-
-        if schema_failure is not None:
-            safe_failure_detail = str(schema_failure) if isinstance(schema_failure, OperationError) else type(schema_failure).__name__
-
-            raise OperationError(
-                f"Conix schema init failed: {safe_failure_detail}. Check durable source identity "
-                "before retrying the explicit idempotent owner operation."
-            ) from schema_failure
-
-        print("Conix schema installed/verified through a separate owner-only session.")
 
     def deployment(self, *, operation, name, image, volume, database, rpc):
         """Admit the rendered deployment before using the selected Docker Engine."""
@@ -718,7 +662,7 @@ class Docker:
             rendered_networks = rendered_configuration["networks"]
 
             if (
-                set(rendered_services) != {"tests", "postgres", "bootstrap", "initialize"}
+                set(rendered_services) != {"tests", "postgres", "bootstrap"}
                 or rendered_services["tests"].get("image") != image
                 or rendered_services["tests"].get("read_only") is not True
                 or rendered_services["tests"].get("user") != "65532:65532"
@@ -728,9 +672,6 @@ class Docker:
                 or rendered_services["bootstrap"].get("image") != images["postgres"]
                 or rendered_services["bootstrap"].get("user") != "999:999"
                 or rendered_services["bootstrap"].get("read_only") is not True
-                or rendered_services["initialize"].get("image") != image
-                or rendered_services["initialize"].get("user") != "65532:65532"
-                or rendered_services["initialize"].get("read_only") is not True
                 or any(service.get("build") or service.get("ports") or service.get("privileged") or service.get("network_mode")
                        for service in rendered_services.values())
                 or any(any(mount.get("type") == "bind" for mount in service.get("volumes", []))
@@ -755,8 +696,6 @@ class Docker:
             self.run(*compose_argv, "run", "--rm", "--no-deps", "--pull",
                      "never", "bootstrap", env=compose_environment, timeout=60)
             self.run(*compose_argv, "run", "--rm", "--no-deps", "--pull",
-                     "never", "initialize", env=compose_environment, timeout=60)
-            self.run(*compose_argv, "run", "--rm", "--no-deps", "--pull",
                      "never", "tests", env=compose_environment, timeout=240)
         except Exception as error:
             test_failure = error
@@ -767,7 +706,7 @@ class Docker:
                 self.run(*compose_argv, "ps", "--all", env=compose_environment, timeout=15)
                 self.run(
                     *compose_argv, "logs", "--no-color", "--tail", "35",
-                    "postgres", "bootstrap", "initialize", "tests",
+                    "postgres", "bootstrap", "tests",
                     env=compose_environment, timeout=15,
                 )
             except OperationError:
@@ -811,7 +750,6 @@ def main():
         "image/indexer/check", "image/evm-test-runner/check",
         "test/postgres/run", "test/input-staging/run",
         "deployment/inputs/create", "deployment/inputs/remove",
-        "database/schema/initialize",
         "deployment/config/check", "deployment/status", "deployment/remove",
     ))
     parser.add_argument("--wheelhouse")
@@ -890,14 +828,6 @@ def main():
 
             elif options.action == "deployment/inputs/remove":
                 docker.remove_inputs(options.volume)
-
-            elif options.action == "database/schema/initialize":
-                docker.initialize_schema(
-                    image=options.indexer_image,
-                    config_path=options.config_file,
-                    owner_dsn_path=options.owner_dsn_file,
-                    database=options.database_network,
-                )
 
             elif options.action.startswith("deployment/"):
                 docker.deployment(

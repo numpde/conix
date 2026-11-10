@@ -140,7 +140,7 @@ class SharedWheelhouseContracts(unittest.TestCase):
         self.assertIn("Dockerfile", selected)
         self.assertIn("requirements/runtime.lock", selected)
         self.assertIn("requirements/build.lock", selected)
-        self.assertIn("src/conix/journal.py", selected)
+        self.assertIn("src/conix/abi.py", selected)
         self.assertIn("tests/generic_acceptance.py", selected)
         self.assertIn("tests/fixtures/abi/pay_to_play.json", selected)
         self.assertIn("tests/fixtures/abi/support_matrix.json", selected)
