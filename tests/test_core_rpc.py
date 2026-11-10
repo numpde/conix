@@ -91,7 +91,11 @@ class Server:
                     result = rpc_block(1, HASH2, HASH0, (TX0, TX1))
         elif method == "eth_getLogs":
             (filter_,) = arguments
-            result = self.log_replies.get(filter_["address"], [])
+            result = (
+                self.log_replies.get(filter_["address"], [])
+                if filter_["blockHash"] == hex_bytes(HASH1)
+                else []
+            )
             if self.mutate is not None:
                 result = self.mutate(filter_, result)
         else:
