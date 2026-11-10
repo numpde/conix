@@ -12,7 +12,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fixture_protocol import (FixtureError, ScenarioFailure, _bad_constant, _pairs,
-                              admit_public_acceptance_source, admit_tokens, decode, phase_failure_record)
+                              admit_public_acceptance_source, admit_public_test_source, admit_tokens,
+                              phase_failure_record)
 from abi_contract_vectors import VOUCHER_SIGNATURE
 from abi_golden_vectors import TRANSFER_SIGNATURE
 import httpx
@@ -36,7 +37,7 @@ def request():
         return admit_public_acceptance_source(descriptor), document["state"], tokens
 
     fixture_id = os.environ.get("CONIX_FIXTURE_ID", "")
-    return decode((json.dumps(descriptor, separators=(",", ":")) + "\n").encode(), fixture_id=fixture_id), document["state"], tokens
+    return admit_public_test_source(descriptor, fixture_id=fixture_id), document["state"], tokens
 
 
 async def rpc(descriptor, method, params):
