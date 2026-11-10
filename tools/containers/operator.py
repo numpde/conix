@@ -332,22 +332,14 @@ class Docker:
 
     def check_indexer(self, image):
         self.require_role(image, "indexer")
-        # Verify the generic codec, not a nonexistent worker entry point.
-        smoke = (
-            "import importlib.util;import conix.abi as abi;"
-            "event=abi.compile_event({'type':'event','name':'Ready','anonymous':False,"
-            "'inputs':[{'name':'value','type':'uint256','indexed':True}]});"
-            "assert len(abi.encode_indexed_filter(event,'value',7))==32;"
-            "assert importlib.util.find_spec('conix.pay_to_play') is None;"
-            "assert importlib.util.find_spec('conix.journal') is None;"
-            "assert importlib.util.find_spec('conix.commands') is None"
-        )
         self.run(
             "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
             "--pids-limit", "64", "--memory", "256m", "--user", "65532:65532",
-            "--entrypoint", "python", image, "-I", "-c", smoke,
-            timeout=30, capture=True,
+            "--entrypoint", "python", image,
+            "-I", "-m", "conix.installation_check",
+            timeout=30,
+            capture=True,
         )
         print("Verified installed generic ABI package, not an indexer worker.", file=sys.stderr)
 
@@ -362,27 +354,15 @@ class Docker:
             "--pids-limit", "64", "--memory", "256m",
         )
         self.run(*confinement_args, "--entrypoint", "cast", image, "--version", timeout=20, capture=True)
+        # The fixture image runs an actual unittest module. No embedded
+        # interpreter program or wallet material appears in Docker argv.
         self.run(
-            *confinement_args, "--entrypoint", "python", image, "-I", "-c",
-            "import sys;sys.path.insert(0,'/tests');"
-            "import generic_acceptance as acceptance;assert callable(acceptance.main)",
-            timeout=20, capture=True,
+            *confinement_args, "--entrypoint", "python", image,
+            "-I", "-m", "unittest", "discover",
+            "-s", "/tests", "-p", "evm_image_check.py", "-v",
+            timeout=30,
+            capture=True,
         )
-
-        # Exercise the exact digest-signing command without contacting a live
-        # RPC source or sending a private fixture key into logs.
-        signing_check_script = (
-            "import subprocess;"
-            "test_digest='0x'+'ab'*32;"
-            "test_key='0x'+'00'*31+'01';"
-            "signing_result=subprocess.run(['cast','wallet','sign','--no-hash',test_digest,"
-            "'--private-key',test_key],capture_output=True,text=True,timeout=10);"
-            "signature=signing_result.stdout.strip();"
-            "assert signing_result.returncode==0 and len(signature)==132 and signature[:2]=='0x';"
-            "assert bytes.fromhex(signature[2:])[-1] in (27,28)"
-        )
-        self.run(*confinement_args, "--entrypoint", "python", image,
-                 "-I", "-c", signing_check_script, timeout=20)
 
         print("Verified offline EVM acceptance runner image and Cast signer.", file=sys.stderr)
 
@@ -458,7 +438,7 @@ class Docker:
                 "--cap-add", "CHOWN", "--security-opt", "no-new-privileges:true",
                 "--pids-limit", "32", "--memory", "128m",
                 "--mount", f"type=volume,source={input_volume_name},target=/run/conix",
-                "--entrypoint", "python", image, "-m", "conix.input_staging",
+                "--entrypoint", "python", image, "-I", "-m", "conix.input_staging", "stage",
             ]
 
             staging_result = subprocess.run(
@@ -508,25 +488,14 @@ class Docker:
 
     def verify_inputs(self, image, volume):
         """Check staged ownership and permissions as the actual runtime UID."""
-        validation_script = (
-            "import os,stat;"
-            "from pathlib import Path;"
-            "input_dir=Path('/run/conix');"
-            "files=[input_dir/'config.toml',input_dir/'connection.dsn'];"
-            "assert os.getuid()==65532;"
-            "assert stat.S_IMODE(input_dir.stat().st_mode)==0o700;"
-            "assert all(p.is_file() and p.stat().st_uid==65532 "
-            "and stat.S_IMODE(p.stat().st_mode)==0o600 "
-            "and bool(p.read_bytes()) for p in files)"
-        )
-
         self.run(
             "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
             "--user", "65532:65532", "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges:true",
             "--pids-limit", "32", "--memory", "128m",
             "--mount", f"type=volume,source={volume},target=/run/conix,readonly",
-            "--entrypoint", "python", image, "-c", validation_script,
+            "--entrypoint", "python", image,
+            "-I", "-m", "conix.input_staging", "verify",
             timeout=30,
         )
 

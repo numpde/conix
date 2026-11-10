@@ -31,7 +31,7 @@ class PrototypeRemovalContracts(unittest.TestCase):
         source = ROOT / "src" / "conix"
         self.assertEqual(
             {path.name for path in source.glob("*.py")},
-            {"__init__.py", "abi.py", "input_staging.py"},
+            {"__init__.py", "abi.py", "input_staging.py", "installation_check.py"},
         )
         self.assertIn("src/conix/abi.py", {
             path.relative_to(ROOT).as_posix() for path in source.glob("*.py")

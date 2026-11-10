@@ -121,16 +121,51 @@ def stage(payload: bytes, target: Path = TARGET):
         os.close(directory_fd)
 
 
-def main():
-    # These inputs are private; subprocess stderr may only expose fixed errors.
+def verify(target: Path = TARGET) -> None:
+    """Prove staged files are readable by the real unprivileged worker."""
+    if (os.getuid(), os.getgid()) != (OWNER, OWNER):
+        raise InputError("Runtime input check must use the selected worker identity.")
+
+    if target.is_symlink():
+        raise InputError("Runtime input directory must not be a symlink.")
+
+    directory = target.stat()
+    if not stat.S_ISDIR(directory.st_mode) or stat.S_IMODE(directory.st_mode) != 0o700:
+        raise InputError("Runtime input directory has an unexpected mode.")
+
+    for name in (CONFIG, DSN):
+        path = target / name
+        metadata = path.lstat()
+
+        if (not stat.S_ISREG(metadata.st_mode)
+            or (metadata.st_uid, metadata.st_gid) != (OWNER, OWNER)
+            or stat.S_IMODE(metadata.st_mode) != 0o600):
+            raise InputError(f"Runtime input file {name} has unexpected permissions.")
+
+        with path.open("rb") as stream:
+            if not stream.read(1):
+                raise InputError(f"Runtime input file {name} is empty.")
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Dispatch two explicit operations with different effective identities."""
+    operation = sys.argv[1:] if argv is None else argv
+    if operation not in (["stage"], ["verify"]):
+        raise SystemExit("Use python -m conix.input_staging stage|verify.")
+
     try:
-        staged_payload = sys.stdin.buffer.read(len(MAGIC) + 8 + MAX_CONFIG + MAX_DSN + 1)
-        stage(staged_payload)
+        if operation == ["stage"]:
+            payload = sys.stdin.buffer.read(len(MAGIC) + 8 + MAX_CONFIG + MAX_DSN + 1)
+            stage(payload)
+        else:
+            verify()
     except InputError as error:
+        # The messages are source-controlled and never include input bytes.
         raise SystemExit(f"Conix input staging failed (InputError): {error}") from None
-    except (OSError, ValueError) as error:
+    except OSError as error:
         raise SystemExit(
-            f"Conix input staging failed ({type(error).__name__}): inspect volume permissions and the private configuration."
+            f"Conix input staging failed ({type(error).__name__}): "
+            "inspect volume ownership and the selected private input files."
         ) from None
 
 

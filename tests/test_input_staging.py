@@ -36,3 +36,4 @@ class InputEnvelopeTests(unittest.TestCase):
         for secret in (b"", b"postgresql://foo\0bar"):
             with self.subTest(secret=secret), self.assertRaises(InputError):
                 decode(self.payload(secret=secret))
+
