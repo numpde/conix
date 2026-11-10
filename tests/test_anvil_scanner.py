@@ -367,6 +367,27 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(reported.finalized_status, "known")
                     self.assertEqual(reported.finalized, newest.block)
 
+                    async def inconsistent_finality(method, params, *, deadline):
+                        if (
+                            method == "eth_getBlockByNumber"
+                            and params[0] in ("finalized", hex(old_checkpoint.block.number))
+                        ):
+                            older = await rpc_call(
+                                method,
+                                [hex(old_checkpoint.block.number), False],
+                                deadline=deadline,
+                            )
+                            return {**older, "hash": "0x" + "ee" * 32}
+                        return await rpc_call(method, params, deadline=deadline)
+
+                    with patch.object(reader.rpc, "call", side_effect=inconsistent_finality):
+                        with self.assertRaises(BranchConflict):
+                            await reader.evidence(
+                                checkpoint=newest,
+                                block_numbers=(),
+                                include_finalized=True,
+                            )
+
                     async def missing_finality(method, params, *, deadline):
                         if method == "eth_getBlockByNumber" and params[0] == "finalized":
                             return None

@@ -594,6 +594,21 @@ class Reader:
                 if await self._observed(number, deadline) != reported:
                     raise BranchConflict("Provider finalized block differs from its canonical chain.")
 
+                # A provider can consistently report the WRONG older
+                # canonical block. When that height lies in our complete
+                # prefix, the reported finalized ancestor must also match
+                # the retained history, not just another provider reply.
+                if checkpoint.history_start <= number < checkpoint.block.number:
+                    async with self._snapshot(checkpoint):
+                        row = await (
+                            await self.connection.execute(
+                                "SELECT hash FROM conix.blocks WHERE number = %s",
+                                (number,),
+                            )
+                        ).fetchone()
+                        if row is None or row[0] != reported.hash:
+                            raise BranchConflict("Reported finality contradicts the retained prefix.")
+
                 finalized = reported
                 finalized_status = "known"
 
