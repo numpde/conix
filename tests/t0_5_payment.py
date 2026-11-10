@@ -191,6 +191,30 @@ async def collect(rpc, descriptor, *, signer, customer, collector, channel, tota
     )
 
 
+async def mine_mixed_block(rpc, descriptor, tokens, *, signer, customer, collector, invoice):
+    """Publish three different selected contracts in the SAME mined block.
+
+    The automining setting is restored even on a rejected submission. This
+    function may be called only for the campaign-owned disposable Anvil.
+    """
+    await rpc(descriptor, "anvil_setAutomine", [False])
+    try:
+        payment_tx = await collect(
+            rpc, descriptor, signer=signer, customer=customer, collector=collector,
+            channel=1, total=70, cap=30, invoice=invoice, wait=False,
+        )
+        (token20_tx, token721_tx) = await mixed_transfers(rpc, descriptor, tokens)
+        await rpc(descriptor, "evm_mine", [])
+    finally:
+        await rpc(descriptor, "anvil_setAutomine", [True])
+
+    return {
+        "payment": await waited_receipt(rpc, descriptor, payment_tx),
+        "token20": await waited_receipt(rpc, descriptor, token20_tx),
+        "token721": await waited_receipt(rpc, descriptor, token721_tx),
+    }
+
+
 async def assert_collection_history(reader, checkpoint, *, expected, customer, payment_address, payee):
     """A SQL-filtered customer/channel view must match independent mined logs."""
     for (account, channel, receipt, outcome) in expected:
@@ -298,25 +322,11 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             require((await position(reader, funded, customer, 1))[7:9] == (100, 0),
                     "Funding checkpoint has the wrong position state.")
 
-        # Three genuine transactions from distinct senders in one Anvil
-        # block: the first signed collection, ERC-20, and ERC-721 Transfer.
-        await rpc(descriptor, "anvil_setAutomine", [False])
-        try:
-            payment_tx = await collect(
-                rpc, descriptor, signer=key, customer=customer, collector=collector,
-                channel=1, total=70, cap=30, invoice=invoice_a, wait=False,
-            )
-            (token20_tx, token721_tx) = await mixed_transfers(rpc, descriptor, tokens)
-            await rpc(descriptor, "evm_mine", [])
-        finally:
-            await rpc(descriptor, "anvil_setAutomine", [True])
-
-        first = await waited_receipt(rpc, descriptor, payment_tx)
-        mixed_tokens = {
-            "payment": first,
-            "token20": await waited_receipt(rpc, descriptor, token20_tx),
-            "token721": await waited_receipt(rpc, descriptor, token721_tx),
-        }
+        mixed_tokens = await mine_mixed_block(
+            rpc, descriptor, tokens,
+            signer=key, customer=customer, collector=collector, invoice=invoice_a,
+        )
+        first = mixed_tokens["payment"]
         await scan(writer)
         async with open_reader(
             catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
