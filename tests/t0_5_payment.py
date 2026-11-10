@@ -25,8 +25,8 @@ from t0_5_chain import (
     assert_event_matches_receipt, calldata, require, send, wait_for_receipt,
 )
 from t0_5_tokens import (
-    emit_initial_transfers, only_transfer, submit_pending_token_transfers,
-    verify_after_restart, verify_token_history,
+    call_token_view, emit_initial_transfers, only_transfer,
+    submit_pending_token_transfers, verify_after_restart, verify_token_history,
 )
 
 COLLECT = "collect(address,uint256,uint256,bytes32,uint256,bytes)"
@@ -747,8 +747,6 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
                     assert_event_matches_receipt(
                         surviving[0], only_transfer(token_b, tokens["token721"]["address"]),
                     )
-            from t0_5_tokens import call_token_view
-
             nft_owner = await call_token_view(
                 rpc, descriptor, tokens["token721"]["address"],
                 "ownerOf(uint256)", ("uint256",), (7,), ("address",),
