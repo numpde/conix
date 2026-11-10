@@ -220,6 +220,17 @@ async def read_position(reader, descriptor, checkpoint, customer, channel):
     return named_position(descriptor, values)
 
 
+async def assert_position(
+    reader, descriptor, checkpoint, customer, channel, expected, *, phase,
+):
+    """Give a failed historical-state check its actual and expected values."""
+    position = await read_position(
+        reader, descriptor, checkpoint, customer, channel,
+    )
+    actual = (position["balance"], position["voucherPaid"])
+    require(actual == expected, f"{phase}: {actual = }, {expected = }")
+
+
 async def collect_voucher(rpc, descriptor, *, signer, customer, collector, channel, total, cap, invoice, wait=True):
     signature = await sign_voucher(
         rpc, descriptor, signer=signer, customer=customer, channel=channel, total=total, invoice=invoice,
@@ -406,12 +417,9 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             rpc_url=descriptor["rpcUrl"],
         ) as reader:
             funded = await reader.checkpoint()
-            position_state = await read_position(
-                reader, descriptor, funded, customer, 1,
-            )
-            require(
-                (position_state["balance"], position_state["voucherPaid"]) == (100, 0),
-                "Funding checkpoint has the wrong position state.",
+            await assert_position(
+                reader, descriptor, funded, customer, 1, (100, 0),
+                phase="After funding",
             )
 
         mixed_tokens = await mine_mixed_block(
@@ -426,12 +434,9 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             rpc_url=descriptor["rpcUrl"],
         ) as reader:
             after_first = await reader.checkpoint()
-            position_state = await read_position(
-                reader, descriptor, after_first, customer, 1,
-            )
-            require(
-                (position_state["balance"], position_state["voucherPaid"]) == (70, 30),
-                "First collection checkpoint has the wrong position state.",
+            await assert_position(
+                reader, descriptor, after_first, customer, 1, (70, 30),
+                phase="After first collection",
             )
             await verify_token_history(
                 reader, after_first, descriptor, tokens,
@@ -449,12 +454,9 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             rpc_url=descriptor["rpcUrl"],
         ) as reader:
             after_second = await reader.checkpoint()
-            position_state = await read_position(
-                reader, descriptor, after_second, customer, 1,
-            )
-            require(
-                (position_state["balance"], position_state["voucherPaid"]) == (30, 70),
-                "Second collection checkpoint has the wrong position state.",
+            await assert_position(
+                reader, descriptor, after_second, customer, 1, (30, 70),
+                phase="After second collection",
             )
 
         zero = await collect_voucher(
@@ -510,14 +512,9 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
                 ("withdrawal", current, 0, 70),
             )
             for (phase, selected_checkpoint, balance, voucher_paid) in snapshots:
-                position_state = await read_position(
+                await assert_position(
                     reader, descriptor, selected_checkpoint, customer, 1,
-                )
-                observed = (position_state["balance"], position_state["voucherPaid"])
-                expected_state = (balance, voucher_paid)
-                require(
-                    observed == expected_state,
-                    f"Historical PayToPlay position changed after {phase}.",
+                    (balance, voucher_paid), phase=f"Historical position after {phase}",
                 )
 
             expected = [
@@ -639,12 +636,9 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
                     "Branch A did not yield a real stale pagination cursor.")
             old_cursor = page.next_cursor
 
-            branch_a_position = await read_position(
-                reader, descriptor, old, account, 2,
-            )
-            require(
-                (branch_a_position["balance"], branch_a_position["voucherPaid"]) == (0, 20),
-                "The indexed branch A does not match its paid contract position.",
+            await assert_position(
+                reader, descriptor, old, account, 2, (0, 20),
+                phase="Selected branch A",
             )
             remaining = await reader.events(
                 checkpoint=old, contract="payment", event=VOUCHER,
@@ -719,12 +713,9 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
             require(all(event.transaction_hash.hex() != branch_a["transactionHash"][2:].lower()
                         for event in page.events),
                     "Reorganized-out transaction survived Conix suffix repair.")
-            branch_b_position = await read_position(
-                reader, descriptor, current, account, 2,
-            )
-            require(
-                (branch_b_position["balance"], branch_b_position["voucherPaid"]) == (5, 15),
-                "Canonical branch B retained a paid position from orphaned branch A.",
+            await assert_position(
+                reader, descriptor, current, account, 2, (5, 15),
+                phase="Canonical branch B after repair",
             )
             for (alias, expected_count) in (("token20", 3), ("token721", 4)):
                 events = await reader.events(
