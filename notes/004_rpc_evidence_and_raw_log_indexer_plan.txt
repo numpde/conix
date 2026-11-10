@@ -777,7 +777,11 @@ All configured limit values are required; each also has a fixed code ceiling:
 The fixed aggregate raw-event cap for one candidate block is 8 MiB; at most
 8 MiB total ABI-file bytes are admitted in one prepared catalog. The scanner
 does not stream unbounded RPC results or allocate a decoded array based solely
-on an untrusted ABI length. One block transaction and every SQL operation
+on an untrusted ABI length. T0-1's strict codec further caps the SUM of
+elements across all nested arrays in a single ABI value at four times the
+configured per-array max_elements; the same cap applies to caller encoding
+and wire decoding. Tuple/array nesting is checked before library grammar
+expansion, including cyclic malformed in-memory declarations. One block transaction and every SQL operation
 has an explicit bounded deadline. Exhaustion is an UNAVAILABLE operation,
 never evidence of an empty selected history.
 

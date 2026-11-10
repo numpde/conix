@@ -125,8 +125,14 @@ class ContractDescriptor:
 
 
 def _name(value, *, allow_empty=False):
-    if type(value) is not str or len(value.encode("utf-8")) > 128:
-        raise UnsupportedABI("An ABI name is missing or exceeds its bound.")
+    if type(value) is not str:
+        raise UnsupportedABI("An ABI name must be a string.")
+    try:
+        name_bytes = value.encode("utf-8")
+    except UnicodeError:
+        raise UnsupportedABI("An ABI name is not valid UTF-8.") from None
+    if len(name_bytes) > 128:
+        raise UnsupportedABI("An ABI name exceeds its bound.")
     if not allow_empty and not _NAME.fullmatch(value):
         raise UnsupportedABI("An event/function name is not a Solidity identifier.")
     if "\x00" in value:
@@ -134,7 +140,26 @@ def _name(value, *, allow_empty=False):
     return value
 
 
+def _check_depth(entry, limits, depth):
+    """Reject hostile tuple trees before a library recursively expands them."""
+    if depth > limits.max_nesting:
+        raise ResourceExceeded("ABI type nesting exceeds the admitted depth.")
+    if type(entry) is not dict or type(entry.get("type")) is not str:
+        raise UnsupportedABI("ABI argument lacks a type declaration.")
+    raw = entry["type"]
+    dimensions = raw.count("[")
+    if depth + dimensions > limits.max_nesting:
+        raise ResourceExceeded("ABI array dimensions exceed the admitted depth.")
+    if raw.split("[", 1)[0] == "tuple":
+        components = entry.get("components")
+        if type(components) is not list or not 0 < len(components) <= 256:
+            raise UnsupportedABI("Tuple requires bounded components.")
+        for component in components:
+            _check_depth(component, limits, depth + dimensions + 1)
+
+
 def _type(entry: dict, limits: AbiLimits) -> ABIValueType:
+    _check_depth(entry, limits, 1)
     if type(entry) is not dict or type(entry.get("type")) is not str:
         raise UnsupportedABI("ABI argument lacks a type declaration.")
 
@@ -463,7 +488,7 @@ def decode_event(descriptor: EventDescriptor, topics: tuple[bytes, ...], data: b
     return tuple(values)
 
 
-def _caller(spec, value, limits):
+def _caller(spec, value, limits, budget):
     if spec.kind in ("uint", "int"):
         if type(value) is not int:
             raise InvalidCallerValue("ABI integer requires an exact Python int, not bool/float.")
@@ -499,13 +524,16 @@ def _caller(spec, value, limits):
     elif spec.kind == "tuple":
         if type(value) is not tuple or len(value) != len(spec.components):
             raise InvalidCallerValue("ABI tuple has the wrong Python shape.")
-        value = tuple(_caller(arg.type, item, limits) for arg, item in zip(spec.components, value))
+        value = tuple(_caller(arg.type, item, limits, budget) for arg, item in zip(spec.components, value))
     elif spec.kind == "array":
         if type(value) is not tuple or len(value) > limits.max_elements or (
             spec.length is not None and len(value) != spec.length
         ):
             raise InvalidCallerValue("ABI array has the wrong Python shape or length.")
-        value = tuple(_caller(spec.item, item, limits) for item in value)
+        budget[0] += len(value)
+        if budget[0] > limits.max_elements * 4:
+            raise ResourceExceeded("Total ABI array elements exceed a bounded work budget.")
+        value = tuple(_caller(spec.item, item, limits, budget) for item in value)
     else:
         raise UnsupportedABI("Unrecognized compiled ABI type.")
     return value
@@ -522,7 +550,7 @@ def encode_indexed_filter(descriptor: EventDescriptor, field_name: str, value, *
     argument = matches[0]
     if argument.type.dynamic or argument.type.kind in ("tuple", "array"):
         raise InvalidCallerValue("Indexed hash cannot be filtered as an ABI preimage.")
-    typed = _caller(argument.type, value, limits)
+    typed = _caller(argument.type, value, limits, [0])
     try:
         encoded = abi_encode((argument.type.canonical,), (typed,))
     except Exception:
@@ -540,8 +568,9 @@ def encode_call(descriptor: FunctionDescriptor, arguments: tuple, *,
     ):
         raise InvalidCallerValue("Function call argument count/shape is invalid.")
     types = tuple(arg.type.canonical for arg in descriptor.inputs)
+    budget = [0]
     values = tuple(
-        _caller(arg.type, value, limits) for arg, value in zip(descriptor.inputs, arguments)
+        _caller(arg.type, value, limits, budget) for arg, value in zip(descriptor.inputs, arguments)
     )
     try:
         encoded = abi_encode(types, values)

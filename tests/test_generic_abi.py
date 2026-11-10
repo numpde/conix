@@ -269,6 +269,37 @@ class AbiAdmissionContracts(unittest.TestCase):
         with self.assertRaises(UnsupportedABI):
             compile_contract(catalog("erc20"), ("Transfer(address,address,uint256)",) * 2)
 
+    def test_cyclic_tuple_and_invalid_utf8_name_are_refused_before_codec(self):
+        cyclic = {"name": "items", "type": "tuple", "indexed": False}
+        cyclic["components"] = [cyclic]
+        with self.assertRaises(ResourceExceeded):
+            compile_event({
+                "type": "event", "name": "Cycle", "anonymous": False,
+                "inputs": [cyclic],
+            })
+        with self.assertRaises(UnsupportedABI):
+            compile_event({
+                "type": "event", "name": "Bad\ud800", "anonymous": False,
+                "inputs": [],
+            })
+
+    def test_aggregate_array_cap_applies_to_both_encoded_and_decoded_values(self):
+        method = compile_function({
+            "type": "function", "name": "nested", "stateMutability": "pure",
+            "inputs": [{"name": "values", "type": "uint8[][][]"}],
+            "outputs": [{"name": "values", "type": "uint8[][][]"}],
+        })
+        values = (
+            ((1, 2), (3, 4)),
+            ((5, 6), (7, 8)),
+        )
+        small = AbiLimits(max_elements=2)
+        with self.assertRaises(ResourceExceeded):
+            encode_call(method, (values,), limits=small)
+        reference = reference_encode(("uint8[][][]",), (values,))
+        with self.assertRaises(ResourceExceeded):
+            decode_return(method, reference, limits=small)
+
     def test_nesting_and_payload_limits_are_hard_bounds(self):
         with self.assertRaises(ResourceExceeded):
             AbiLimits(max_nesting=9)
