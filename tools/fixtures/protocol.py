@@ -298,6 +298,23 @@ def admit_public_acceptance_source(value: dict) -> dict:
 
 
 
+_TEST_VIEW_NAMES = frozenset({"channelCount", "voucherDigest", "viewPosition"})
+
+
+def _public_abi_argument(argument: dict) -> dict:
+    """Retain ABI types/names, not compiler annotations or unrelated metadata."""
+    projected = {
+        "name": argument.get("name", ""),
+        "type": argument["type"],
+    }
+    if "components" in argument:
+        projected["components"] = [
+            _public_abi_argument(component) for component in argument["components"]
+        ]
+
+    return projected
+
+
 def public_test_source(descriptor: dict) -> dict:
     """Give test consumers public contract/account facts, never wallet keys.
 
@@ -315,7 +332,25 @@ def public_test_source(descriptor: dict) -> dict:
             "PayToPlay": {
                 "address": payment["address"],
                 "deploymentBlock": payment["deploymentBlock"],
-                "abi": payment["abi"],
+                # Only these deployed views are used to establish the test
+                # oracle. Do not forward arbitrary ABI metadata or events.
+                "abi": [
+                    {
+                        "type": "function",
+                        "name": entry["name"],
+                        "inputs": [
+                            _public_abi_argument(argument)
+                            for argument in entry["inputs"]
+                        ],
+                        "outputs": [
+                            _public_abi_argument(argument)
+                            for argument in entry.get("outputs", [])
+                        ],
+                    }
+                    for entry in payment["abi"]
+                    if entry.get("type") == "function"
+                    and entry.get("name") in _TEST_VIEW_NAMES
+                ],
             },
         },
         "publicFixtureAccounts": {
