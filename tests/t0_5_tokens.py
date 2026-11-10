@@ -21,7 +21,7 @@ ZERO = "0x" + "00" * 20
 ROOT = Path(__file__).resolve().parent / "fixtures" / "evm"
 
 
-async def call(rpc, descriptor, contract: str, signature: str, types: tuple[str, ...],
+async def call_token_view(rpc, descriptor, contract: str, signature: str, types: tuple[str, ...],
                values: tuple, results: tuple[str, ...]):
     raw = await rpc(descriptor, "eth_call", [{
         "to": contract, "data": calldata(signature, types, values),
@@ -31,7 +31,7 @@ async def call(rpc, descriptor, contract: str, signature: str, types: tuple[str,
     return decode(results, bytes.fromhex(raw[2:]))
 
 
-def code_artifacts() -> dict:
+def token_creation_bytecode() -> dict:
     """Reject drift between the reviewed source and pinned Solidity bytecode."""
     source = (ROOT / "T0Tokens.sol").read_bytes()
     artifact = json.loads((ROOT / "token_bytecode.json").read_text(encoding="utf-8"))
@@ -54,12 +54,12 @@ def code_artifacts() -> dict:
     return artifact["bytecode"]
 
 
-async def deploy(descriptor, rpc) -> dict:
+async def deploy_token_fixtures(descriptor, rpc) -> dict:
     """Deploy real ERC-20/721 test code before owner schema initialization."""
-    bytecode = code_artifacts()
+    bytecode = token_creation_bytecode()
     creator = descriptor["publicFixtureAccounts"]["admin"]["address"]
     contracts = {}
-    for name, alias in (("ConixToken20", "token20"), ("ConixToken721", "token721")):
+    for (name, alias) in (("ConixToken20", "token20"), ("ConixToken721", "token721")):
         await rpc(descriptor, "anvil_impersonateAccount", [creator])
         try:
             tx_hash = await rpc(descriptor, "eth_sendTransaction", [{
@@ -81,10 +81,10 @@ async def deploy(descriptor, rpc) -> dict:
 
     token20 = contracts["token20"]["address"]
     token721 = contracts["token721"]["address"]
-    require((await call(rpc, descriptor, token20, "balanceOf(address)",
+    require((await call_token_view(rpc, descriptor, token20, "balanceOf(address)",
                         ("address",), (creator,), ("uint256",))) == (1000,),
             "Real ERC-20 constructor did not allocate its initial balance.")
-    require((await call(rpc, descriptor, token721, "ownerOf(uint256)",
+    require((await call_token_view(rpc, descriptor, token721, "ownerOf(uint256)",
                         ("uint256",), (7,), ("address",)))[0].lower() == creator.lower(),
             "Real ERC-721 constructor did not mint token 7 to the creator.")
 
@@ -102,7 +102,7 @@ def only_transfer(receipt, contract):
     return matching[0]
 
 
-async def initial_transfers(rpc, descriptor, tokens):
+async def emit_initial_transfers(rpc, descriptor, tokens):
     """Place meaningful transfers before the shared mixed-contract block."""
     admin = descriptor["publicFixtureAccounts"]["admin"]["address"]
     customer = descriptor["publicFixtureAccounts"]["customer"]["address"]
@@ -119,7 +119,7 @@ async def initial_transfers(rpc, descriptor, tokens):
     return {"token20": transfer20, "token721": transfer721}
 
 
-async def mixed_transfers(rpc, descriptor, tokens):
+async def submit_pending_token_transfers(rpc, descriptor, tokens):
     """Submit two pending token transfers; the caller also submits PayToPlay."""
     admin = descriptor["publicFixtureAccounts"]["admin"]["address"]
     customer = descriptor["publicFixtureAccounts"]["customer"]["address"]
@@ -150,7 +150,7 @@ def expected_transfer_values(descriptor):
     }
 
 
-async def verify(reader, checkpoint, descriptor, tokens, receipts, rpc):
+async def verify_token_history(reader, checkpoint, descriptor, tokens, receipts, rpc):
     """Prove both ABIs coexist under one checkpoint using actual receipt bytes."""
     admin = descriptor["publicFixtureAccounts"]["admin"]["address"]
     customer = descriptor["publicFixtureAccounts"]["customer"]["address"]
@@ -165,7 +165,7 @@ async def verify(reader, checkpoint, descriptor, tokens, receipts, rpc):
         )
         require(page.complete and len(page.events) == 3,
                 "Shared checkpoint has incomplete real token Transfer history.")
-        for item, values, receipt in zip(page.events, expected[alias], actual_receipts, strict=True):
+        for (item, values, receipt) in zip(page.events, expected[alias], actual_receipts, strict=True):
             require(item.values == values,
                     "Generic reader decoded a real ERC token Transfer incorrectly.")
             assert_event_matches_receipt(item, only_transfer(receipt, address))
@@ -190,13 +190,13 @@ async def verify(reader, checkpoint, descriptor, tokens, receipts, rpc):
 
     token20 = tokens["token20"]["address"]
     token721 = tokens["token721"]["address"]
-    for account, balance in ((admin, 875), (customer, 100), (relayer, 25)):
+    for (account, balance) in ((admin, 875), (customer, 100), (relayer, 25)):
         require(
-            await call(rpc, descriptor, token20, "balanceOf(address)",
+            await call_token_view(rpc, descriptor, token20, "balanceOf(address)",
                        ("address",), (account,), ("uint256",)) == (balance,),
             "ERC-20 on-chain balances contradict the emitted test Transfers.",
         )
-    require((await call(rpc, descriptor, token721, "ownerOf(uint256)",
+    require((await call_token_view(rpc, descriptor, token721, "ownerOf(uint256)",
                         ("uint256",), (7,), ("address",)))[0].lower() == relayer.lower(),
             "ERC-721 on-chain ownership contradicts emitted test Transfers.")
 
