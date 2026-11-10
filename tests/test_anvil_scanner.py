@@ -1,26 +1,21 @@
-"""Qualify selected-log acquisition from an actual disposable Anvil EVM chain.
+"""Index a real Anvil EVM event through the installed PostgreSQL writer.
 
-Only this test invokes Anvil-specific state setup and transaction submission.
-The production scanner uses chain reads and eth_getLogs exclusively. Real
-PostgreSQL transaction/repair behavior has its own installed-package tests.
+Anvil-specific state changes and transaction submission are test-only.
+The production writer uses exactly the selected read-only RPC methods and
+the same atomic journal validated by ordinary PostgreSQL tests.
 """
 
-import json
 import os
-from pathlib import Path
-import tempfile
 import unittest
 
 import httpx
+from psycopg import AsyncConnection
 
 from abi_golden_vectors import ERC20, word
-from conix.catalog import prepare_catalog
-from conix.core import Writer
-from conix.rpc import RPC
-from test_core_rpc import RecordingJournal
+from anvil_catalog import catalog_for_anvil
+from conix.core import open_writer
 
 
-FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CONTRACT = b"\x11" * 20
 
 
@@ -29,12 +24,14 @@ def hex_bytes(value: bytes) -> str:
 
 
 @unittest.skipUnless(
-    os.getenv("CONIX_TEST_ANVIL_URL"),
-    "Requires the confined, disposable Anvil service",
+    os.getenv("CONIX_TEST_ANVIL_URL")
+    and os.getenv("CONIX_TEST_ANVIL_DSN")
+    and os.getenv("CONIX_TEST_ANVIL_READ_DSN"),
+    "Requires the disposable Anvil chain and its owner-initialized SQL database",
 )
 class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
 
-    async def test_real_evm_transfer_log_is_scanned_with_original_bytes(self):
+    async def test_real_evm_transfer_is_stored_and_empty_block_can_be_repaired(self):
         url = os.environ["CONIX_TEST_ANVIL_URL"]
 
         async with httpx.AsyncClient(trust_env=False, timeout=5) as client:
@@ -57,9 +54,9 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
             genesis = await call("eth_getBlockByNumber", ["0x0", False])
             self.assertEqual(await call("eth_chainId", []), "0x7a69")
 
-            # This 20-byte test address has no deployed source contract.
-            # Install fixed runtime EVM instructions that MSTORE one uint256
-            # and LOG3 the independently supplied ERC-20 Transfer topics.
+            # The fixed runtime stores uint256(7) at memory 0, then LOG3
+            # with independent ERC-20 Transfer topic bytes. No signing
+            # key or test-only Anvil operation enters the scanner.
             runtime = (
                 b"\x60\x07\x60\x00\x52"
                 + b"\x7f" + ERC20.topics[2]
@@ -90,54 +87,81 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(bytes.fromhex(recorded_log["data"][2:]), word(7))
 
-            with tempfile.TemporaryDirectory() as folder:
-                directory = Path(folder)
-                (directory / "abi").mkdir()
-                (directory / "abi" / "erc20.json").write_bytes(
-                    (FIXTURES / "abi" / "erc20.json").read_bytes()
-                )
-                original = (FIXTURES / "catalog.toml").read_text(encoding="utf-8")
-                original = original.replace(
-                    'genesis_hash = "0x' + "00" * 32 + '"',
-                    f'genesis_hash = "{genesis["hash"].lower()}"',
-                )
-                original = original.replace(
-                    "start_block = 1",
-                    f'start_block = {int(receipt["blockNumber"], 16)}',
-                )
-                original = original.replace(
-                    'rpc_url = "http://anvil:8545"',
-                    "rpc_url = " + json.dumps(url),
-                )
-                config = directory / "source.toml"
-                config.write_text(original, encoding="utf-8")
-                source = prepare_catalog(config)
+            source = catalog_for_anvil(genesis_hash=genesis["hash"], rpc_url=url)
+            mined_number = int(receipt["blockNumber"], 16)
 
-            journal = RecordingJournal(source)
-            writer = Writer(
+            async with open_writer(
                 catalog=source,
-                journal=journal,
-                rpc=RPC(client=client, url=url, limits=source.limits),
-            )
-            await writer.verify_source()
-            completed = await writer.advance_one()
+                database_dsn=os.environ["CONIX_TEST_ANVIL_DSN"],
+                rpc_url=url,
+            ) as writer:
+                for height in range(source.chain.start_block, mined_number + 1):
+                    complete = await writer.advance_one()
+                    self.assertIsNotNone(complete)
+                    self.assertEqual(complete.last_block.number, height)
 
-            self.assertEqual(completed.last_block.hash, bytes.fromhex(receipt["blockHash"][2:]))
-            self.assertEqual(len(journal.publications), 1)
+                self.assertEqual(
+                    complete.last_block.hash,
+                    bytes.fromhex(receipt["blockHash"][2:]),
+                )
+                self.assertIsNone(await writer.advance_one())
 
-            (block, events) = journal.publications[0]
-            self.assertEqual(block.number, int(receipt["blockNumber"], 16))
-            self.assertEqual(len(events), 1)
-            self.assertEqual(events[0].transaction_hash, bytes.fromhex(transaction_hash[2:]))
-            self.assertEqual(events[0].log_index, int(recorded_log["logIndex"], 16))
-            self.assertEqual(events[0].address, CONTRACT)
-            self.assertEqual(events[0].topics, ERC20.topics)
-            self.assertEqual(events[0].data, word(7))
+                # A second actual block contains no selected Transfer.
+                # It must still advance complete retained history.
+                await call("evm_mine", [])
+                empty = await writer.advance_one()
+                self.assertEqual(empty.last_block.number, mined_number + 1)
+                self.assertEqual(empty.generation, complete.generation)
 
-            # No new block is mined by a read. The complete retained tip
-            # remains valid, and a second call cannot invent a new block.
-            self.assertIsNone(await writer.advance_one())
-            self.assertEqual(len(journal.publications), 1)
+                async with await AsyncConnection.connect(
+                    os.environ["CONIX_TEST_ANVIL_READ_DSN"],
+                    connect_timeout=5,
+                ) as reader:
+                    source_record = await (
+                        await reader.execute(
+                            "SELECT source_id, last_block, generation "
+                            "FROM conix.source_progress WHERE singleton = 1"
+                        )
+                    ).fetchone()
+                    self.assertEqual(
+                        source_record,
+                        (source.source_id, empty.last_block.number, empty.generation),
+                    )
+                    raw = await (
+                        await reader.execute(
+                            "SELECT transaction_hash, transaction_index, log_index, "
+                            "address, topic0, topic1, topic2, topic3, data "
+                            "FROM conix.events ORDER BY block_number, log_index"
+                        )
+                    ).fetchall()
+                    self.assertEqual(raw, [(
+                        bytes.fromhex(transaction_hash[2:]),
+                        int(recorded_log["transactionIndex"], 16),
+                        int(recorded_log["logIndex"], 16),
+                        CONTRACT,
+                        *ERC20.topics,
+                        None,
+                        word(7),
+                    )])
+                    blocks = await (
+                        await reader.execute("SELECT number FROM conix.blocks ORDER BY number")
+                    ).fetchall()
+                    self.assertEqual(
+                        [number for (number,) in blocks],
+                        list(range(source.chain.start_block, mined_number + 2)),
+                    )
+
+                # Checked manual suffix repair is the same concrete journal
+                # operation used by the scanner. It invalidates old handles.
+                repaired = await writer.repair_to(ancestor=complete.last_block)
+                self.assertEqual(repaired.last_block, complete.last_block)
+                self.assertNotEqual(repaired.generation, complete.generation)
+
+                # The now-missing canonical block can be acquired again.
+                restored = await writer.advance_one()
+                self.assertEqual(restored.last_block.number, mined_number + 1)
+                self.assertEqual(restored.generation, repaired.generation)
+                self.assertIsNone(await writer.advance_one())
 
 
 if __name__ == "__main__":
