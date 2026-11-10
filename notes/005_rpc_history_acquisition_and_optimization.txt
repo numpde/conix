@@ -1,0 +1,316 @@
+Conix — historical RPC acquisition and Tier-2 substitution contract
+=================================================================
+
+Date: 2026-11-10
+Status: NORMATIVE DESIGN for T0-3 and later acquisition optimizations;
+        NOT YET IMPLEMENTED. T0-1 presently has no RPC/SQL scanner.
+
+Authority and division of responsibility
+----------------------------------------
+This note is the sole active authority for WHAT physical RPC methods obtain
+event history, WHICH raw evidence forms Tier 0 must admit, and HOW Tier 2
+may change acquisition. Note 004 remains authoritative for the selected
+history, immutable source/catalog identity, ABI rules, complete-block
+publication, reader contract, release stages and resource ceilings. Note
+000 governs mandatory concrete Tier-0 delegation and no-bypass extension
+rules. Notes 001/003 are historical designs, not competing decisions.
+
+The invariant is NOT "the scanner always calls eth_getLogs". It is:
+
+  A single concrete Tier-0 advance operation establishes the selected
+  complete events of one identified block under an explicitly trusted RPC
+  source, rechecks the chain/durable basis, and publishes that block in one
+  guarded SQL transaction. The physical route used to obtain raw evidence
+  may change; the validator, publisher, checkpoint meaning, reader and
+  repair algorithm may not be substituted by a higher tier.
+
+Neither eth_getLogs nor receipts give cryptographic proof of completeness
+against a dishonest provider. A checkpoint is complete relative to the
+configured selections, origin, block identities and explicitly trusted
+RPC source, never an independently authenticated consensus claim.
+
+1. Available acquisition methods and initial decision
+------------------------------------------------------
+
+Method / mode                       Useful property              Main drawback
+----------------------------------  ---------------------------  ------------------------------
+eth_getLogs(blockHash, filter)      Exact selected one-block     Many requests for many blocks/
+                                    address/topic acquisition   event selectors.
+eth_getLogs(fromBlock,toBlock)      Sparse backfill over a      Range limits, unpinned results,
+                                    bounded number range       empty-block/fork ambiguity.
+eth_getBlockReceipts(blockHash)     All receipts/logs for one    Larger payloads, endpoint
+                                    identified block           availability varies.
+eth_getTransactionReceipt(txHash)   Receipt for one transaction  Need full transaction inventory;
+                                    on any supporting provider  potentially huge request count.
+JSON-RPC batches                   Fewer HTTP round trips for   Not a single atomic history
+                                    independent requests       snapshot or fewer RPC operations.
+Block-header logsBloom             Cheap provable-negative      Positive means only "maybe";
+                                    prefilter under RPC trust   needs core-approved absence proof.
+eth_subscribe(logs)                 Low-latency tip signal      No durable complete backfill.
+eth_newFilter/getFilterChanges      Convenience incremental      Ephemeral provider-held state.
+trace_*, debug_*, custom archives   Additional execution data   Nonportable, not needed for logs.
+
+Baseline T0-3 acquisition is ONE eth_getLogs request per configured
+(contract address, event topic0) selection for the SAME identified blockHash.
+Every query must finish; an error or missing response prevents publication,
+including when the other selections were empty. No customer/channel or
+other reader-specific topic predicates constrain ingestion. The scalar reader
+filters operate over already complete retained history.
+
+  eth_getLogs([{
+      "blockHash": "<identified 32-byte block hash>",
+      "address": "<selected 20-byte address>",
+      "topics": ["<selected event topic0>"]
+  }])
+
+A blockHash filter is mutually exclusive with fromBlock/toBlock. An
+identified empty block still requires its complete selected-event evidence
+and is committed in the same way as a nonempty block. Query results are
+not independently trustworthy merely because the server returned [].
+
+The T0-3 initial implementation requires only ordinary source/header reads
+(e.g. eth_chainId and eth_getBlockByNumber) and blockHash eth_getLogs.
+The T0-4 reader separately uses EIP-1898 hash-pinned eth_call for declared
+view/pure functions; historical state availability is NOT a prerequisite
+for historical event-log ingestion. Optional eth_getCode verification at
+the selected call block is read-only and must not become a scanner gate.
+
+2. Two explicit core-admitted evidence forms
+--------------------------------------------
+
+The sole Tier-0 validator, not acquisition machinery, owns the decision
+whether all selected events were acquired. It must admit these TWO concrete
+raw evidence forms before Tier 0 is frozen. This is deliberate preparation
+for a measured Tier-2 switch to receipts without a second validator.
+
+A. SELECTED_LOG_RESPONSES:
+   - Identified candidate block (height/hash) and immutable catalog identity.
+   - Original bounded request + bounded raw result for EACH required selector:
+     method eth_getLogs, exact blockHash, emitting address and topic0.
+   - No unexplained missing, duplicate or overlapping selectors; no response
+     labelled complete by a caller or wrapper.
+   - Tier-0 checks the actual request/response identities, fields, order,
+     occurrence uniqueness, ABI layout, original topics/data and resource
+     limits. Wrong-address/topic0 or wrong-block results FAIL rather than
+     being silently discarded. Empty responses are checked coverage facts
+     only for their exact requested selector under the trusted-RPC model.
+
+B. COMPLETE_BLOCK_RECEIPTS:
+   - Identified candidate block (height/hash).
+   - The block's original transaction-hash inventory from a checked header/
+     block query, plus the ORIGINAL bounded receipts for that identified
+     block. The source method may be eth_getBlockReceipts(blockHash), or
+     later a complete set of eth_getTransactionReceipt(txHash) reads.
+   - Tier-0 checks one and only one receipt for EVERY block transaction:
+     exact receipt/transaction hash, transaction index, block number/hash,
+     missing/duplicate/foreign receipt, ordering and all receipt log
+     envelopes with block-global logIndex consistency.
+   - Only after validating this complete inventory does the SAME core
+     identify selected contract/event logs and decode those with the
+     already installed generic ABI descriptor. Unrelated receipts/logs are
+     not subject to selected-event ABI decoding but their identities and
+     global occurrence ordering are validated.
+   - A provider's incomplete inventory, unsupported method, oversized
+     result or inconsistency FAILS. It is not permission to accept the
+     subset returned or fall back to an unreviewed source.
+
+Examples of conceptual immutable data boundaries (not a second configuration
+language, not additional public Python APIs):
+
+    SelectedLogResponses(
+        block_identity,
+        selector_request_and_response_records,
+    )
+
+    CompleteBlockReceipts(
+        block_identity,
+        full_block_transaction_inventory,
+        receipt_request_and_response_records,
+    )
+
+These objects carry raw evidence and acquisition provenance, NEVER decoded
+"trusted events", "complete=True" flags or permissions to advance SQL.
+The core may parse them into a narrow internal representation AFTER its
+format-specific proof obligations pass. One validator, one event
+representation, one canonicality guard, one writer, one publisher.
+
+Receipt validation belongs to Tier 0 even if the baseline fetcher continues
+to use eth_getLogs exclusively. Tests need independently prepared full
+receipts and a real provider/Anvil path that supports the method. If this
+validation is postponed, eth_getBlockReceipts cannot be introduced by Tier 2
+as a transparent optimization: it requires an explicit shared-core redesign.
+
+3. How Tier 2 can change physical acquisition
+----------------------------------------------
+
+Tier 2 MAY choose methods, batch, prefetch, cache or coalesce eligible RAW
+evidence underneath the unchanged Tier-0 semantic operations. An explicit
+composition owns strategy selection; the core does not check "which tier",
+dispatch to an enhanced scanner, or accept arbitrary injected event lists.
+There is no speculative plugin marketplace or generic handler registry.
+
+Eligible without changing the frozen core, once qualified:
+
+  - Selected blockHash eth_getLogs: identical base operation.
+  - JSON-RPC transport batching of independent blockHash requests:
+    each original request/response identity and deadline survives.
+  - Coalescing identical bounded raw reads and caching immutable eligible
+    block-hash-bound payloads, never canonicality/finality/ready conclusions.
+  - eth_getBlockReceipts(blockHash) when the provider supports it and the
+    complete receipt inventory passes Tier-0 validation.
+  - Per-tx eth_getTransactionReceipt after independently obtaining the
+    full identified block transaction inventory: materialize the SAME
+    complete-receipts evidence form, not a new receipt-side publisher.
+
+The choice is separate from the event-history source_id: the same contract
+selection and chain history do not become a new source merely because raw
+RPC requests were grouped or receipts replaced selected-log queries.
+Any selected provider is still checked for chain/genesis identity; changing
+provider is not an unexamined relaxation of the explicitly trusted source.
+
+Batching and prefetching N blocks MUST still cause N invocations of the
+real Tier-0 per-block advance, fresh canonicality checks and N short SQL
+publication transactions. No Tier-2 writes to progress/events directly.
+No extension may skip empty blocks, supply decoded/trusted rows, bypass
+the real descriptor, forge source evidence or replay a presumed failed
+COMMIT. An unanswered COMMIT retires the writer and requires durable-state
+reinspection exactly as in Note 004.
+
+A smaller candidate set of addresses/topics may be combined into an RPC
+filter ONLY if the core can prove that the union covers every selected
+contract/event without an unverified omission. The standard "address OR"
+and "topic0 OR" combination creates a cross-product superset; extra raw
+logs must not be mistaken for selected events or bypass envelope checking.
+One combined request that does not preserve the exact coverage/provenance
+contract is NOT automatically an admissible selected-logs evidence record.
+
+4. Special problem: eth_getLogs across number ranges
+----------------------------------------------------
+
+Range queries are promising for sparse historical catch-up, but fromBlock/
+toBlock is NOT equivalent to blockHash for a single block under reorg.
+
+A range response reports logs with their own block hashes, but has no
+per-block identity assertion for heights with ZERO returned matches.
+A reorg or inconsistent provider view can change an empty height between
+request and publication. Merely partitioning a range array into blocks and
+inventing per-block hash-pinned selector results is NOT valid evidence.
+Checking the current head after an unpinned range is not itself proof that
+all empty heights were queried against those same block identities.
+
+Therefore, initially treat range eth_getLogs as SPECULATIVE PREFETCH ONLY.
+To publish, the unchanged core must receive a genuinely admitted complete
+evidence form for each selected candidate block. Depending on measured
+provider behavior that may entail hash-pinned confirmation on affected
+heights, or using fully checked complete block receipts. Do not claim that
+a range-derived empty set establishes completeness by itself.
+
+A future first-class range evidence form requires a separately specified,
+core-owned validation and source-consistency proof, including empty-height
+identity and mid-range reorgs. Unless it is implemented and qualified in the
+concrete Tier 0 BEFORE freeze, adding it afterward is an explicit shared
+core evolution, NOT a transparent Tier-2 override. Standard JSON-RPC does
+not promise an atomic multi-block snapshot simply by accepting a range.
+
+A logsBloom-negative block-header prefilter is likewise a potential
+optimization, not an admitted absence proof today. A header bound to the
+candidate hash and valid bloom semantics can establish no matches for an
+address/topic pair only under the same provider trust assumptions; a
+positive bloom cannot establish presence. Skipping all log queries on
+that basis requires a qualified core-owned evidence path, never a Tier-2
+shortcut that declares an empty block complete.
+
+5. Deliberately NOT authoritative acquisition
+----------------------------------------------
+
+  eth_subscribe(logs), eth_newFilter, eth_getFilterChanges, eth_getFilterLogs:
+    may wake/prompt a bounded rescan, never establish a durable prefix.
+
+  trace_*, debug_*, vendor indexing APIs, GraphQL/subgraphs:
+    not the supported source of selected EVM event facts for Tier 0.
+
+  eth_getTransactionByHash, eth_getBalance, eth_getStorageAt, eth_getProof:
+    not necessary for selected event ingestion; a full block transaction
+    inventory is obtained with a block-header/body read when receipts need it.
+
+  eth_sendTransaction, eth_sendRawTransaction, eth_estimateGas:
+    not indexer activities. The external dapp32 test producer controls
+    its own signed transactions; Conix's runtime never submits any.
+
+  eth_getBlockReceipts or per-tx receipts: NOT the default ingestion path,
+    but planned alternate evidence once fully validated as above.
+
+  Unpinned event queries, consumer-filtered acquisition and silently
+  permissive decoder modes: never acceptable as completed history.
+
+6. Constraints, qualification and release gates
+-----------------------------------------------
+
+No silently widened resource limits. Note 004 owns the numeric ceilings,
+including RPC response bytes, raw event bytes, log count and deadlines.
+Receipt responses can exceed selected-log responses on dense blocks:
+oversized complete receipts mean FAILED acquisition, not truncation.
+Any new bounded streaming/chunking policy must be reviewed and qualified
+before adding it to the authoritative core. No opportunistic provider
+fallback in the middle of publication, and no retry of an unknown COMMIT.
+
+Core T0-3 tests (installed package; actual Anvil and independent hostile RPC
+responses) must exercise BOTH evidence forms before freezing the Tier 0:
+  - same selected raw event bytes, ordering and checkpoints via both routes;
+  - ERC-20 and ERC-721 same topic0 / different indexed layouts;
+  - multiple contracts/events in one block; blocks with no selected logs;
+  - a failed/missing selected-log selector and selector ignored by provider;
+  - duplicate/conflicting/out-of-order occurrences and malformed ABI bytes;
+  - receipt inventory shorter/longer than the block transaction list,
+    duplicate/mismatched transaction hash/index, wrong block hash/height,
+    missing receipt/log, invalid global logIndex or receipt envelopes;
+  - provider error, timeout, large/truncated response and resource exhaustion;
+  - fork during acquisition or before commit, empty block replacement,
+    restart, checked repair, cached orphaned evidence, unknown COMMIT.
+The SAME concrete validator and one-block publisher must execute in every
+qualified composition. Inspect execution/delegation, not only equal outputs.
+
+Tier-2 qualification additionally measures, per method and actual endpoint:
+  request counts (not just HTTP round trips), bytes transferred, provider
+  rate limits/billing, elapsed time, memory/response bounds, error classes,
+  historic depth, supported block-hash receipts and observed reorg behavior.
+A selected optimization requires measured improvement and no loss of any
+core invariant. If a provider lacks a method, disable that strategy
+explicitly; retain the correct default instead of guessing availability.
+
+Existing endpoint measurements belong to Note 004 section 7 (dapp32 catalog
+probe). They are provisional: the 29 keyless endpoints are not all
+qualified for indexed history or old state reads; no numerical counts are
+duplicated here. Qualified support is per method, selector, endpoint and
+historical depth, not a statement about a vendor or chain in general.
+
+7. Design sequence and implementation boundary
+----------------------------------------------
+
+T0-2 (catalog + PostgreSQL): NO RPC acquisition-method commitment required.
+It must retain a source/catalog identity that excludes the physical method.
+
+T0-3 (scanner): implement blockHash eth_getLogs as the independent default.
+Establish and test the two admitted raw evidence validators and one actual
+authoritative publication path. No alternate publisher. If a receipt method
+is not supported by the selected endpoint, T0 can still operate via logs;
+this does not excuse omission of receipt evidence tests in the release gate.
+
+T0-4/5: validate checkpoint reads and real selected events using the same
+journal; keep EIP-1898 eth_call independent of historical event acquisition.
+
+T0-6: freeze the concrete validated operations and prove absent higher tiers
+do not affect ordinary correctness. Record precise method/format support.
+
+Tier 2: only then select faster qualified physical fetchers and bounded
+transport assistance. A method that needs new completeness semantics must
+be proposed as a shared-core change, not smuggled in as a wrapper.
+
+Further reading (source-specific technical details, not additional rules):
+  Ethereum Execution APIs: eth_getBlockReceipts
+    https://ethereum.github.io/execution-apis/api/methods/eth_getBlockReceipts/
+  EIP-234: eth_getLogs(blockHash) and exclusion of range fields
+    https://eips.ethereum.org/EIPS/eip-234
+  Ethereum JSON-RPC eth_getLogs and block/transaction reads
+    https://ethereum.org/developers/docs/apis/json-rpc/
+  Existing Conix endpoint observations: Note 004 section 7.

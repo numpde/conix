@@ -3,7 +3,8 @@ Focused PayToPlay indexer: cumulative implementation plan
 
 Date: 2026-11-08
 STATUS (2026-11-09): HISTORICAL PAYTOPLAY-ONLY PLAN, NOT THE ACTIVE
-GENERIC TIER-0 SCOPE. See 004_rpc_evidence_and_raw_log_indexer_plan.txt.
+GENERIC TIER-0 SCOPE. Use Note 004 for the current program and Note 005
+for historical RPC acquisition / optimization; neither is governed here.
 No prior Conix implementation, API, schema, stored event history or
 consumer adapter must be preserved. The active project is a pristine
 generic Tier 0; there is no conversion/migration/cutover plan.

@@ -3,7 +3,8 @@ Conix — candidate declarative EVM indexer design
 
 Date: 2026-11-09
 Status: DESIGN RESEARCH / TEST CATALOG, NOT THE ACTIVE TIER-0 SCOPE.
-The governing pristine Tier-0 plan is 004_rpc_evidence_and_raw_log_indexer_plan.txt.
+The governing pristine Tier-0 plan is Note 004; physical RPC acquisition,
+evidence formats and optimization choices are governed separately by Note 005.
 The prior decoded-field/JSONB persistence candidate, nonindexed-field
 filtering, and any requirement to preserve PayToPlay-specific code, schema
 or APIs are superseded. ABI ambiguity/type-safety test requirements remain

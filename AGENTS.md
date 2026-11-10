@@ -10,7 +10,9 @@ T0-1 is implemented using reusable ABI primitives; the experimental
 PayToPlay-only runtime has been deleted, without migration or adapters.
 
 notes/004_rpc_evidence_and_raw_log_indexer_plan.txt governs the new Tier-0
-implementation and qualification. notes/002_make_operator_contract.txt governs
+implementation and qualification. notes/005_rpc_history_acquisition_and_optimization.txt
+alone owns historical RPC acquisition method/evidence choices and Tier-2
+physical substitution. notes/002_make_operator_contract.txt governs
 the existing Make/Docker authority. notes/000_architecture_guidelines.txt
 governs future Tier-1/2 concrete delegation ONLY AFTER generic Tier 0 exists.
 notes/001_implementation_plan.txt and notes/003_declarative_evm_indexer_design.txt

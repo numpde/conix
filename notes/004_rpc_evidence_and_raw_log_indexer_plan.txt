@@ -2,10 +2,12 @@ Conix — pristine generic Tier 0: design, evidence, and execution plan
 =====================================================================
 
 Date: 2026-11-09
-Status: TARGET GENERIC TIER 0, NOT YET IMPLEMENTED IN FULL. T0-1 ABI only. This note is the current Tier-0 scope
-decision. 001 describes an earlier PayToPlay-specific implementation plan;
-003 is an exploratory generic design/type-safety workshop. 000 remains
-authoritative about Tier 1/2 delegation AFTER this new Tier 0 exists.
+Status: TARGET GENERIC TIER 0, NOT YET IMPLEMENTED IN FULL; T0-1 ABI
+foundation exists. This note owns product scope, correctness, public API,
+source identity, journal and release gates. Note 005 is the SINGLE authority
+for historical RPC acquisition methods, admitted evidence and Tier-2 method
+substitution. Note 000 governs concrete delegation by later tiers.
+Notes 001 (PayToPlay-only) and 003 (design workshop) are historical.
 
 Decision: START FRESH. There is no production Conix database, schema,
 checkpoint, log history, API contract or deployed worker to migrate or keep
@@ -195,16 +197,19 @@ For next block N, the ONE concrete advance operation:
   1. Acquire an exclusive writer and read the checked durable basis.
      Verify configured chain and retained checkpoint compatibility.
   2. Obtain the identified next block header and continuity evidence.
-     Query eth_getLogs by its blockHash, exact emitting contract
-     address and event topic0 for EVERY selected contract/event.
-     Do not filter acquisition by consumers' later customer predicates.
-  3. Validate each response envelope and original log: block hash and
-     height, address, topic count/values, transaction/log indices,
-     order, uniqueness and structurally valid ABI encoded data.
-     Check limits on returned log count, response size and time.
-  4. Recheck candidate block canonicality and preceding checkpoint
-     compatibility BEFORE publication. A changed branch or one failed
-     query prevents publication, including when all OTHER queries worked.
+     Acquire a bounded raw evidence set covering EVERY selected contract/
+     event. The default uses blockHash eth_getLogs; Note 005 defines other
+     admitted forms and their qualification. Do not acquire only events
+     matching a consumer's later customer or channel predicates.
+  3. Through ONE concrete Tier-0 validator, prove the selected-log
+     selector coverage OR the complete block-receipt inventory, then
+     validate the original log envelopes: block identity, address,
+     topics/data, transaction/log indices, order, uniqueness and
+     structurally correct ABI values. Enforce all response/work limits.
+  4. Recheck candidate canonicality and preceding checkpoint
+     compatibility BEFORE publication. A changed branch, missing
+     evidence or failed acquisition prevents the ENTIRE block from
+     publishing, regardless of other successful/empty responses.
   5. In ONE short SQL transaction compare expected generation/revision,
      write every event and the block, update the complete checkpoint and
      commit. No RPC inside the transaction.
@@ -326,13 +331,16 @@ concurrent readers, empty blocks, config drift, source identity,
 SQL failure before/after COMMIT and real process termination.
 Exit: no partial publication or unknown-commit double write.
 
-T0-3. One concrete scanner with block-hash RPC. Multi-contract/event
-blocks are mandatory. Hostile/fault-injected RPC covers wrong chain,
-forks, ignored selectors, omitted fields, duplicate/out-of-order
-events, timeout, truncated/oversized results, empty blocks, log
-contradictions and incorrect response identities. Exact ABI validation
-runs before commit. Exit: only a verified complete set for a block
-under the admitted RPC trust model may advance the checkpoint.
+T0-3. One concrete scanner, with blockHash eth_getLogs as its default.
+Qualify BOTH raw evidence validators before freezing Tier 0: exact
+selected-log selector coverage and complete block-receipt inventory
+(see Note 005). Multi-contract/event blocks are mandatory. Hostile
+RPC exercises wrong chain, forks, ignored selectors, absent/duplicate
+receipts or events, out-of-order positions, timeouts, oversized or
+truncated results, empty blocks and contradictory identities.
+Exact generic ABI validation runs before commit. Exit: only verified
+complete evidence under the declared RPC trust model may advance one
+block. A provider need not support receipts to run the default route.
 
 T0-4. One reader for events(), call(), checkpoint(), evidence().
 Test topic equality for ALL admitted indexed scalars, filtered-empty
@@ -385,14 +393,13 @@ publisher or repair SQL. An unattended recovery scenario and a
 selected live-RPC qualification campaign are Tier-1 OPERATIONS tests,
 not reasons to make Tier 0 depend on a paid provider.
 
-Tier 2: measured I/O assistance. Prefetch raw eligible responses,
-cache exact block-pinned raw results or coalesce identical in-flight
-reads while still calling the same Tier-0 validation/publication path.
-Range/block batching is only admissible if it prepares per-block raw
-inputs for the unchanged concrete validator and one-block publisher;
-if it requires new publication semantics, propose an explicit shared
-core redesign instead of disguising a second scanner as an extension.
-No speculative extension framework in the Tier-0 source.
+Tier 2: measured PHYSICAL acquisition and bounded I/O assistance only.
+Note 005 owns permitted RPC strategy substitution, receipt evidence,
+range-query caveats and qualification. Every optimized route supplies
+admitted raw evidence to the SAME Tier-0 validator and one-block
+publisher. A new evidence/completeness format requires an explicit
+shared-core design change, not an alternative scanner or a silent
+"optimized" publication. No speculative extension framework.
 
 Outside these tiers: new EVM business semantics, arbitrary expression
 filters, unindexed-field global indexes, derived balances, generated
@@ -705,14 +712,16 @@ and NOT an invented per-contract event sequence. Selected log indices may
 have gaps when unrelated events occur in the same block.
 
 One advance_one() acquires an exclusive writer and checked durable basis;
-fetches exactly one block's header and EVERY configured address/topic0 via
-eth_getLogs(blockHash), checks full result envelopes, IDs, order, duplicates,
-ABI validity, continuity and canonicality, and commits events + block +
-checkpoint atomically with a generation/revision compare-and-swap.
-No RPC during SQL transactions. A failed selected query publishes NOTHING,
-even if all others return an empty array. At the tip, the retained hash
-is checked against the live canonical branch. Unknown COMMIT retires the
-writer and requires a fresh durable-state inspection next explicit run.
+identifies one block and obtains a complete admitted raw evidence set for
+EVERY configured selection. It executes ONE Tier-0 evidence/ABI validator,
+checks IDs, order, duplicates, continuity and canonicality, and commits
+events + block + checkpoint atomically with a generation/revision CAS.
+The default physical method is blockHash eth_getLogs; Note 005 owns both
+admitted formats and any later physical substitution. No RPC runs inside
+the SQL transaction. Any failed/incomplete acquisition publishes NOTHING,
+including when other selectors are empty. At the tip, check the retained
+hash against the live canonical branch. Unknown COMMIT retires the writer
+and requires fresh durable-state inspection on the next explicit run.
 
 Dedicated PostgreSQL identities, provisioned externally:
   conix_owner:  non-superuser schema owner, only explicit install DDL;
@@ -924,7 +933,8 @@ drop-in Python codec or journal dependencies. Do not copy their callbacks,
 derived tables, GraphQL API, acceleration or implicit recovery into Tier 0.
 
 What remains ORIGINAL in Conix is the trust-boundary protocol, not ABI math:
-  - a verified selected-set RPC envelope and block-hash-pinned acquisition;
+  - verified selected-set raw RPC evidence and an explicit acquisition contract
+    (physical strategies and alternate evidence forms: Note 005);
   - one shared complete-block publication, including empty blocks;
   - short fenced SQL transactions and stop-on-unknown-COMMIT;
   - checked manual suffix repair and invalidatable generation handles;

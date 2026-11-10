@@ -7,9 +7,12 @@ journal, observer, CLI and integration suite have been deleted. No deployed
 database, checkpoint or API contract needs migration.
 
 The authoritative end-state specification is
-notes/004_rpc_evidence_and_raw_log_indexer_plan.txt. Historical notes 001
-and 003 are not implementation contracts; note 000 governs mandatory
-delegation by later tiers after the generic Tier 0 is complete.
+notes/004_rpc_evidence_and_raw_log_indexer_plan.txt. The separate
+notes/005_rpc_history_acquisition_and_optimization.txt specifies which
+historical RPC methods we use, which evidence forms are admissible, and
+how Tier 2 may change fetching without bypassing the core. Historical
+notes 001/003 are not implementation contracts; note 000 governs mandatory
+concrete delegation by later tiers after generic Tier 0 is complete.
 
 What exists
 -----------

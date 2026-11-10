@@ -8,6 +8,9 @@ Earlier examples refer to an experimental PayToPlay-specific core; they
 do not require preservation of its code, schema, API or event history.
 There is currently no frozen generic Tier 0. Build it cleanly, then
 protect its concrete operations from replacement by later tiers.
+Note 005 alone governs physical historical RPC method substitution and
+evidence-form admission. This note governs whether a higher tier actually
+delegates to the concrete validator/publisher, regardless of RPC strategy.
 Historical context: 001_implementation_plan.txt.
 
 1. Governing requirement
@@ -142,6 +145,10 @@ extension that preserves this base behavior.
 
 6. Concrete delegation rules
 -----------------------------
+
+These are generic extension/no-bypass rules. For eligible history-acquisition
+methods, exact evidence formats, range-query hazards and Tier-2 admission
+tests, use Note 005 rather than a second set of acquisition decisions here.
 
 RPC retry:
   Reinvoke the ordinary bounded read after an allowed transient error.
