@@ -428,29 +428,32 @@ class Reader:
                     rows.append(row)
                     raw_bytes += row_bytes
 
-        complete = not has_more
-        events = []
-        for row in rows:
-            block = Block(*row[:4])
-            topics = tuple(topic for topic in row[8:12] if topic is not None)
-            data = row[12]
-            try:
-                values = decode_event(descriptor, topics, data, limits=self.catalog.limits.abi)
-            except MalformedABIData as error:
-                raise HistoryUnavailable("The retained event bytes contradict their selected ABI.") from error
+            # Decode the selected ABI while the same snapshot is held. The
+            # post-snapshot generation check must happen AFTER the page has
+            # been constructed, not before potentially expensive decoding.
+            complete = not has_more
+            events = []
+            for row in rows:
+                block = Block(*row[:4])
+                topics = tuple(topic for topic in row[8:12] if topic is not None)
+                data = row[12]
+                try:
+                    values = decode_event(descriptor, topics, data, limits=self.catalog.limits.abi)
+                except MalformedABIData as error:
+                    raise HistoryUnavailable("The retained event bytes contradict their selected ABI.") from error
 
-            events.append(Event(
-                contract=selected.alias,
-                event=descriptor.signature,
-                address=to_checksum_address(row[7]),
-                block=block,
-                transaction_hash=row[4],
-                transaction_index=row[5],
-                log_index=row[6],
-                topics=topics,
-                data=data,
-                values=values,
-            ))
+                events.append(Event(
+                    contract=selected.alias,
+                    event=descriptor.signature,
+                    address=to_checksum_address(row[7]),
+                    block=block,
+                    transaction_hash=row[4],
+                    transaction_index=row[5],
+                    log_index=row[6],
+                    topics=topics,
+                    data=data,
+                    values=values,
+                ))
 
         next_cursor = None
         if not complete:
