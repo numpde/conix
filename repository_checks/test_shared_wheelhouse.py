@@ -146,10 +146,11 @@ class SharedWheelhouseContracts(unittest.TestCase):
         self.assertNotIn("tests/fixture_protocol.py", selected)
         self.assertIn("tests/fixtures/abi/pay_to_play.json", selected)
         self.assertIn("tests/fixtures/abi/support_matrix.json", selected)
+        self.assertIn("tests/fixtures/catalog.toml", selected)
         expected_tests = {
             path.relative_to(ROOT).as_posix()
             for path in (ROOT / "tests").rglob("*.py")
-        } | {
+        } | {"tests/fixtures/catalog.toml"} | {
             path.relative_to(ROOT).as_posix()
             for path in (ROOT / "tests" / "fixtures" / "abi").glob("*.json")
         }

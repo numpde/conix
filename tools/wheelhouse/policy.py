@@ -137,14 +137,15 @@ def source_allowlist(root=ROOT):
     # The only non-Python test inputs are the reviewed ABI JSON fixtures.
     # Include all tracked fixture bytes in both the stream and its hash proof.
     # A new directory or arbitrary file type still requires policy review.
-    captured_inputs = set((*source_modules, *test_modules, *abi_fixtures))
+    catalog_fixture = "tests/fixtures/catalog.toml"
+    captured_inputs = set((*source_modules, *test_modules, *abi_fixtures, catalog_fixture))
     if {path for path in tracked_paths if path} != captured_inputs:
         raise PoolError(
             "Conix source/test files differ from tracked Python inputs; "
             "do not omit tests or stream unreviewed files into a build."
         )
 
-    paths = (*fixed_inputs, *source_modules, *test_modules, *abi_fixtures)
+    paths = (*fixed_inputs, *source_modules, *test_modules, *abi_fixtures, catalog_fixture)
     if len(paths) != len(set(paths)):
         raise PoolError("The curated image source list contains duplicates.")
 

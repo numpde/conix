@@ -10,6 +10,7 @@
 !src/**
 !tests/
 !tests/**/*.py
+!tests/fixtures/catalog.toml
 !tools/
 !tools/fixtures/
 !tools/fixtures/protocol.py
