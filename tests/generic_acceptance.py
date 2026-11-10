@@ -253,8 +253,8 @@ async def main():
                 raise ScenarioFailure("Selected Anvil changed after fixture source preflight.")
             if tokens is not None:
                 raise ScenarioFailure("Contract fixture preparation must start with no token source.")
-            from t0_5_tokens import deploy
-            print(json.dumps(await deploy(descriptor, rpc), separators=(",", ":")))
+            from t0_5_tokens import deploy_token_fixtures
+            print(json.dumps(await deploy_token_fixtures(descriptor, rpc), separators=(",", ":")))
         elif phase == "initialize":
             await initialize(descriptor, state, tokens)
         elif phase == "baseline":
