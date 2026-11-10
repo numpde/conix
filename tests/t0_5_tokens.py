@@ -15,7 +15,9 @@ from eth_abi import decode
 from eth_utils import keccak, to_checksum_address
 
 from abi_golden_vectors import TRANSFER_SIGNATURE as TRANSFER
-from t0_5_chain import assert_event_matches_receipt, calldata, receipt, require, send
+from t0_5_chain import (
+    assert_event_matches_receipt, calldata, require, send, wait_for_receipt,
+)
 
 ZERO = "0x" + "00" * 20
 ROOT = Path(__file__).resolve().parent / "fixtures" / "evm"
@@ -72,7 +74,7 @@ async def deploy_token_fixtures(descriptor, rpc) -> dict:
             }])
         finally:
             await rpc(descriptor, "anvil_stopImpersonatingAccount", [creator])
-        receipt = await receipt(rpc, descriptor, tx_hash)
+        receipt = await wait_for_receipt(rpc, descriptor, tx_hash)
         address = receipt.get("contractAddress")
         require(type(address) is str and address.startswith("0x") and len(address) == 42,
                 "Deployed Solidity fixture has no contract address.")
@@ -163,7 +165,7 @@ async def verify_token_history(reader, checkpoint, descriptor, tokens, receipts,
     expected = expected_transfer_values(descriptor)
     for alias in ("token20", "token721"):
         address = tokens[alias]["address"]
-        constructor = await receipt(rpc, descriptor, tokens[alias]["creationTransaction"])
+        constructor = await wait_for_receipt(rpc, descriptor, tokens[alias]["creationTransaction"])
         actual_receipts = (constructor, receipts["initial"][alias], receipts["mixed"][alias])
         page = await reader.events(
             checkpoint=checkpoint, contract=alias, event=TRANSFER, where={}, limit=10,
