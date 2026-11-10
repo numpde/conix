@@ -151,7 +151,15 @@ class JournalContracts(unittest.IsolatedAsyncioTestCase):
                 )
             self.assertEqual((await writer.inspect()).last_block, block2)
 
-            repaired = await writer.repair_to(ancestor=block1)
+            # The hash identifies the ancestor; do not turn its auxiliary
+            # timestamp field into a second, independently trusted identity.
+            identity = Block(
+                number=block1.number,
+                hash=block1.hash,
+                parent_hash=block1.parent_hash,
+                timestamp=block1.timestamp + 1,
+            )
+            repaired = await writer.repair_to(ancestor=identity)
             self.assertEqual(repaired.last_block, block1)
             self.assertNotEqual(repaired.generation, original.generation)
             self.assertEqual(repaired.revision, original.revision + 3)

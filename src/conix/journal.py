@@ -299,9 +299,10 @@ class Journal:
     async def repair_to(self, *, ancestor: Block) -> Progress:
         """Retire a suffix after the caller independently identifies its ancestor.
 
-        This operation checks the ancestor against durable history. Establishing
-        its compatibility with the current chain belongs to the core's external
-        evidence check; no RPC executes inside the SQL transaction.
+        Block number and hash identify the retained ancestor. Other header
+        fields come from the journal's own row, not the caller's copy.
+        Establishing its compatibility with the current chain belongs to
+        the core; no RPC executes inside this SQL transaction.
         """
         last = self.basis.last_block
         if last is None or not self.basis.history_start <= ancestor.number <= last.number:
@@ -316,8 +317,10 @@ class Journal:
                     (ancestor.number,),
                 )
             ).fetchone()
-            if row is None or Block(*row) != ancestor:
+            if row is None or row[1] != ancestor.hash:
                 raise HistoryConflict("Repair ancestor does not match a retained block identity.")
+
+            retained_ancestor = Block(*row)
 
             await self.connection.execute(
                 "DELETE FROM conix.blocks WHERE number > %s",
@@ -330,7 +333,7 @@ class Journal:
 
         self.basis = replace(
             self.basis,
-            last_block=ancestor,
+            last_block=retained_ancestor,
             generation=new_generation,
             revision=self.basis.revision + 1,
             blocked_reason=None,
