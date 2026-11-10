@@ -455,7 +455,8 @@ def admit_exercise(state):
             and all(type(value) is str and TRANSFER_BYTES.fullmatch(value)
                     for value in state["transactions"])
             and type(state["customer"]) is str and re.fullmatch(r"0x[0-9a-fA-F]{40}", state["customer"])
-            and state["channel"] == 1 and state["collected"] == [30, 40],
+            and type(state["channel"]) is int and state["channel"] == 1
+            and state["collected"] == [30, 40],
             "Payment acceptance receipt contains inconsistent public facts.")
     return saved_checkpoint(state["checkpoint"])
 
