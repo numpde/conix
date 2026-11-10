@@ -6,6 +6,7 @@ journal's atomic persistence is tested independently against PostgreSQL.
 """
 
 from dataclasses import replace
+import gzip
 import json
 from pathlib import Path
 import tempfile
@@ -274,6 +275,52 @@ class ScannerEvidenceContracts(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RpcUnavailable) as error:
             await writer.advance_one()
         self.assertNotIn("secret upstream text", str(error.exception))
+        self.assertEqual(self.journal.publications, [])
+
+    async def test_rpc_reply_correlates_id_and_never_decompresses_opaque_bytes(self):
+        class Compressed(Server):
+            def __call__(self, request):
+                operation = json.loads(request.content)
+                if operation["method"] != "eth_getLogs":
+                    return super().__call__(request)
+
+                self.requests.append(operation)
+                self.accept_encoding = request.headers.get("accept-encoding")
+                valid_reply = json.dumps({
+                    "jsonrpc": "2.0",
+                    "id": operation["id"],
+                    "result": self.log_replies[hex_bytes(TOKEN)],
+                }).encode("utf-8")
+                return httpx.Response(
+                    200,
+                    content=gzip.compress(valid_reply),
+                    headers={"Content-Encoding": "gzip"},
+                )
+
+        self.server = Compressed()
+        writer = await self.writer()
+        with self.assertRaises(RpcProtocolError):
+            await writer.advance_one()
+
+        self.assertEqual(self.server.accept_encoding, "identity")
+        self.assertEqual(self.journal.publications, [])
+
+        class WrongId(Server):
+            def __call__(self, request):
+                reply = super().__call__(request)
+                operation = json.loads(request.content)
+                if operation["method"] != "eth_getLogs":
+                    return reply
+
+                incorrect = reply.json()
+                incorrect["id"] = operation["id"] + 1
+                return httpx.Response(200, json=incorrect)
+
+        self.server = WrongId()
+        self.journal = RecordingJournal(self.source)
+        writer = await self.writer()
+        with self.assertRaises(RpcProtocolError):
+            await writer.advance_one()
         self.assertEqual(self.journal.publications, [])
 
     async def test_missing_history_below_live_head_is_not_an_empty_tip(self):
