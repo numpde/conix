@@ -168,23 +168,25 @@ async def mixed_transfers(rpc, descriptor, tokens, send):
     return tx20, tx721
 
 
+def expected_transfer_values(descriptor):
+    accounts = descriptor["publicFixtureAccounts"]
+    admin = to_checksum_address(accounts["admin"]["address"])
+    customer = to_checksum_address(accounts["customer"]["address"])
+    relayer = to_checksum_address(accounts["relayer"]["address"])
+    return {
+        "token20": ((to_checksum_address(ZERO), admin, 1000),
+                    (admin, customer, 100), (admin, relayer, 25)),
+        "token721": ((to_checksum_address(ZERO), admin, 7),
+                     (admin, customer, 7), (customer, relayer, 7)),
+    }
+
+
 async def verify(reader, checkpoint, descriptor, tokens, receipts, rpc):
     """Prove both ABIs coexist under one checkpoint using actual receipt bytes."""
     admin = descriptor["publicFixtureAccounts"]["admin"]["address"]
     customer = descriptor["publicFixtureAccounts"]["customer"]["address"]
     relayer = descriptor["publicFixtureAccounts"]["relayer"]["address"]
-    expected = {
-        "token20": (
-            (ZERO, admin, 1000),
-            (admin, customer, 100),
-            (admin, relayer, 25),
-        ),
-        "token721": (
-            (ZERO, admin, 7),
-            (admin, customer, 7),
-            (customer, relayer, 7),
-        ),
-    }
+    expected = expected_transfer_values(descriptor)
     for alias in ("token20", "token721"):
         address = tokens[alias]["address"]
         constructor = await mined(rpc, descriptor, tokens[alias]["creationTransaction"])
@@ -195,10 +197,8 @@ async def verify(reader, checkpoint, descriptor, tokens, receipts, rpc):
         require(page.complete and len(page.events) == 3,
                 "Shared checkpoint has incomplete real token Transfer history.")
         for item, values, receipt in zip(page.events, expected[alias], actual_receipts, strict=True):
-            require(item.values == tuple(
-                to_checksum_address(value) if index < 2 else value
-                for index, value in enumerate(values)
-            ), "Generic reader decoded a real ERC token Transfer incorrectly.")
+            require(item.values == values,
+                    "Generic reader decoded a real ERC token Transfer incorrectly.")
             assert_event_matches_receipt(item, only_transfer(receipt, address))
             require(
                 (len(item.topics), len(item.data))
@@ -206,6 +206,11 @@ async def verify(reader, checkpoint, descriptor, tokens, receipts, rpc):
                 "Identical ERC Transfer signatures lost their distinct indexed layouts.",
             )
 
+    require(
+        only_transfer(receipts["mixed"]["token20"], tokens["token20"]["address"])["topics"][0].lower()
+        == only_transfer(receipts["mixed"]["token721"], tokens["token721"]["address"])["topics"][0].lower(),
+        "ERC-20 and ERC-721 fixtures must expose an identical Transfer signature.",
+    )
     expected_block = receipts["mixed"]["token20"]["blockHash"]
     require(
         receipts["mixed"]["token721"]["blockHash"] == expected_block
@@ -227,13 +232,14 @@ async def verify(reader, checkpoint, descriptor, tokens, receipts, rpc):
             "ERC-721 on-chain ownership contradicts emitted test Transfers.")
 
 
-async def verify_after_restart(reader, checkpoint, tokens):
-    """A new process must observe both preexisting selected event histories."""
+async def verify_after_restart(reader, checkpoint, tokens, descriptor):
+    """A new process must observe exact preexisting selected event histories."""
+    expected = expected_transfer_values(descriptor)
     for alias in ("token20", "token721"):
         page = await reader.events(
             checkpoint=checkpoint, contract=alias, event=TRANSFER, where={}, limit=10,
         )
-        require(page.complete and len(page.events) == 3
+        require(page.complete and tuple(event.values for event in page.events) == expected[alias]
                 and all(event.address.lower() == tokens[alias]["address"].lower()
                         for event in page.events),
                 "Restart changed the checkpoint-bound token history.")
