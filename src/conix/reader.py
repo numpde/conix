@@ -14,6 +14,7 @@ not a consensus proof or an implicit finality guarantee.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
@@ -210,6 +211,9 @@ class Reader:
         self.catalog = catalog
         self.connection = connection
         self.rpc = rpc
+        # One PostgreSQL session cannot host overlapping read snapshots.
+        # RPC calls need no such lock; independent readers may run in parallel.
+        self._db_lock = asyncio.Lock()
 
     async def _state(self, block_number: int | None = None) -> _State:
         """Inspect source identity and one block under the caller's SQL snapshot."""
@@ -268,23 +272,25 @@ class Reader:
             raise CursorInvalid("Checkpoint was invalidated or does not belong to this retained prefix.")
 
     async def _check_live(self, checkpoint: Checkpoint) -> None:
-        state = await self._state(checkpoint.block.number)
-        self._validate_checkpoint(checkpoint, state)
+        async with self._db_lock:
+            state = await self._state(checkpoint.block.number)
+            self._validate_checkpoint(checkpoint, state)
 
     @asynccontextmanager
     async def _snapshot(self, checkpoint: Checkpoint | None = None):
         """Use an admitted checkpoint inside one snapshot, then recheck it."""
         try:
-            async with self.connection.transaction():
-                await self.connection.execute(
-                    "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
-                )
-                state = await self._state(
-                    None if checkpoint is None else checkpoint.block.number
-                )
-                if checkpoint is not None:
-                    self._validate_checkpoint(checkpoint, state)
-                yield state
+            async with self._db_lock:
+                async with self.connection.transaction():
+                    await self.connection.execute(
+                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+                    )
+                    state = await self._state(
+                        None if checkpoint is None else checkpoint.block.number
+                    )
+                    if checkpoint is not None:
+                        self._validate_checkpoint(checkpoint, state)
+                    yield state
         except psycopg.Error as error:
             raise StorageUnavailable("Reader snapshot failed before completion.") from error
 
