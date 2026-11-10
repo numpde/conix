@@ -160,7 +160,7 @@ def decode(raw: bytes, *, fixture_id: str | None):
 # The campaign prints this verified record only after it has attempted cleanup.
 _FAILURE_PREFIX = b"CONIX_PHASE_FAILURE "
 _PHASES = frozenset({"preflight", "prepare", "initialize", "baseline", "exercise", "resume", "reorg"})
-_PUBLIC_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.,:;()/'-]{0,239}\Z")
+_PUBLIC_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.,:;()/'=_-]{0,239}\Z")
 _CATEGORY = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}\Z")
 _PRIVATE_MARKERS = ("privatekey", "postgresql:", "password", "secret", "://")
 
@@ -191,6 +191,13 @@ def phase_failure_record(phase: str, error: Exception) -> bytes:
     category = type(error).__name__
     if type(error) in (ScenarioFailure, FixtureError) and _public_reason(str(error)):
         reason = str(error)
+        # Conix-owned cleanup notes are nonsecret phase evidence. Preserve
+        # one when it fits the same bounded public record.
+        for note in getattr(error, "__notes__", ()):
+            described = f"{reason} {note}"
+            if _public_reason(described):
+                reason = described
+                break
     elif isinstance(error, TimeoutError):
         reason = "Operation deadline exceeded."
     else:
