@@ -256,6 +256,31 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(second_page.complete)
                     self.assertIsNone(second_page.next_cursor)
                     self.assertEqual(len(second_page.events), 1)
+
+                    # The row limit alone does not bound BYTEA page memory.
+                    # A short byte budget should still return a resumable
+                    # prefix rather than skip matching events.
+                    with patch("conix.reader.MAX_PAGE_RAW_BYTES", 200):
+                        byte_page = await reader.events(
+                            checkpoint=newest,
+                            contract="token",
+                            event=TRANSFER_SIGNATURE,
+                            where={"to": TO},
+                            limit=100,
+                        )
+                        self.assertEqual(len(byte_page.events), 1)
+                        self.assertFalse(byte_page.complete)
+                        continued = await reader.events(
+                            checkpoint=newest,
+                            contract="token",
+                            event=TRANSFER_SIGNATURE,
+                            where={"to": TO},
+                            cursor=byte_page.next_cursor,
+                            limit=100,
+                        )
+                        self.assertEqual(len(continued.events), 1)
+                        self.assertTrue(continued.complete)
+
                     self.assertEqual(
                         [event.transaction_hash for event in (
                             *first_page.events, *second_page.events,

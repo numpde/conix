@@ -61,6 +61,7 @@ class HistoricalCallUnavailable(RuntimeError):
 Cursor = str
 TOPIC_COLUMNS = {1: "e.topic1", 2: "e.topic2", 3: "e.topic3"}
 CURSOR_LIMIT = 512
+MAX_PAGE_RAW_BYTES = 8 * 1024 * 1024
 CURSOR_CHARS = re.compile(r"[A-Za-z0-9_-]+\Z")
 
 
@@ -382,13 +383,40 @@ class Reader:
         )
         parameters.append(limit + 1)
 
-        async with self._snapshot(checkpoint):
-            result = await self.connection.execute(statement, parameters)
-            rows = await result.fetchall()
+        rows = []
+        raw_bytes = 0
+        has_more = False
 
-        complete = len(rows) <= limit
+        # A LIMIT bounds rows, not their bytes. A server-side cursor keeps
+        # large BYTEA values out of an unbounded client-side fetchall().
+        # Stop at the last fully accepted event, preserving keyset order.
+        async with self._snapshot(checkpoint):
+            async with self.connection.cursor(name="conix_event_page") as result:
+                result.itersize = 8
+                await result.execute(statement, parameters)
+
+                async for row in result:
+                    if len(rows) == limit:
+                        has_more = True
+                        break
+
+                    row_bytes = (
+                        52
+                        + 32 * sum(topic is not None for topic in row[8:12])
+                        + len(row[12])
+                    )
+                    if raw_bytes + row_bytes > MAX_PAGE_RAW_BYTES:
+                        if not rows:
+                            raise ResourceExceeded("One retained event exceeds the page-byte budget.")
+                        has_more = True
+                        break
+
+                    rows.append(row)
+                    raw_bytes += row_bytes
+
+        complete = not has_more
         events = []
-        for row in rows[:limit]:
+        for row in rows:
             block = Block(*row[:4])
             topics = tuple(topic for topic in row[8:12] if topic is not None)
             data = row[12]
