@@ -49,7 +49,8 @@ def graph(fixture_image, postgres_image, rpc):
             }),
             "consumer": item(fixture_image, "65532:65532", {
                 "database": None, "rpc": None,
-            }, {"CONIX_TEST_DSN": "test-only:runtime"}),
+            }, {"CONIX_TEST_DSN": "test-only:runtime",
+                "CONIX_TEST_READ_DSN": "test-only:reader"}),
         },
         "networks": {"database": {"internal": True},
                      "rpc": {"external": True, "name": rpc}},
@@ -147,6 +148,10 @@ class FixtureRunnerTests(unittest.TestCase):
             lambda d: d["services"]["consumer"].update({"cap_add": ["SYS_ADMIN"]}),
             lambda d: d["services"]["consumer"]["environment"].update({
                 "CONIX_TEST_OWNER_DSN": "should-not-be-here",
+            }),
+            lambda d: d["services"]["consumer"]["environment"].pop("CONIX_TEST_READ_DSN"),
+            lambda d: d["services"]["initialize"]["environment"].update({
+                "CONIX_TEST_READ_DSN": "must-not-reach-owner",
             }),
             lambda d: d["services"]["initialize"]["networks"].update({"rpc": None}),
             lambda d: d["services"]["consumer"].update({"build": {"context": ".."}}),
@@ -299,6 +304,40 @@ class FixtureRunnerTests(unittest.TestCase):
             )
             with patch.object(docker, "run", side_effect=AssertionError("Borrowed test contacted producer")):
                 self.assertEqual(run.cleanup(), [])
+
+    def test_only_owned_fixture_runs_mutating_t0_5_phases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            owned = runner.PayToPlayTest(
+                FakeDocker(), "sha256:" + "a" * 64, Path(directory),
+                descriptor_for("conix-abcdef123456"), owned_fixture=True,
+            )
+            owned.preflight_record = {
+                "schema": "conix.acceptance.preflight.v1",
+                "chainId": 31337, "genesisHash": "0x" + "ab" * 32,
+            }
+            public_payment_receipt = {"schema": "public-source-only"}
+            observed = []
+
+            def phase(service, name, *, prior_receipt, expect_receipt):
+                observed.append((service, name, prior_receipt, expect_receipt))
+                if name == "exercise":
+                    return public_payment_receipt
+                return None
+
+            with patch.object(runner, "verify_network"), patch.object(
+                owned, "prepare_sql"
+            ), patch.object(owned, "_phase", side_effect=phase):
+                owned.execute()
+
+            self.assertEqual([entry[1] for entry in observed],
+                             ["baseline", "exercise", "resume", "reorg"])
+            self.assertEqual(observed[0][2], owned.preflight_record)
+            self.assertEqual(observed[1][2], owned.preflight_record)
+            self.assertIs(observed[2][2], public_payment_receipt)
+            self.assertIs(observed[3][2], public_payment_receipt)
+            self.assertTrue(observed[1][3])
+            self.assertFalse(observed[2][3] or observed[3][3])
+
 
     def test_unconfirmed_producer_creation_does_not_grant_cleanup_authority(self):
         with tempfile.TemporaryDirectory() as directory:
