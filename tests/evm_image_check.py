@@ -4,10 +4,16 @@ This module runs only in the evm-test-runner image, through unittest
 discovery. Fixed public test vectors cannot disclose fixture account keys.
 """
 
+import json
+from pathlib import Path
 import subprocess
 import unittest
 
+from eth_abi import encode
+from eth_utils import keccak, to_checksum_address
+
 import generic_acceptance
+import t0_5_payment
 
 
 class EvmImageChecks(unittest.TestCase):
@@ -42,3 +48,25 @@ class EvmImageChecks(unittest.TestCase):
         self.assertEqual(len(actual_signature), 132)
         self.assertTrue(actual_signature.startswith("0x"))
         self.assertIn(bytes.fromhex(actual_signature[2:])[-1], (27, 28))
+
+
+class InstalledFixtureWiring(unittest.IsolatedAsyncioTestCase):
+    """Exercise the fixture's actual ABI caller, not only module importability."""
+
+    async def test_payment_view_uses_the_deployed_function_declaration(self):
+        abi = json.loads(Path("/tests/fixtures/abi/pay_to_play.json").read_text())
+        contract = "0x" + "12" * 20
+        expected_asset = "0x" + "34" * 20
+        descriptor = {"contracts": {"PayToPlay": {"address": contract, "abi": abi}}}
+
+        async def observed_rpc(_descriptor, method, params):
+            self.assertEqual(method, "eth_call")
+            self.assertEqual(params[0]["to"], contract)
+            self.assertEqual(params[0]["data"], "0x" + keccak(text="asset()")[:4].hex())
+            self.assertEqual(params[1], "latest")
+            return "0x" + encode(("address",), (expected_asset,)).hex()
+
+        result = await t0_5_payment.payment_call(
+            observed_rpc, descriptor, "asset", (),
+        )
+        self.assertEqual(result, (to_checksum_address(expected_asset),))
