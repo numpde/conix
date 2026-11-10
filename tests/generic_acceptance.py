@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fixture_protocol import (FixtureError, ScenarioFailure, _bad_constant, _pairs,
                               admit_public_acceptance_source, admit_tokens, decode, phase_failure_record)
 from abi_golden_vectors import ERC20, ERC721
-from abi_contract_vectors import PAY_TO_PLAY, COMPOUND
+from abi_contract_vectors import PAY_TO_PLAY, COMPOUND, VOUCHER_SIGNATURE
 import httpx
 from psycopg import AsyncConnection
 
@@ -118,7 +118,7 @@ def catalog_path(descriptor, genesis_hash, tokens=None):
         '[contracts.payment]\n'
         f'address = "{deployment["address"]}"\n'
         f'abi_file = "{payment_abi}"\n'
-        'events = ["VoucherCollected(address,uint256,address,uint256,uint256,bytes32)"]\n'
+        f'events = [{json.dumps(VOUCHER_SIGNATURE)}]\n'
         + extra_contracts
         + '[database]\ndsn_file = "/run/conix/connection.dsn"\nruntime_role = "conix_runtime"\n'
         '[limits]\nrpc_timeout_seconds = 5\noperation_timeout_seconds = 30\n'
@@ -182,7 +182,7 @@ class InstalledAcceptance(unittest.IsolatedAsyncioTestCase):
             )
             page = await reader.events(
                 checkpoint=checkpoint, contract="payment",
-                event="VoucherCollected(address,uint256,address,uint256,uint256,bytes32)",
+                event=VOUCHER_SIGNATURE,
                 where={"customer": self.descriptor["publicFixtureAccounts"]["customer"]["address"]},
                 cursor=None, limit=100,
             )
