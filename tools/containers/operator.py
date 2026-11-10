@@ -419,7 +419,12 @@ class Docker(DockerClient):
             rendered_networks = rendered_configuration["networks"]
 
             if (
-                set(rendered_services) != {"tests", "postgres", "bootstrap"}
+                set(rendered_services) != {"tests", "postgres", "bootstrap", "initializer"}
+                or rendered_services["initializer"].get("image") != image
+                or rendered_services["initializer"].get("read_only") is not True
+                or rendered_services["initializer"].get("user") != "65532:65532"
+                or "CONIX_TEST_OWNER_DSN" not in rendered_services["initializer"].get("environment", {})
+                or "CONIX_TEST_OWNER_DSN" in rendered_services["tests"].get("environment", {})
                 or rendered_services["tests"].get("image") != image
                 or rendered_services["tests"].get("read_only") is not True
                 or rendered_services["tests"].get("user") != "65532:65532"
@@ -452,8 +457,18 @@ class Docker(DockerClient):
             )
             self.run(*compose_argv, "run", "--rm", "--no-deps", "--pull",
                      "never", "bootstrap", env=compose_environment, timeout=60)
-            self.run(*compose_argv, "run", "--rm", "--no-deps", "--pull",
-                     "never", "tests", env=compose_environment, timeout=240)
+            self.run(
+                *compose_argv, "run", "--rm", "--no-deps", "--pull",
+                "never", "initializer",
+                env=compose_environment,
+                timeout=90,
+            )
+            self.run(
+                *compose_argv, "run", "--rm", "--no-deps", "--pull",
+                "never", "tests",
+                env=compose_environment,
+                timeout=240,
+            )
         except Exception as error:
             test_failure = error
 
@@ -463,7 +478,7 @@ class Docker(DockerClient):
                 self.run(*compose_argv, "ps", "--all", env=compose_environment, timeout=15)
                 self.run(
                     *compose_argv, "logs", "--no-color", "--tail", "35",
-                    "postgres", "bootstrap", "tests",
+                    "postgres", "bootstrap", "initializer", "tests",
                     env=compose_environment, timeout=15,
                 )
             except OperationError:

@@ -1,8 +1,4 @@
-"""Real disposable PostgreSQL role boundary before generic journal installation.
-
-No old collections tables, source_progress schema or PayToPlay observer is
-created. The owner-only generic DDL belongs to T0-2, not this test lane.
-"""
+"""Check the freshly installed generic journal's runtime and reader privileges."""
 import os
 import unittest
 
@@ -27,9 +23,38 @@ class PostgreSQLBoundaryTests(unittest.IsolatedAsyncioTestCase):
             row = await (await connection.execute(
                 "SELECT count(*) FROM information_schema.tables WHERE table_schema='conix'"
             )).fetchone()
-            self.assertEqual(row[0], 0, "Prototype tables were installed unexpectedly.")
+            self.assertEqual(row[0], 3, "Owner did not install the three generic journal tables.")
             with self.assertRaises(InsufficientPrivilege):
                 await connection.execute("CREATE TABLE conix.unapproved (id integer)")
+
+    async def test_installed_source_identity_and_raw_log_columns(self):
+        from pathlib import Path
+
+        from conix.catalog import prepare_catalog
+
+        catalog = prepare_catalog(Path("/tests/fixtures/catalog.toml"))
+        async with await AsyncConnection.connect(
+            os.environ["CONIX_TEST_DSN"],
+            connect_timeout=5,
+        ) as connection:
+            row = await (await connection.execute(
+                "SELECT source_id, chain_id, genesis_hash, history_start, "
+                "last_block, revision FROM conix.source_progress WHERE singleton = 1"
+            )).fetchone()
+            self.assertEqual(row, (
+                catalog.source_id,
+                catalog.chain.chain_id,
+                catalog.chain.genesis_hash,
+                catalog.chain.start_block,
+                None,
+                0,
+            ))
+            columns = await (await connection.execute(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                "WHERE table_schema = 'conix' AND table_name = 'events'"
+            )).fetchall()
+            self.assertIn(("data", "bytea"), columns)
+            self.assertIn(("topic3", "bytea"), columns)
 
     async def test_reader_has_distinct_identity_and_no_mutation_access(self):
         async with await AsyncConnection.connect(
@@ -42,6 +67,11 @@ class PostgreSQLBoundaryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(row, ("conix_reader", False, True))
             with self.assertRaises(InsufficientPrivilege):
                 await connection.execute("CREATE TABLE conix.unapproved (id integer)")
+            await connection.rollback()
+            with self.assertRaises(InsufficientPrivilege):
+                await connection.execute(
+                    "UPDATE conix.source_progress SET revision = revision + 1 WHERE singleton = 1"
+                )
 
     async def test_neither_role_can_read_other_application_schema(self):
         for credential in ("CONIX_TEST_DSN", "CONIX_TEST_READ_DSN"):

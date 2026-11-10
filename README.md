@@ -1,9 +1,9 @@
 Conix — generic EVM raw-log indexer
 ===================================
 
-Current status (2026-11-10): T0-1, the strict generic ABI compiler/codec,
-is implemented. The PayToPlay-specific experimental runtime, schema,
-journal, observer, CLI and integration suite have been deleted. No deployed
+Current status (2026-11-10): T0-1 ABI codec and T0-2 offline catalog /
+owner-controlled generic PostgreSQL schema are implemented. The PayToPlay-specific
+experimental runtime, schema, journal, observer, CLI and suite were deleted. No deployed
 database, checkpoint or API contract needs migration.
 
 The authoritative end-state specification is
@@ -24,8 +24,8 @@ eth-abi/eth-utils. No database, network or contract-specific callback enters
 the codec. The independent ABI vectors and supported/rejected type matrix
 live under tests/ and tests/fixtures/abi/.
 
-No generic catalog, raw-log journal, scanner, checkpoint reader, SQL schema
-or deployment CLI exists yet. The indexer-labelled image currently contains
+The generic catalog and owner-only table installer exist, but no generic
+journal writer, scanner, checkpoint reader or deployment CLI exists yet. The indexer-labelled image currently contains
 only the ABI package; image/indexer/check verifies its installed codec, NOT
 that a worker can scan. deployment/apply and database/schema/initialize are
 not published, and no command starts the deleted PayToPlay observer.
@@ -57,9 +57,10 @@ cache in the finished image.
     runner="$(make -s image/test-runner/build DOCKER_CONTEXT=agentic WHEELHOUSE="$HOME/Downloads/wheelhouse")"
     make test/postgres/run DOCKER_CONTEXT=agentic RUNNER_IMAGE="$runner"
 
-test/postgres/run uses a disposable PostgreSQL stack to verify only the
-current installed ABI tests and the independent owner/runtime/read role
-boundaries; it does NOT install a generic journal. On termination, it
+test/postgres/run uses a disposable PostgreSQL stack to install the generic
+journal schema through a separate owner-only container, then exercise the
+installed package and restricted runtime/reader roles. The test runner never
+receives the owner DSN. On termination, it
 retires its owned SQL containers, network and volume. The selected Docker
 context must be explicit and local; no host root, socket mount, unreviewed
 image pull, privilege escalation or implicit ambient Docker overrides.

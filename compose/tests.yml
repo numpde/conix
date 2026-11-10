@@ -1,5 +1,5 @@
-# Disposable PostgreSQL roles and installed ABI suite. No obsolete
-# PayToPlay journal schema or generic T0-2 tables are installed here.
+# Disposable owner initialization and installed generic journal tests.
+# Runtime/reader containers never receive the schema-owner credential.
 services:
   postgres:
     image: ${CONIX_POSTGRES_IMAGE:?reviewed pinned PostgreSQL image is required}
@@ -62,6 +62,25 @@ services:
     cpus: 0.25
     tmpfs:
       - /tmp:rw,nosuid,nodev,noexec,mode=1777,size=8m
+    networks: [tests]
+
+  initializer:
+    image: ${CONIX_TEST_RUNNER_IMAGE:?select exact installed test image}
+    pull_policy: never
+    environment:
+      CONIX_TEST_OWNER_DSN: postgresql://conix_owner:conix-disposable-owner@postgres:5432/conix_test
+    entrypoint: [python, -m, unittest, discover, -s, /tests, -p, test_schema_owner.py, -v]
+    user: "65532:65532"
+    read_only: true
+    init: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777,size=16m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 0.5
     networks: [tests]
 
   tests:

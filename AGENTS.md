@@ -6,7 +6,8 @@ Scope
 Conix's target is one generic EVM event indexer: a single-ABI-driven scanner,
 one complete-block PostgreSQL raw-log journal, and one checkpoint-bound reader
 supporting PayToPlay, ERC-20 and ERC-721 without contract-specific source code.
-T0-1 is implemented using reusable ABI primitives; the experimental
+T0-1 ABI and the T0-2 offline catalog/owner-only DDL are implemented;
+the experimental
 PayToPlay-only runtime has been deleted, without migration or adapters.
 
 notes/004_rpc_evidence_and_raw_log_indexer_plan.txt governs the new Tier-0
@@ -94,9 +95,9 @@ Container and dependency authority
 - Do not expand the Docker build context or installer inputs implicitly.
 - Private DSN bytes must never appear in image layers, argv, service logs or
   repository files. Staging is an explicit one-time confined operation.
-- T0-2 must provide a separately authorized owner-only schema initializer.
-  It is not available now. Runtime and read roles must remain distinct from
-  the owner, with no owner credentials in worker/reader volumes.
+- T0-2 provides owner-only schema.initialize() and a distinct one-shot
+  initializer container for qualification. The installed runtime and reader
+  must not receive that credential or execute DDL.
 - The future concrete generic journal/writer must not perform DDL. Keep
   owner-only schema establishment separate from the scanner/read guard.
 - Disposable resources have exact owners and must be retired on success/failure.
