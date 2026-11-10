@@ -9,34 +9,21 @@ from conix.rpc import RpcProtocolError
 
 class ExpressionDiagnostics(unittest.TestCase):
 
-    def test_one_line_calls_are_disambiguated_by_instruction_position(self):
-        response = {"blockHash": None, "address": None}
+    def test_two_calls_on_one_line_have_distinct_argument_notes(self):
+        for field in ("blockHash", "address"):
+            response = {
+                "blockHash": "0x" + "11" * 32,
+                "address": "0x" + "22" * 20,
+            }
+            response[field] = None
 
-        for method in (
-            lambda: _bytes(response.get("blockHash"), 32),
-            lambda: _bytes(response.get("address"), 20),
-        ):
-            with self.assertRaises(RpcProtocolError) as rejected:
-                method()
+            with self.subTest(field=field), self.assertRaises(RpcProtocolError) as rejected:
+                _bytes(response.get("blockHash"), 32); _bytes(response.get("address"), 20)
 
-            notes = rejected.exception.__notes__
-            self.assertEqual(len(notes), 1)
-            self.assertIn("response.get(", notes[0])
-
-        self.assertIn('"blockHash"', (
-            self._failure(lambda: _bytes(response.get("blockHash"), 32))
-        ).__notes__[0])
-        self.assertIn('"address"', (
-            self._failure(lambda: _bytes(response.get("address"), 20))
-        ).__notes__[0])
-
-    @staticmethod
-    def _failure(operation):
-        try:
-            operation()
-        except RpcProtocolError as error:
-            return error
-        raise AssertionError("Expected the RPC converter to refuse its input.")
+            self.assertEqual(
+                rejected.exception.__notes__,
+                [f'argument expression: response.get("{field}")'],
+            )
 
     def test_quantity_conversion_and_config_use_calling_expression(self):
         response = {"blockNumber": "-1"}

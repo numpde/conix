@@ -56,6 +56,13 @@ Python layout, naming and explanation
 - Treat debug f-strings as useful for named nonsecret diagnostic facts, not as
   permission to stringify untrusted inputs, credentials, subprocess argv or
   RPC responses. Prefer explicit bounded failure categories at such boundaries.
+- For developer-only converter failures, conix.diagnostics.note_argument
+  captures the first argument's source expression in a traceback note.
+  Do not duplicate that expression with handwritten label arguments. Source
+  introspection is best effort and never participates in input admission;
+  public exception messages remain independent of source availability and
+  must not expose evaluated values. Keep semantic operation/phase labels
+  when the expression itself cannot convey the required context.
 - The Python package and test tooling are both subject to these conventions.
   Preserve actual behavior while restyling; test meaningful contracts rather
   than exact diagnostic copy or source whitespace.
