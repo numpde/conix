@@ -874,15 +874,60 @@ and input transport. The dapp32 campaign runs separately.
                        page snapshot is open; repair invalidates that page.
                        Wire interruption, process termination, and
                        cancellation still need proof.
-  PostgreSQL baseline  Measure per-block catch-up, retained size and bounded
-                       work. Capture filtered and sparse-page query plans on
-                       representative retained histories.
+  PostgreSQL baseline  Synthetic journal and filtered-page measurements
+                       below. Scanner catch-up, larger history distributions
+                       and database memory still need evidence.
   Operator boundary    Owned rootless campaign and private TOML/DSN transport
                        have separate evidence. Prove the operator workflow,
                        ABI snapshot staging, egress, cancellation and cleanup.
   Packaging and core   Curated image inputs include tracked ABI fixtures.
                        Verify delivered artifacts and record the concrete
                        operations and delegation witness before the freeze.
+
+PostgreSQL baseline (2026-11-11)
+................................
+
+One controlled run on fw (amd64), rootless Docker context agentic, installed
+test runner sha256:c6e750d107ceb75ca60ded53bec75a9516d9fcb6e04aeda0693a8b82d74ccdf0
+at the code and test inputs of 9185947, and pinned PostgreSQL 16.6.
+The database had one CPU and a 512 MiB memory limit. The test process had
+half a CPU. The restricted writer used Journal.publish_block() against the
+owner-initialized schema. Each 64-block cycle had 16 empty blocks, 47 with
+eight events and one with 64. The synthetic VoucherCollected rows had
+gapped log indices and one rare customer/channel match per cycle, plus
+events sharing just the customer, channel or payee. The public reader
+returned exactly 128 matches across all 43 sparse pages at the larger size.
+
+  Retained blocks   Events  Publish interval  Table+index bytes  Python peak RSS
+              128      880    0.480 s (1–128)         1,015,808      62,900 KiB
+            8,192   56,320  25.195 s (129–8192)      57,589,760      63,156 KiB
+
+Median publication at the larger scale was 0.983 ms for empty blocks,
+2.640 ms for eight events and 14.037 ms for 64 events. Relation bytes
+include blocks, events, progress and indexes. They exclude WAL. Event
+indexes occupied 36,241,408 bytes at the larger scale. The peak RSS is
+the Python process high-water mark, including test code.
+
+EXPLAIN (ANALYZE, BUFFERS) used the actual Reader.events() SELECT and
+parameters under the read-only role. The explain used a plain SELECT.
+The reader timings include its real cursor, snapshot, decode and recheck.
+At 8,192 blocks PostgreSQL reported two autoanalyzes and zero event
+modifications since the last one. The 128-block plans were provisional
+because autoanalyze had not run by the deadline.
+
+At 8,192 blocks the customer/channel query used events_by_topic2 and
+removed three rows by filter on the first page. The second and last pages
+used the same index. The absent customer on the rare channel removed 256
+rows and hit 140 shared buffers, with zero reads. Customer-only used
+events_by_contract and removed 439 rows on the first page. The payee
+query used events_by_topic3. The measured plans had zero shared reads.
+The run gives no basis for an index change yet. Measure sparse or absent
+customer-only queries and representative selectivity before deciding.
+
+The journal published synthetic rows directly. Scanner RPC acquisition
+and ABI validation were outside the publication timing. These warm
+measurements describe one local workload and impose no throughput target.
+The disposable database, network and services were retired.
 
 
 9. Existing libraries — deliberate reuse decision (2026-11-10)
