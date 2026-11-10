@@ -339,6 +339,45 @@ class FixtureRunnerTests(unittest.TestCase):
             self.assertFalse(observed[2][3] or observed[3][3])
 
 
+    def test_token_deployment_precedes_schema_owner_initialization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            docker = FakeDocker()
+            docker.require_role = lambda *_: None
+            docker.require_image = lambda *_: None
+            fixture = runner.PayToPlayTest(
+                docker, "sha256:" + "a" * 64, Path(directory),
+                descriptor_for("conix-abcdef123456"), owned_fixture=True,
+            )
+            preflight = {"schema": "conix.acceptance.preflight.v1", "chainId": 31337,
+                         "genesisHash": "0x" + "ab" * 32}
+            tokens = {"schema": "conix.acceptance.tokens.v1"}
+            seen = []
+
+            def phase(_service, operation, *, prior_receipt, expect_receipt):
+                seen.append((operation, prior_receipt, expect_receipt))
+                if operation == "preflight":
+                    return preflight
+                if operation == "prepare":
+                    return tokens
+                if operation == "initialize":
+                    self.assertIs(fixture.tokens, tokens)
+                    self.assertIs(prior_receipt, preflight)
+
+            with patch.object(runner, "pinned_images", return_value={
+                "postgres": "test-postgres",
+            }), patch.object(runner, "admit"), patch.object(
+                fixture, "check_new_sql_project"
+            ), patch.object(fixture, "_phase", side_effect=phase), patch.object(
+                docker, "run", return_value="{}"
+            ):
+                fixture.prepare_sql()
+
+            self.assertEqual([operation for operation, _, _ in seen],
+                             ["bootstrap", "preflight", "prepare", "initialize"])
+            self.assertIs(seen[2][1], preflight)
+            self.assertTrue(seen[2][2])
+            self.assertFalse(seen[3][2])
+
     def test_unconfirmed_producer_creation_does_not_grant_cleanup_authority(self):
         with tempfile.TemporaryDirectory() as directory:
             campaign = runner.Campaign(
