@@ -187,6 +187,32 @@ class JournalContracts(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(finished.last_block, alternate)
             self.assertEqual(finished.revision, repaired.revision + 1)
 
+        # Once explicitly blocked, the journal must remain accessible for
+        # inspection and a checked manual repair, not for further appends.
+        async with await AsyncConnection.connect(runtime_dsn, connect_timeout=5) as other:
+            await other.execute(
+                "UPDATE conix.source_progress SET blocked_reason = %s WHERE singleton = 1",
+                ("reorganization requires repair",),
+            )
+
+        async with open_journal(catalog=self.catalog, database_dsn=runtime_dsn) as writer:
+            observed = await writer.inspect()
+            self.assertEqual(observed.blocked_reason, "reorganization requires repair")
+
+            block3 = Block(
+                number=alternate.number + 1,
+                hash=b"\x44" * 32,
+                parent_hash=alternate.hash,
+                timestamp=1700000003,
+            )
+            with self.assertRaises(HistoryConflict):
+                await writer.publish_block(block=block3, events=())
+
+            recovered = await writer.repair_to(ancestor=block1)
+            self.assertEqual(recovered.last_block, block1)
+            self.assertIsNone(recovered.blocked_reason)
+            self.assertNotEqual(recovered.generation, finished.generation)
+
 
 if __name__ == "__main__":
     unittest.main()

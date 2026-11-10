@@ -100,9 +100,9 @@ class Journal:
             if acquired != (True,):
                 raise WriterBusy("The selected raw-history database has an active writer.")
 
+            # A blocked history is inspectable and may be repaired, but no
+            # further block can be published until the repair succeeds.
             basis = await cls._read_basis(connection=connection, catalog=catalog)
-            if basis.blocked_reason is not None:
-                raise HistoryConflict("Retained history is blocked; explicit repair is required.")
         except BaseException as error:
             await connection.close()
             if isinstance(error, psycopg.Error):
@@ -208,11 +208,10 @@ class Journal:
             ) from error
 
     async def _advance_progress(self, *, last_number: int, generation: UUID) -> None:
-        """Fence one mutation against the durable source, tip and blocked state.
+        """Atomically fence the source, checkpoint and recorded blocked state.
 
-        The UPDATE both obtains PostgreSQL's row lock and verifies the
-        expected revision. A preliminary SELECT FOR UPDATE would repeat
-        this same check without establishing any additional authority.
+        This UPDATE owns the row lock and revision comparison. A blocked
+        source can only be cleared by a checked repair, not by publication.
         """
         expected_last = self.basis.last_block.number if self.basis.last_block else None
         result = await self.connection.execute(
@@ -221,7 +220,7 @@ class Journal:
             "blocked_reason = NULL "
             "WHERE singleton = 1 AND source_id = %s AND generation = %s "
             "AND revision = %s AND last_block IS NOT DISTINCT FROM %s "
-            "AND blocked_reason IS NULL",
+            "AND blocked_reason IS NOT DISTINCT FROM %s",
             (
                 last_number,
                 generation,
@@ -229,6 +228,7 @@ class Journal:
                 self.basis.generation,
                 self.basis.revision,
                 expected_last,
+                self.basis.blocked_reason,
             ),
         )
         if result.rowcount != 1:
@@ -241,6 +241,9 @@ class Journal:
         invoking this method. The journal's responsibility is durable fencing
         and atomic storage, not an independent RPC evidence algorithm.
         """
+        if self.basis.blocked_reason is not None:
+            raise HistoryConflict("Retained history is blocked; explicit repair is required.")
+
         previous = self.basis.last_block
         expected_number = previous.number + 1 if previous else self.basis.history_start
 
