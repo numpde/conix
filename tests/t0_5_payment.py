@@ -34,19 +34,33 @@ TRANSFER_BYTES = re.compile(r"0x[0-9a-fA-F]{64}\Z")
 SIGNATURE_BYTES = re.compile(r"0x[0-9a-fA-F]{130}\Z")
 
 
+def deployed_payment_function(descriptor, name):
+    """Locate the named function in the actual Forge deployment ABI."""
+    declarations = [
+        entry for entry in descriptor["contracts"]["PayToPlay"]["abi"]
+        if entry.get("type") == "function" and entry.get("name") == name
+    ]
+    require(len(declarations) == 1, "Deployed PayToPlay ABI lacks a unique requested function.")
+    return declarations[0]
+
+
+def named_position(descriptor, values):
+    """Attach Solidity field names to the independent decoded position tuple."""
+    function = deployed_payment_function(descriptor, "viewPosition")
+    components = function["outputs"][0]["components"]
+    return {
+        component["name"]: value
+        for (component, value) in zip(components, values, strict=True)
+    }
+
+
 async def payment_call(rpc, descriptor, name, arguments):
     """Use the deployed PayToPlay ABI as the view-call type authority.
 
     This is direct JSON-RPC, independent of Conix's caller encoder and
     return decoder. The exact Solidity declaration supplies the tuple shape.
     """
-    declarations = [
-        entry for entry in descriptor["contracts"]["PayToPlay"]["abi"]
-        if entry.get("type") == "function" and entry.get("name") == name
-    ]
-    require(len(declarations) == 1, "Deployed PayToPlay ABI lacks a unique requested view.")
-
-    function = declarations[0]
+    function = deployed_payment_function(descriptor, name)
     signature = abi_to_signature(function)
     input_types = tuple(collapse_if_tuple(arg) for arg in function["inputs"])
     output_types = tuple(collapse_if_tuple(arg) for arg in function["outputs"])
@@ -196,14 +210,15 @@ def saved_checkpoint(record):
         revision=record["revision"],
     )
 
-async def read_position(reader, checkpoint, customer, channel):
-    (fields,) = await reader.call(
+async def read_position(reader, descriptor, checkpoint, customer, channel):
+    """Read the position at a pinned checkpoint, preserving the ABI's names."""
+    (values,) = await reader.call(
         checkpoint=checkpoint,
         contract="payment",
         function="viewPosition(address,uint256,address)",
         arguments=(customer, channel, customer),
     )
-    return fields
+    return named_position(descriptor, values)
 
 
 async def collect_voucher(rpc, descriptor, *, signer, customer, collector, channel, total, cap, invoice, wait=True):
@@ -392,8 +407,13 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             rpc_url=descriptor["rpcUrl"],
         ) as reader:
             funded = await reader.checkpoint()
-            require((await read_position(reader, funded, customer, 1))[7:9] == (100, 0),
-                    "Funding checkpoint has the wrong position state.")
+            position_state = await read_position(
+                reader, descriptor, funded, customer, 1,
+            )
+            require(
+                (position_state["balance"], position_state["voucherPaid"]) == (100, 0),
+                "Funding checkpoint has the wrong position state.",
+            )
 
         mixed_tokens = await mine_mixed_block(
             rpc, descriptor, tokens,
@@ -407,8 +427,13 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             rpc_url=descriptor["rpcUrl"],
         ) as reader:
             after_first = await reader.checkpoint()
-            require((await read_position(reader, after_first, customer, 1))[7:9] == (70, 30),
-                    "First collection checkpoint has the wrong position state.")
+            position_state = await read_position(
+                reader, descriptor, after_first, customer, 1,
+            )
+            require(
+                (position_state["balance"], position_state["voucherPaid"]) == (70, 30),
+                "First collection checkpoint has the wrong position state.",
+            )
             await verify_token_history(
                 reader, after_first, descriptor, tokens,
                 {"initial": initial_tokens, "mixed": mixed_tokens}, rpc,
@@ -425,8 +450,13 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             rpc_url=descriptor["rpcUrl"],
         ) as reader:
             after_second = await reader.checkpoint()
-            require((await read_position(reader, after_second, customer, 1))[7:9] == (30, 70),
-                    "Second collection checkpoint has the wrong position state.")
+            position_state = await read_position(
+                reader, descriptor, after_second, customer, 1,
+            )
+            require(
+                (position_state["balance"], position_state["voucherPaid"]) == (30, 70),
+                "Second collection checkpoint has the wrong position state.",
+            )
 
         zero = await collect_voucher(
             rpc, descriptor, signer=voucher_signer, customer=customer, collector=collector,
@@ -454,7 +484,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
         ready = await payment_call(
             rpc, descriptor, "viewPosition", (customer, 1, customer),
         )
-        ready_at = ready[0][10]
+        ready_at = named_position(descriptor, ready[0])["readyAt"]
         tip = await rpc(descriptor, "eth_getBlockByNumber", ["latest", False])
         tip_timestamp = int(tip["timestamp"], 16)
         require(ready_at > tip_timestamp, "Withdrawal readiness did not advance after request.")
@@ -473,14 +503,34 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             rpc_url=descriptor["rpcUrl"],
         ) as reader:
             current = await reader.checkpoint()
-            require((await read_position(reader, current, customer, 1))[7:9] == (0, 70),
-                    "Withdrawal checkpoint has the wrong position state.")
-            require((await read_position(reader, funded, customer, 1))[7:9] == (100, 0),
-                    "Later appends changed the funding historical view.")
-            require((await read_position(reader, after_first, customer, 1))[7:9] == (70, 30),
-                    "Later appends changed the first historical view.")
-            require((await read_position(reader, after_second, customer, 1))[7:9] == (30, 70),
-                    "Later appends changed the second historical view.")
+            position_state = await read_position(
+                reader, descriptor, current, customer, 1,
+            )
+            require(
+                (position_state["balance"], position_state["voucherPaid"]) == (0, 70),
+                "Withdrawal checkpoint has the wrong position state.",
+            )
+            position_state = await read_position(
+                reader, descriptor, funded, customer, 1,
+            )
+            require(
+                (position_state["balance"], position_state["voucherPaid"]) == (100, 0),
+                "Later appends changed the funding historical view.",
+            )
+            position_state = await read_position(
+                reader, descriptor, after_first, customer, 1,
+            )
+            require(
+                (position_state["balance"], position_state["voucherPaid"]) == (70, 30),
+                "Later appends changed the first historical view.",
+            )
+            position_state = await read_position(
+                reader, descriptor, after_second, customer, 1,
+            )
+            require(
+                (position_state["balance"], position_state["voucherPaid"]) == (30, 70),
+                "Later appends changed the second historical view.",
+            )
 
             expected = [
                 (customer, 1, first, (30, 30, invoice_a)),
