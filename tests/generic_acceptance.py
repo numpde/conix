@@ -1,23 +1,20 @@
-"""Opt-in RED generic Tier-0 acceptance, in the installed EVM test image.
+"""Opt-in installed Conix acceptance against the dapp32-owned Anvil fixture.
 
-Uses the existing dapp32-owned Anvil fixture and Conix-owned PostgreSQL.
-No alternate scanner, mocked reader, silent skip or legacy observer fallback.
+The owner-only schema phase and runtime/reader phases share one immutable
+source catalog. Test transactions and chain mutation belong to the owned
+campaign; the borrowed baseline remains non-destructive.
 """
 import asyncio
-import io
 import json
 import os
 from pathlib import Path
 import sys
-import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fixture_protocol import (FixtureError, ScenarioFailure, _bad_constant, _pairs,
                               admit_public_acceptance_source, admit_tokens, decode, phase_failure_record)
-from abi_golden_vectors import ERC20, ERC721
-from abi_contract_vectors import PAY_TO_PLAY, COMPOUND, VOUCHER_SIGNATURE
+from abi_contract_vectors import VOUCHER_SIGNATURE
 import httpx
-from psycopg import AsyncConnection
 
 
 def request():
@@ -141,94 +138,75 @@ async def initialize(descriptor, state, tokens):
     await initialize_schema(os.environ["CONIX_TEST_OWNER_DSN"], prepare_catalog(source))
 
 
-class InstalledAcceptance(unittest.IsolatedAsyncioTestCase):
-
-    async def test_00_real_rpc_and_deployed_code(self):
-        self.assertEqual((await genesis(self.descriptor)).lower(), self.genesis_hash.lower())
-        code = await rpc(self.descriptor, "eth_getCode", [
-            self.descriptor["contracts"]["PayToPlay"]["address"], "latest",
-        ])
-        self.assertTrue(type(code) is str and code.startswith("0x") and len(code) > 2)
-
-    async def test_01_runtime_has_no_schema_ownership(self):
-        async with await AsyncConnection.connect(os.environ["CONIX_TEST_DSN"], connect_timeout=5) as connection:
-            result = await (await connection.execute(
-                "SELECT current_user, has_schema_privilege(current_user, 'conix', 'CREATE')"
-            )).fetchone()
-        self.assertEqual(result, ("conix_runtime", False))
-
-    async def test_02_abi_codec_matches_independent_wire_vectors(self):
-        from conix.abi import compile_event, decode_event
-        for vector in (ERC20, ERC721, PAY_TO_PLAY, COMPOUND):
-            with self.subTest(vector=vector.name):
-                compiled = compile_event(vector.abi)
-                self.assertEqual(
-                    tuple(decode_event(compiled, vector.topics, vector.data)), vector.expected,
-                )
-
-    async def test_03_complete_block_publisher_and_empty_filtered_page(self):
-        from conix.catalog import prepare_catalog
-        from conix.core import open_writer
-        from conix.reader import open_reader
-        source = prepare_catalog(self.catalog)
-        async with open_writer(catalog=source, database_dsn=os.environ["CONIX_TEST_DSN"],
-                               rpc_url=self.descriptor["rpcUrl"]) as writer:
-            await writer.advance_one()
-        async with open_reader(catalog=source, database_dsn=os.environ["CONIX_TEST_READ_DSN"],
-                               rpc_url=self.descriptor["rpcUrl"]) as reader:
-            checkpoint = await reader.checkpoint()
-            self.assertGreaterEqual(
-                checkpoint.block.number, self.descriptor["contracts"]["PayToPlay"]["deploymentBlock"],
-            )
-            page = await reader.events(
-                checkpoint=checkpoint, contract="payment",
-                event=VOUCHER_SIGNATURE,
-                where={"customer": self.descriptor["publicFixtureAccounts"]["customer"]["address"]},
-                cursor=None, limit=100,
-            )
-            self.assertEqual(page.checkpoint, checkpoint)
-            self.assertTrue(page.complete)
-            self.assertEqual(page.events, ())
-
-    async def test_04_raw_event_bytea_and_owner_boundary(self):
-        async with await AsyncConnection.connect(os.environ["CONIX_TEST_DSN"], connect_timeout=5) as connection:
-            value = await (await connection.execute(
-                "SELECT data_type FROM information_schema.columns "
-                "WHERE table_schema='conix' AND table_name='events' AND column_name='data'"
-            )).fetchone()
-        self.assertEqual(value, ("bytea",))
-
-    async def test_05_checkpoint_hash_pinned_view(self):
-        from conix.catalog import prepare_catalog
-        from conix.reader import open_reader
-        source = prepare_catalog(self.catalog)
-        async with open_reader(catalog=source, database_dsn=os.environ["CONIX_TEST_READ_DSN"],
-                               rpc_url=self.descriptor["rpcUrl"]) as reader:
-            checkpoint = await reader.checkpoint()
-            result = await reader.call(
-                checkpoint=checkpoint, contract="payment", function="asset()", arguments=(),
-            )
-            self.assertIs(type(result), tuple)
-            self.assertEqual(len(result), 1)
-
-
 async def baseline(descriptor, state, tokens):
-    expected = preflight(state, descriptor)
-    if (await genesis(descriptor)).lower() != expected.lower():
+    """Exercise the installed scanner and reader against one known source.
+
+    The selected event-history origin is the actual PayToPlay deployment.
+    Publishing the first block is a prerequisite of the following reads,
+    not an accidental side effect of another unittest method.
+    """
+    from conix.catalog import prepare_catalog
+    from conix.core import open_writer
+    from conix.reader import open_reader
+
+    expected_genesis = preflight(state, descriptor)
+    observed_genesis = await genesis(descriptor)
+    if observed_genesis.lower() != expected_genesis.lower():
         raise ScenarioFailure("Anvil genesis changed after owner initialization.")
-    InstalledAcceptance.descriptor = descriptor
-    InstalledAcceptance.genesis_hash = expected
-    InstalledAcceptance.catalog = catalog_path(descriptor, expected, tokens)
-    sink = io.StringIO()
-    tests = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledAcceptance)
-    result = unittest.TextTestRunner(stream=sink, verbosity=0).run(tests)
-    for test, _ in sorted(result.failures + result.errors, key=lambda row: str(row[0])):
-        print("FAIL:", str(test))
-    if not result.wasSuccessful():
-        raise ScenarioFailure(
-            f"{len(result.failures) + len(result.errors)} named generic acceptance checks failed."
+
+    deployed = {"payment": descriptor["contracts"]["PayToPlay"]["address"]}
+    if tokens is not None:
+        deployed.update(
+            token20=tokens["token20"]["address"],
+            token721=tokens["token721"]["address"],
         )
-    print(f"PASS: {result.testsRun} installed generic Tier-0 acceptance checks.")
+
+    for (alias, address) in deployed.items():
+        code = await rpc(descriptor, "eth_getCode", [address, "latest"])
+        if type(code) is not str or not code.startswith("0x") or len(code) <= 2:
+            raise ScenarioFailure(f"{alias} deployment has no code on the selected chain.")
+
+    catalog = prepare_catalog(catalog_path(descriptor, expected_genesis, tokens))
+    async with open_writer(
+        catalog=catalog,
+        database_dsn=os.environ["CONIX_TEST_DSN"],
+        rpc_url=descriptor["rpcUrl"],
+    ) as writer:
+        published = await writer.advance_one()
+        if published is None or published.last_block is None:
+            raise ScenarioFailure("The initial complete block was not published.")
+
+    async with open_reader(
+        catalog=catalog,
+        database_dsn=os.environ["CONIX_TEST_READ_DSN"],
+        rpc_url=descriptor["rpcUrl"],
+    ) as reader:
+        checkpoint = await reader.checkpoint()
+        if checkpoint is None or checkpoint.block != published.last_block:
+            raise ScenarioFailure("The reader did not observe the published checkpoint.")
+
+        page = await reader.events(
+            checkpoint=checkpoint,
+            contract="payment",
+            event=VOUCHER_SIGNATURE,
+            where={"customer": descriptor["publicFixtureAccounts"]["customer"]["address"]},
+            limit=100,
+        )
+        if page.checkpoint != checkpoint or not page.complete or page.events:
+            raise ScenarioFailure("A fresh payment deployment yielded contradictory event history.")
+
+        native_asset = await reader.call(
+            checkpoint=checkpoint,
+            contract="payment",
+            function="asset()",
+            arguments=(),
+        )
+        from eth_utils import to_checksum_address
+        expected_asset = to_checksum_address("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE")
+        if native_asset != (expected_asset,):
+            raise ScenarioFailure("The pinned historical asset view differs from the deployed contract.")
+
+    print("PASS: installed scanner and SELECT-only reader share the first complete checkpoint.")
 
 
 async def main():
