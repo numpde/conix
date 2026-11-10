@@ -14,6 +14,7 @@ from eth_utils import keccak, to_checksum_address
 
 import generic_acceptance
 import t0_5_payment
+import t0_5_chain
 
 
 class EvmImageChecks(unittest.TestCase):
@@ -70,3 +71,31 @@ class InstalledFixtureWiring(unittest.IsolatedAsyncioTestCase):
             observed_rpc, descriptor, "asset", (),
         )
         self.assertEqual(result, (to_checksum_address(expected_asset),))
+
+    async def test_failed_submission_keeps_cause_when_impersonation_cleanup_fails(self):
+        operations = []
+
+        async def observed_rpc(_descriptor, method, _params):
+            operations.append(method)
+            if method == "eth_sendTransaction":
+                raise ValueError("submission rejected by the selected Anvil")
+            if method == "anvil_stopImpersonatingAccount":
+                raise RuntimeError("retirement unavailable")
+            return True
+
+        with self.assertRaises(ValueError) as raised:
+            await t0_5_chain.send(
+                observed_rpc,
+                {"contracts": {"PayToPlay": {"address": "0x" + "12" * 20}}},
+                "0x" + "34" * 20,
+                "asset()",
+                (),
+                (),
+            )
+
+        self.assertEqual(
+            operations,
+            ["anvil_impersonateAccount", "eth_sendTransaction",
+             "anvil_stopImpersonatingAccount"],
+        )
+        self.assertIn("retirement failed", " ".join(raised.exception.__notes__))
