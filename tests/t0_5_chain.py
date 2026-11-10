@@ -27,7 +27,7 @@ def calldata(signature: str, types: tuple[str, ...], values: tuple) -> str:
     return "0x" + (keccak(text=signature)[:4] + encode(types, values)).hex()
 
 
-async def receipt(rpc, descriptor, tx_hash: str) -> dict:
+async def wait_for_receipt(rpc, descriptor, tx_hash: str) -> dict:
     """Require a successful mined receipt within the fixture's work budget."""
     deadline = time.monotonic() + 15
 
@@ -99,7 +99,7 @@ async def send(
         and all(ch in "0123456789abcdefABCDEF" for ch in tx_hash[2:]),
         "Anvil did not return a transaction hash.",
     )
-    return await receipt(rpc, descriptor, tx_hash) if wait else tx_hash
+    return await wait_for_receipt(rpc, descriptor, tx_hash) if wait else tx_hash
 
 
 def assert_event_matches_receipt(event, log):
