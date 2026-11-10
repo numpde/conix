@@ -29,6 +29,7 @@ from tools.fixtures.protocol import (
     acceptance_payments,
     acceptance_tokens,
     public_acceptance_source,
+    public_test_source,
     decode,
     parse_phase_failure,
 )
@@ -448,7 +449,7 @@ class PayToPlayTest:
         source = (
             public_acceptance_source(self.fixture_descriptor)
             if phase == "initialize"
-            else self.fixture_descriptor
+            else public_test_source(self.fixture_descriptor)
         )
         phase_payload = _json_request(source, prior_receipt, tokens=self.tokens) if phase != "bootstrap" else None
         self.consumer_retired = False
