@@ -20,7 +20,10 @@ from conix.journal import Block
 from conix.reader import Checkpoint, CursorInvalid, open_reader
 from fixture_protocol import ScenarioFailure
 from t0_5_chain import assert_event_matches_receipt, calldata, receipt as waited_receipt, require, send
-from t0_5_tokens import initial_transfers, mixed_transfers, only_transfer, verify, verify_after_restart
+from t0_5_tokens import (
+    emit_initial_transfers, only_transfer, submit_pending_token_transfers,
+    verify_after_restart, verify_token_history,
+)
 
 VOUCHER = "VoucherCollected(address,uint256,address,uint256,uint256,bytes32)"
 COLLECT = "collect(address,uint256,uint256,bytes32,uint256,bytes)"
@@ -237,7 +240,7 @@ async def mine_mixed_block(rpc, descriptor, tokens, *, signer, customer, collect
             rpc, descriptor, signer=signer, customer=customer, collector=collector,
             channel=1, total=70, cap=30, invoice=invoice, wait=False,
         )
-        (token20_tx, token721_tx) = await mixed_transfers(rpc, descriptor, tokens)
+        (token20_tx, token721_tx) = await submit_pending_token_transfers(rpc, descriptor, tokens)
         await rpc(descriptor, "evm_mine", [])
     except BaseException as error:
         mining_error = error
@@ -351,7 +354,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
 
     # Token constructor Transfer events already exist from preparation.
     # These transactions add distinct real emitted values before the mixed block.
-    initial_tokens = await initial_transfers(rpc, descriptor, tokens)
+    initial_tokens = await emit_initial_transfers(rpc, descriptor, tokens)
 
     async with open_writer(
         catalog=catalog, database_dsn=writer_dsn, rpc_url=descriptor["rpcUrl"],
@@ -376,7 +379,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             after_first = await reader.checkpoint()
             require((await position(reader, after_first, customer, 1))[7:9] == (70, 30),
                     "First collection checkpoint has the wrong position state.")
-            await verify(
+            await verify_token_history(
                 reader, after_first, descriptor, tokens,
                 {"initial": initial_tokens, "mixed": mixed_tokens}, rpc,
             )
