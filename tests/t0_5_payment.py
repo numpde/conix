@@ -13,6 +13,7 @@ from uuid import UUID
 
 from eth_abi import decode
 from eth_utils import keccak, to_checksum_address
+from eth_utils.abi import abi_to_signature, collapse_if_tuple
 
 from conix.catalog import prepare_catalog
 from conix.core import BranchConflict, open_writer
@@ -37,8 +38,6 @@ async def payment_call(rpc, descriptor, name, arguments):
     This is direct JSON-RPC, independent of Conix's caller encoder and
     return decoder. The exact Solidity declaration supplies the tuple shape.
     """
-    from eth_utils.abi import abi_to_signature, collapse_if_tuple
-
     declarations = [
         entry for entry in descriptor["contracts"]["PayToPlay"]["abi"]
         if entry.get("type") == "function" and entry.get("name") == name
@@ -60,7 +59,7 @@ async def payment_call(rpc, descriptor, name, arguments):
     return decode(output_types, bytes.fromhex(result[2:]))
 
 
-async def fixture_voucher_key(rpc, descriptor):
+async def fixture_voucher_signer_address(rpc, descriptor):
     """Use a pre-funded, unlocked Anvil account; handle no wallet keys."""
     addresses = await rpc(descriptor, "eth_accounts", [])
     excluded = {
@@ -208,7 +207,7 @@ async def collect(rpc, descriptor, *, signer, customer, collector, channel, tota
     )
 
 
-async def prepare_positions(rpc, descriptor, *, voucher_key):
+async def prepare_positions(rpc, descriptor, *, voucher_signer_address):
     """Create two service channels and three funded positions on fresh Anvil.
 
     The admin also acts as the second customer; the relayer alone collects.
@@ -217,7 +216,7 @@ async def prepare_positions(rpc, descriptor, *, voucher_key):
     accounts = descriptor["publicFixtureAccounts"]
     admin = accounts["admin"]["address"]
     customer = accounts["customer"]["address"]
-    other_customer = admin
+    second_customer = admin
     collector = accounts["relayer"]["address"]
     payee = accounts["payee"]["address"]
     (count,) = await payment_call(rpc, descriptor, "channelCount", ())
@@ -227,13 +226,13 @@ async def prepare_positions(rpc, descriptor, *, voucher_key):
             rpc, descriptor, admin, "createChannel(address,address,uint64)",
             ("address", "address", "uint64"), (payee, collector, 60),
         )
-    for (actor, channel) in ((customer, 1), (customer, 2), (other_customer, 1)):
+    for (actor, channel) in ((customer, 1), (customer, 2), (second_customer, 1)):
         await send(
             rpc, descriptor, actor, "registerVoucherKey(uint256,address)",
-            ("uint256", "address"), (channel, voucher_key),
+            ("uint256", "address"), (channel, voucher_signer_address),
         )
     for (actor, channel, amount) in ((customer, 1, 100), (customer, 2, 20),
-                                    (other_customer, 1, 25)):
+                                    (second_customer, 1, 25)):
         await send(
             rpc, descriptor, actor, "fund(uint256,uint256)",
             ("uint256", "uint256"), (channel, amount), value=amount,
@@ -354,17 +353,17 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
     accounts = descriptor["publicFixtureAccounts"]
     admin = accounts["admin"]["address"]
     customer = accounts["customer"]["address"]
-    other_customer = admin
+    second_customer = admin
     collector = accounts["relayer"]["address"]
     payee = accounts["payee"]["address"]
-    key = await fixture_voucher_key(rpc, descriptor)
+    voucher_signer = await fixture_voucher_signer_address(rpc, descriptor)
     payment = descriptor["contracts"]["PayToPlay"]["address"]
     invoice_a = bytes.fromhex("11" * 32)
     invoice_b = bytes.fromhex("22" * 32)
     invoice_c = bytes.fromhex("33" * 32)
     before_payee = int(await rpc(descriptor, "eth_getBalance", [payee, "latest"]), 16)
 
-    await prepare_positions(rpc, descriptor, voucher_key=key)
+    await prepare_positions(rpc, descriptor, voucher_signer_address=voucher_signer)
 
     # Token constructor Transfer events already exist from preparation.
     # These transactions add distinct real emitted values before the mixed block.
@@ -383,7 +382,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
 
         mixed_tokens = await mine_mixed_block(
             rpc, descriptor, tokens,
-            signer=key, customer=customer, collector=collector, invoice=invoice_a,
+            signer=voucher_signer, customer=customer, collector=collector, invoice=invoice_a,
         )
         first = mixed_tokens["payment"]
         await scan_to_tip(writer)
@@ -399,7 +398,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             )
 
         second = await collect(
-            rpc, descriptor, signer=key, customer=customer, collector=collector,
+            rpc, descriptor, signer=voucher_signer, customer=customer, collector=collector,
             channel=1, total=70, cap=70, invoice=invoice_a,
         )
         await scan_to_tip(writer)
@@ -411,7 +410,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
                     "Second collection checkpoint has the wrong position state.")
 
         zero = await collect(
-            rpc, descriptor, signer=key, customer=customer, collector=collector,
+            rpc, descriptor, signer=voucher_signer, customer=customer, collector=collector,
             channel=1, total=70, cap=70, invoice=invoice_a,
         )
         require(not any(
@@ -421,11 +420,11 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
         ), "Exhausted voucher unexpectedly emitted a collection event.")
 
         other_channel = await collect(
-            rpc, descriptor, signer=key, customer=customer, collector=collector,
+            rpc, descriptor, signer=voucher_signer, customer=customer, collector=collector,
             channel=2, total=15, cap=15, invoice=invoice_b,
         )
         other_actor = await collect(
-            rpc, descriptor, signer=key, customer=other_customer, collector=collector,
+            rpc, descriptor, signer=voucher_signer, customer=second_customer, collector=collector,
             channel=1, total=20, cap=20, invoice=invoice_c,
         )
 
@@ -466,7 +465,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
                 (customer, 1, first, (30, 30, invoice_a)),
                 (customer, 1, second, (40, 70, invoice_a)),
                 (customer, 2, other_channel, (15, 15, invoice_b)),
-                (other_customer, 1, other_actor, (20, 20, invoice_c)),
+                (second_customer, 1, other_actor, (20, 20, invoice_c)),
             ]
             await assert_collection_history(
                 reader, current, expected=expected,
@@ -539,7 +538,7 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
     catalog = prepare_catalog(catalog_file)
     account = descriptor["publicFixtureAccounts"]["customer"]["address"]
     collector = descriptor["publicFixtureAccounts"]["relayer"]["address"]
-    key = await fixture_voucher_key(rpc, descriptor)
+    voucher_signer = await fixture_voucher_signer_address(rpc, descriptor)
     invoice = bytes.fromhex("44" * 32)
 
     async with open_writer(
@@ -550,7 +549,7 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
                 "Reorganization was not started from the restarted durable prefix.")
         snapshot = await rpc(descriptor, "evm_snapshot", [])
         branch_a = await collect(
-            rpc, descriptor, signer=key, customer=account, collector=collector,
+            rpc, descriptor, signer=voucher_signer, customer=account, collector=collector,
             channel=2, total=20, cap=5, invoice=invoice,
         )
         token_a = await send(
