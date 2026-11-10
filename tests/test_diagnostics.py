@@ -55,14 +55,14 @@ class ExpressionDiagnostics(unittest.TestCase):
             _bytes(private_value, 32)
 
         self.assertNotIn(private_value, str(rejected.exception))
-        self.assertNotIn(private_value, "\\n".join(rejected.exception.__notes__))
+        self.assertNotIn(private_value, "\n".join(rejected.exception.__notes__))
         self.assertIn("private_value", rejected.exception.__notes__[0])
 
     def test_source_unavailable_does_not_affect_original_error(self):
         namespace = {"_bytes": _bytes}
         exec(
             compile(
-                "def invoke():\\n    return _bytes(None, 32)\\n",
+                "def invoke():\n    return _bytes(None, 32)\n",
                 "<source-not-available>",
                 "exec",
             ),
