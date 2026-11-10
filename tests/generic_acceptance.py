@@ -13,7 +13,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fixture_protocol import (FixtureError, ScenarioFailure, _bad_constant, _pairs,
-                              admit_public_acceptance_source, decode, phase_failure_record)
+                              admit_public_acceptance_source, admit_tokens, decode, phase_failure_record)
 from abi_golden_vectors import ERC20, ERC721
 from abi_contract_vectors import PAY_TO_PLAY, COMPOUND
 import httpx
@@ -28,16 +28,17 @@ def request():
         document = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_bad_constant)
     except (UnicodeError, ValueError, RecursionError):
         raise FixtureError("Generic acceptance request is invalid JSON.") from None
-    if type(document) is not dict or set(document) != {"descriptor", "state"}:
+    if type(document) is not dict or set(document) != {"descriptor", "state", "tokens"}:
         raise FixtureError("Generic acceptance request must contain descriptor and phase state.")
+    tokens = admit_tokens(document["tokens"])
     descriptor = document["descriptor"]
     if type(descriptor) is not dict:
         raise FixtureError("Generic acceptance descriptor is malformed.")
     if sys.argv[1] == "initialize":
-        return admit_public_acceptance_source(descriptor), document["state"]
+        return admit_public_acceptance_source(descriptor), document["state"], tokens
 
     fixture_id = os.environ.get("CONIX_FIXTURE_ID", "")
-    return decode((json.dumps(descriptor, separators=(",", ":")) + "\n").encode(), fixture_id=fixture_id), document["state"]
+    return decode((json.dumps(descriptor, separators=(",", ":")) + "\n").encode(), fixture_id=fixture_id), document["state"], tokens
 
 
 async def rpc(descriptor, method, params):
@@ -80,7 +81,7 @@ def preflight(state, descriptor):
     return state["genesisHash"]
 
 
-def catalog_path(descriptor, genesis_hash):
+def catalog_path(descriptor, genesis_hash, tokens=None):
     """Stage only verified public ABI and source metadata in contained tmpfs."""
     root = Path("/tmp/conix-acceptance")
     root.mkdir(mode=0o700, exist_ok=True)
@@ -94,6 +95,19 @@ def catalog_path(descriptor, genesis_hash):
         descriptor["payment"] if "payment" in descriptor
         else descriptor["contracts"]["PayToPlay"]
     )
+    extra_contracts = ""
+    if tokens is not None:
+        for alias in ("token20", "token721"):
+            name = "erc20" if alias == "token20" else "erc721"
+            abi = root / (alias + ".json")
+            abi.write_bytes((Path("/tests/fixtures/abi") / (name + ".json")).read_bytes())
+            abi.chmod(0o600)
+            extra_contracts += (
+                f'[contracts.{alias}]\n'
+                f'address = "{tokens[alias]["address"]}"\n'
+                f'abi_file = "{abi}"\n'
+                'events = ["Transfer(address,address,uint256)"]\n'
+            )
     config = root / "source.toml"
     config.write_text(
         'version = 1\n[chain]\n'
@@ -105,7 +119,8 @@ def catalog_path(descriptor, genesis_hash):
         f'address = "{deployment["address"]}"\n'
         f'abi_file = "{abi}"\n'
         'events = ["VoucherCollected(address,uint256,address,uint256,uint256,bytes32)"]\n'
-        '[database]\ndsn_file = "/run/conix/connection.dsn"\nruntime_role = "conix_runtime"\n'
+        + extra_contracts
+        + '[database]\ndsn_file = "/run/conix/connection.dsn"\nruntime_role = "conix_runtime"\n'
         '[limits]\nrpc_timeout_seconds = 5\noperation_timeout_seconds = 30\n'
         'max_response_bytes = 1048576\nmax_connections = 4\nmax_page_size = 100\n'
         'max_evidence_blocks = 64\nmax_logs_per_block = 10000\n'
@@ -116,8 +131,8 @@ def catalog_path(descriptor, genesis_hash):
     return config
 
 
-async def initialize(descriptor, state):
-    source = catalog_path(descriptor, preflight(state, descriptor))
+async def initialize(descriptor, state, tokens):
+    source = catalog_path(descriptor, preflight(state, descriptor), tokens)
     try:
         from conix.catalog import prepare_catalog
     except ImportError:
@@ -197,13 +212,13 @@ class InstalledAcceptance(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(result), 1)
 
 
-async def baseline(descriptor, state):
+async def baseline(descriptor, state, tokens):
     expected = preflight(state, descriptor)
     if (await genesis(descriptor)).lower() != expected.lower():
         raise ScenarioFailure("Anvil genesis changed after owner initialization.")
     InstalledAcceptance.descriptor = descriptor
     InstalledAcceptance.genesis_hash = expected
-    InstalledAcceptance.catalog = catalog_path(descriptor, expected)
+    InstalledAcceptance.catalog = catalog_path(descriptor, expected, tokens)
     sink = io.StringIO()
     tests = unittest.defaultTestLoader.loadTestsFromTestCase(InstalledAcceptance)
     result = unittest.TextTestRunner(stream=sink, verbosity=0).run(tests)
@@ -218,12 +233,12 @@ async def baseline(descriptor, state):
 
 async def main():
     if len(sys.argv) != 2 or sys.argv[1] not in (
-        "preflight", "initialize", "baseline", "exercise", "resume", "reorg",
+        "preflight", "prepare", "initialize", "baseline", "exercise", "resume", "reorg",
     ):
         raise FixtureError("Select an explicit generic acceptance phase.")
     phase = sys.argv[1]
     try:
-        descriptor, state = request()
+        descriptor, state, tokens = request()
         if phase == "preflight":
             if state is not None:
                 raise FixtureError("Preflight cannot consume prior state.")
@@ -232,16 +247,24 @@ async def main():
                 "chainId": descriptor["chainId"],
                 "genesisHash": await genesis(descriptor),
             }, separators=(",", ":")))
+        elif phase == "prepare":
+            preflight(state, descriptor)
+            if tokens is not None:
+                raise ScenarioFailure("Contract fixture preparation must start with no token source.")
+            from t0_5_tokens import deploy
+            print(json.dumps(await deploy(descriptor, rpc), separators=(",", ":")))
         elif phase == "initialize":
-            await initialize(descriptor, state)
+            await initialize(descriptor, state, tokens)
         elif phase == "baseline":
-            await baseline(descriptor, state)
+            await baseline(descriptor, state, tokens)
         else:
             # Every phase is a distinct Docker process with the same journal.
             # Only the owner campaign selects these test-only chain mutations.
             import t0_5_payment
 
-            source = catalog_path(descriptor, await genesis(descriptor))
+            if tokens is None:
+                raise ScenarioFailure("Real multi-contract acceptance lacks its installed token source.")
+            source = catalog_path(descriptor, await genesis(descriptor), tokens)
             arguments = {
                 "writer_dsn": os.environ["CONIX_TEST_DSN"],
                 "reader_dsn": os.environ["CONIX_TEST_READ_DSN"],
@@ -249,12 +272,12 @@ async def main():
             if phase == "exercise":
                 preflight(state, descriptor)
                 record = await t0_5_payment.exercise(
-                    descriptor, source, rpc, **arguments,
+                    descriptor, source, rpc, tokens=tokens, **arguments,
                 )
                 print(json.dumps(record, separators=(",", ":")))
             elif phase == "resume":
                 await t0_5_payment.resume(
-                    descriptor, source, rpc, state=state, **arguments,
+                    descriptor, source, rpc, state=state, tokens=tokens, **arguments,
                 )
             else:
                 await t0_5_payment.reorganize(
