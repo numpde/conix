@@ -607,7 +607,7 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
         database_dsn=writer_dsn,
         rpc_url=descriptor["rpcUrl"],
     ) as writer:
-        ancestor = (await writer.inspect()).last_block
+        ancestor = (await writer.journal.inspect()).last_block
         require(ancestor is not None and ancestor.number > previous.block.number,
                 "Reorganization was not started from the restarted durable prefix.")
         snapshot = await rpc(descriptor, "evm_snapshot", [])
@@ -676,7 +676,7 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
             pass
         else:
             raise ScenarioFailure("Writer silently advanced on conflicting canonical history.")
-        require((await writer.inspect()).last_block == old.block,
+        require((await writer.journal.inspect()).last_block == old.block,
                 "Conflicting branch changed retained history before explicit repair.")
 
         repaired = await writer.repair_to(ancestor=ancestor)
@@ -684,7 +684,7 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
                 and repaired.last_block == ancestor,
                 "Explicit manual repair did not retire the conflicting suffix.")
         await scan_to_tip(writer)
-        require((await writer.inspect()).last_block.hash.hex() == replacement["hash"][2:].lower(),
+        require((await writer.journal.inspect()).last_block.hash.hex() == replacement["hash"][2:].lower(),
                 "Reindexing did not publish the replacement canonical branch.")
 
         async with open_reader(
