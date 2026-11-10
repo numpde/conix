@@ -327,7 +327,7 @@ def _compose(docker, compose_project):
 
 
 def _json_request(descriptor, prior_phase_receipt, *, tokens):
-    """Pass private fixture keys through stdin, never argv or environment."""
+    """Send only the selected public phase source and bounded prior receipts."""
     return (json.dumps({"descriptor": descriptor, "state": prior_phase_receipt, "tokens": tokens}, separators=(",", ":")) + "\n").encode()
 
 
@@ -444,8 +444,8 @@ class PayToPlayTest:
             "run", "--rm", "--no-deps", "--pull", "never", "-T",
             *runner_arguments,
         ]
-        # The owner phase receives no wallet credentials or arbitrary
-        # producer ABI contents. Its ABI is the reviewed test-image fixture.
+        # The owner gets source coordinates only; consumers get a public
+        # ABI and role addresses. Neither phase receives fixture wallet keys.
         source = (
             public_acceptance_source(self.fixture_descriptor)
             if phase == "initialize"
@@ -466,8 +466,8 @@ class PayToPlayTest:
             )
             self.consumer_retired = True
         except CampaignError as error:
-            # A child may include wallet bytes in stderr; admit only its
-            # source-controlled, phase-bound failure record.
+            # Child stderr is untrusted, even though its stdin excludes
+            # producer wallet keys. Admit only its bounded phase-bound record.
             try:
                 phase_stderr_tail = self._file("conix-" + phase + ".err").read_bytes()[-16384:]
             except OSError:
