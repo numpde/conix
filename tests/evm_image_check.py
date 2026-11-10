@@ -25,11 +25,14 @@ class EvmImageChecks(unittest.TestCase):
         self.assertTrue(callable(generic_acceptance.main))
 
     def test_compiled_token_bytes_match_reviewed_solidity(self) -> None:
-        from t0_5_tokens import token_creation_bytecode
+        from t0_5_tokens import token_fixture_bytecode
 
-        fixtures = token_creation_bytecode()
+        fixtures = token_fixture_bytecode()
         self.assertEqual(set(fixtures), {"ConixToken20", "ConixToken721"})
         self.assertNotEqual(fixtures["ConixToken20"], fixtures["ConixToken721"])
+        for fixture in fixtures.values():
+            self.assertNotEqual(fixture["creation"], fixture["runtime"])
+            self.assertGreater(len(fixture["runtime"]), 1000)
 
     def test_cast_verifies_a_fixed_public_digest_signature(self) -> None:
         """Prove the actual no-hash verifier without any wallet key in argv."""
@@ -237,6 +240,36 @@ class InstalledFixtureWiring(unittest.IsolatedAsyncioTestCase):
         self.assertIn("eth_sendTransaction", str(raised.exception))
         self.assertIn("outcome unknown", str(raised.exception))
         self.assertNotIn("secret://", str(raised.exception))
+
+    async def test_token_creation_refuses_a_successful_transaction_with_wrong_runtime(self):
+        """A mined success does not prove deployed code matches the fixture."""
+        from t0_5_tokens import deploy_token_fixtures
+
+        creator = "0x" + "34" * 20
+        transaction_hash = "0x" + "ab" * 32
+        address = "0x" + "12" * 20
+
+        async def observed_rpc(_descriptor, method, _params):
+            if method == "eth_sendTransaction":
+                return transaction_hash
+            if method == "eth_getTransactionReceipt":
+                return {
+                    "transactionHash": transaction_hash,
+                    "status": "0x1",
+                    "contractAddress": address,
+                    "blockNumber": "0x2",
+                }
+            if method == "eth_getCode":
+                return "0x6000"  # Deployed, but not the reviewed Solidity code.
+            return None
+
+        with self.assertRaisesRegex(
+            t0_5_payment.ScenarioFailure, "deployed runtime differs"
+        ):
+            await deploy_token_fixtures(
+                {"publicFixtureAccounts": {"admin": {"address": creator}}},
+                observed_rpc,
+            )
 
     async def test_token_creation_submits_bytecode_without_a_destination(self):
         calls = []
