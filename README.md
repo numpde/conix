@@ -1,10 +1,10 @@
 Conix — generic EVM raw-log indexer
 ===================================
 
-Current status (2026-11-10): T0-1 ABI, T0-2 offline catalog and
-PostgreSQL journal, T0-3 blockHash-pinned scanner, and T0-4 checkpoint-bound
-reader are implemented. The obsolete PayToPlay-only runtime was deleted,
-with no production data to migrate.
+The generic ABI codec, catalog, PostgreSQL journal, blockHash-pinned scanner
+and checkpoint-bound reader are implemented. The owned dapp32 campaign passed
+T0-5. Tier 0 remains open for T0-6 release qualification. The obsolete
+PayToPlay-only runtime was deleted, with no production data to migrate.
 
 The authoritative end-state specification is
 notes/004_rpc_evidence_and_raw_log_indexer_plan.txt. The separate
@@ -125,9 +125,8 @@ Select the actual local Docker context and prepared dapp32 checkout. The
 campaign creates and retires an isolated producer fixture and a separate
 Conix SQL project; on uncertain cleanup, inspect the reported ownership IDs.
 
-The cross-repository campaign must pass before T0-5 is qualified. Ordinary
-CI Anvil tests establish generic reader/writer behavior, not this dapp32
-end-to-end workflow.
+Note 004, section 8.8, records the tested revisions and environment, the scope
+of ordinary CI, and the open Tier-0 release gates.
 
 Security and next step
 ----------------------
@@ -137,10 +136,8 @@ independently. Existing retained deployments may be inspected or removed
 using ownership-constrained deployment/status and deployment/remove; no
 new generic worker may be started until it is implemented and qualified.
 
-Next is to execute and independently review the new T0-5 owned campaign
-against dapp32, address any real interoperability defects, and qualify the
-recorded event history, filtering and repair behavior. The signer and economic
-policy remain external. A production worker CLI and private immutable ABI
-snapshot staging are separate prerequisites for deployment.
+T0-6 qualifies the generic core for independent operator use. The signer
+and economic policy remain external. Production worker activation still
+requires an operator workflow and private immutable ABI snapshot staging.
 Do not reintroduce Collection models, PayToPlay-specific decoders or
 unqualified completeness shortcuts.

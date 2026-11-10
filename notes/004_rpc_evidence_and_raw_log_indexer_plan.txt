@@ -815,7 +815,7 @@ exceptions. Preserve original error cause/phase privately; cleanup outcomes
 are reported separately and the primary failure remains LAST. A simple
 ordinary RPC failure must not be silently retried under a stronger claim.
 
-8.8. Executable acceptance and current gaps
+8.8. Tier-0 acceptance evidence and release gates
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Test data from commit C:
@@ -839,24 +839,45 @@ The opt-in gate obtains public genesis via a genuine RPC-connected Anvil
 consumer. The owner phase receives only a separately admitted public
 chain/contract-coordinate envelope and checked genesis, NOT the private
 producer descriptor or accounts. Both phases use one reviewed installed ABI
-fixture. It initializes via a separate owner-only identity and invokes named
-installed-code checks under a restricted runtime identity. Catalog,
-owner-only schema, scanner and reader now exist, but this dapp32
-acceptance remains RED pending signed collection and filtered history.
-The old PayToPlay observer was deleted without a compatibility fallback.
+fixture. A separate owner-only identity initializes the schema and restricted
+identities run the installed-code checks.
 
-Still REQUIRED beyond today's acceptance skeleton before T0-6 release:
-  - scale-oriented PostgreSQL query plans, sparse pages and concurrent repair campaigns;
-  - full compound ABI property/canonical-error matrix, seeded regressions;
-  - actual ERC-20 AND ERC-721 on-chain emissions;
-  - signed PayToPlay collection + customer/channel filtered history;
-  - restart, unknown COMMIT, real multi-contract reorg and manual repair;
-  - SQL filtered-query plans, sparse pages and bounded-work measurements;
-  - rootless Engine proof, isolated egress, cancellation and teardown.
+The owned T0-5 campaign passed on fw with rootless Docker context agentic at Conix
+2fb529f (merged as 697a83b) and dapp32 294cfe2a. The installed campaign
+deployed ERC-20 and ERC-721 and checked both against pinned runtime bytes.
+It indexed from the PayToPlay deployment and verified a mixed token/payment
+block, funding, signed partial and incremental collection, due withdrawal,
+customer/channel-filtered history and block-pinned positions. It also checked
+fresh-process restart and explicit reorganization repair. PostgreSQL and producer fixture
+teardown were confirmed. A separate networkless run of solc-js
+0.8.35+commit.47b9dedd reproduced both tokens' creation and runtime bytes.
+The borrowed fixture and public-chain behavior were outside this run.
+Consumer accounting and monetary policy remain the consumer's responsibility.
 
-Do not mark generic T0-0 or later stages qualified simply because the old
-PayToPlay tests are green. The installed-source inventory MUST include every
-tracked ABI fixture, rather than dropping JSON from the curated Docker context.
+The following matrix records existing evidence and open work against section 5.
+Ordinary CI exercises the contained PostgreSQL/Anvil suite, runner admission
+and input transport. The dapp32 campaign runs separately.
+
+  Gate                 Existing evidence / remaining proof
+  ABI                  Independent wire vectors and seeded compound cases.
+                       Audit accepted and rejected behavior against the
+                       support matrix, including canonical errors and bounds.
+  RPC and reader       Hostile responses, pinned calls, keyset pages, and
+                       stale-generation rejection have executable cases.
+                       Audit uncovered fault, sparse page and deadline cases.
+  SQL and recovery     Real PostgreSQL writer exclusion, rollback, role
+                       separation, restart and repair. The lost COMMIT unit
+                       test proves retirement with a fake connection. Verify
+                       durable outcomes, interruption and reader contention.
+  PostgreSQL baseline  Measure per-block catch-up, retained size and bounded
+                       work. Capture filtered and sparse-page query plans on
+                       representative retained histories.
+  Operator boundary    Owned rootless campaign and private TOML/DSN transport
+                       have separate evidence. Prove the operator workflow,
+                       ABI snapshot staging, egress, cancellation and cleanup.
+  Packaging and core   Curated image inputs include tracked ABI fixtures.
+                       Verify delivered artifacts and record the concrete
+                       operations and delegation witness before the freeze.
 
 
 9. Existing libraries — deliberate reuse decision (2026-11-10)
@@ -983,9 +1004,7 @@ The owner initializer remains a Python administrative API, not a Make
 action. No production worker CLI exists. The image smoke check only
 establishes imports/ABI behavior; the contained Anvil+PostgreSQL suite
 qualifies T0-3 and T0-4 against tested event/view combinations.
-The opt-in dapp32 real-chain acceptance remains RED pending the signed
-voucher collection and matching filtered history, not a green
-payment-workflow claim.
+Section 8.8 records the separate owned dapp32 campaign and open release gates.
 
 Deployment input transport still stages TOML and DSN only. Before
 activating a real worker, it must also supply the immutable ABI snapshot

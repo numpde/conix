@@ -7,10 +7,10 @@ Conix's target is one generic EVM event indexer: a single-ABI-driven scanner,
 one complete-block PostgreSQL raw-log journal, and one checkpoint-bound reader
 supporting PayToPlay, ERC-20 and ERC-721 without contract-specific source code.
 T0-1 ABI, T0-2 offline catalog/owner-only journal, T0-3 blockHash-pinned
-scanner and T0-4 checkpoint-bound reader are implemented. T0-5 acceptance
-scenarios exist on the working branch, but its opt-in dapp32 campaign has not
-been qualified by ordinary CI. The experimental PayToPlay-only runtime was
-deleted without migration or adapters.
+scanner and T0-4 checkpoint-bound reader are implemented. The owned dapp32
+campaign passed T0-5. Note 004, section 8.8, owns the evidence and open T0-6
+release gates. The experimental PayToPlay-only runtime was deleted without
+migration or adapters.
 
 notes/004_rpc_evidence_and_raw_log_indexer_plan.txt governs the new Tier-0
 implementation and qualification. notes/005_rpc_history_acquisition_and_optimization.txt
@@ -139,9 +139,9 @@ retired automatically; preserve exact recovery records on uncertain outcomes.
 The borrowed and owned generic acceptance gates are distinct qualifications.
 Borrowed mode is nondestructive baseline acceptance; the owned campaign runs
 real Solidity token transactions, signed PayToPlay collection, process restart
-and manual reorganization repair. The owned campaign remains UNQUALIFIED until
-executed against the actual dapp32 fixture. Contained PostgreSQL/Anvil tests
-qualify generic scanner/reader behavior, not financial reconciliation.
+and manual reorganization repair. Contained PostgreSQL/Anvil tests qualify
+generic scanner/reader behavior. Financial reconciliation belongs to the
+consumer.
 
 Shared wheelhouse
 -----------------

@@ -12,8 +12,8 @@ worker deployment/apply command is not yet available. The old PayToPlay-specific
 scanner and test targets remain retired; a contained image smoke test does not
 prove that a production worker has been deployed.
 
-T0-5 real-contract acceptance is an opt-in owned dapp32 campaign. Its test
-program exists, but ordinary CI does not run or qualify that external scenario.
+T0-5 real-contract acceptance is an opt-in owned dapp32 campaign outside
+ordinary CI. Note 004, section 8.8, records its qualification evidence.
 
 Available operations
 --------------------
@@ -49,7 +49,8 @@ test/indexer/acceptance/run        Borrow an externally prepared dapp32
                                    PayToPlay fixture under strict source and
                                    network verification; own only Conix SQL.
 campaign/indexer/acceptance/run    Own a freshly created dapp32 producer,
-                                   run the same generic RED acceptance,
+                                   run full generic acceptance including
+                                   restart and reorganization repair, and
                                    retire consumer before producer.
 
 Selectors
