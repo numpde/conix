@@ -21,7 +21,9 @@ from conix.journal import Block
 from conix.reader import Checkpoint, CursorInvalid, open_reader
 from abi_contract_vectors import VOUCHER_SIGNATURE as VOUCHER
 from fixture_protocol import ScenarioFailure
-from t0_5_chain import assert_event_matches_receipt, calldata, receipt as waited_receipt, require, send
+from t0_5_chain import (
+    assert_event_matches_receipt, calldata, require, send, wait_for_receipt,
+)
 from t0_5_tokens import (
     emit_initial_transfers, only_transfer, submit_pending_token_transfers,
     verify_after_restart, verify_token_history,
@@ -186,7 +188,7 @@ def saved_checkpoint(record):
         revision=record["revision"],
     )
 
-async def position(reader, checkpoint, customer, channel):
+async def read_position(reader, checkpoint, customer, channel):
     (fields,) = await reader.call(
         checkpoint=checkpoint,
         contract="payment",
@@ -196,7 +198,7 @@ async def position(reader, checkpoint, customer, channel):
     return fields
 
 
-async def collect(rpc, descriptor, *, signer, customer, collector, channel, total, cap, invoice, wait=True):
+async def collect_voucher(rpc, descriptor, *, signer, customer, collector, channel, total, cap, invoice, wait=True):
     signature = await sign_voucher(
         rpc, descriptor, signer=signer, customer=customer, channel=channel, total=total, invoice=invoice,
     )
@@ -249,7 +251,7 @@ async def mine_mixed_block(rpc, descriptor, tokens, *, signer, customer, collect
     mining_error = None
 
     try:
-        payment_tx = await collect(
+        payment_tx = await collect_voucher(
             rpc, descriptor, signer=signer, customer=customer, collector=collector,
             channel=1, total=70, cap=30, invoice=invoice, wait=False,
         )
@@ -270,9 +272,9 @@ async def mine_mixed_block(rpc, descriptor, tokens, *, signer, customer, collect
             )
 
     return {
-        "payment": await waited_receipt(rpc, descriptor, payment_tx),
-        "token20": await waited_receipt(rpc, descriptor, token20_tx),
-        "token721": await waited_receipt(rpc, descriptor, token721_tx),
+        "payment": await wait_for_receipt(rpc, descriptor, payment_tx),
+        "token20": await wait_for_receipt(rpc, descriptor, token20_tx),
+        "token721": await wait_for_receipt(rpc, descriptor, token721_tx),
     }
 
 
@@ -377,7 +379,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
         ) as reader:
             funded = await reader.checkpoint()
-            require((await position(reader, funded, customer, 1))[7:9] == (100, 0),
+            require((await read_position(reader, funded, customer, 1))[7:9] == (100, 0),
                     "Funding checkpoint has the wrong position state.")
 
         mixed_tokens = await mine_mixed_block(
@@ -390,14 +392,14 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
         ) as reader:
             after_first = await reader.checkpoint()
-            require((await position(reader, after_first, customer, 1))[7:9] == (70, 30),
+            require((await read_position(reader, after_first, customer, 1))[7:9] == (70, 30),
                     "First collection checkpoint has the wrong position state.")
             await verify_token_history(
                 reader, after_first, descriptor, tokens,
                 {"initial": initial_tokens, "mixed": mixed_tokens}, rpc,
             )
 
-        second = await collect(
+        second = await collect_voucher(
             rpc, descriptor, signer=voucher_signer, customer=customer, collector=collector,
             channel=1, total=70, cap=70, invoice=invoice_a,
         )
@@ -406,10 +408,10 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
         ) as reader:
             after_second = await reader.checkpoint()
-            require((await position(reader, after_second, customer, 1))[7:9] == (30, 70),
+            require((await read_position(reader, after_second, customer, 1))[7:9] == (30, 70),
                     "Second collection checkpoint has the wrong position state.")
 
-        zero = await collect(
+        zero = await collect_voucher(
             rpc, descriptor, signer=voucher_signer, customer=customer, collector=collector,
             channel=1, total=70, cap=70, invoice=invoice_a,
         )
@@ -419,11 +421,11 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             for log in zero["logs"]
         ), "Exhausted voucher unexpectedly emitted a collection event.")
 
-        other_channel = await collect(
+        other_channel = await collect_voucher(
             rpc, descriptor, signer=voucher_signer, customer=customer, collector=collector,
             channel=2, total=15, cap=15, invoice=invoice_b,
         )
-        other_actor = await collect(
+        other_actor = await collect_voucher(
             rpc, descriptor, signer=voucher_signer, customer=second_customer, collector=collector,
             channel=1, total=20, cap=20, invoice=invoice_c,
         )
@@ -452,13 +454,13 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
         ) as reader:
             current = await reader.checkpoint()
-            require((await position(reader, current, customer, 1))[7:9] == (0, 70),
+            require((await read_position(reader, current, customer, 1))[7:9] == (0, 70),
                     "Withdrawal checkpoint has the wrong position state.")
-            require((await position(reader, funded, customer, 1))[7:9] == (100, 0),
+            require((await read_position(reader, funded, customer, 1))[7:9] == (100, 0),
                     "Later appends changed the funding historical view.")
-            require((await position(reader, after_first, customer, 1))[7:9] == (70, 30),
+            require((await read_position(reader, after_first, customer, 1))[7:9] == (70, 30),
                     "Later appends changed the first historical view.")
-            require((await position(reader, after_second, customer, 1))[7:9] == (30, 70),
+            require((await read_position(reader, after_second, customer, 1))[7:9] == (30, 70),
                     "Later appends changed the second historical view.")
 
             expected = [
@@ -548,7 +550,7 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
         require(ancestor is not None and ancestor.number > previous.block.number,
                 "Reorganization was not started from the restarted durable prefix.")
         snapshot = await rpc(descriptor, "evm_snapshot", [])
-        branch_a = await collect(
+        branch_a = await collect_voucher(
             rpc, descriptor, signer=voucher_signer, customer=account, collector=collector,
             channel=2, total=20, cap=5, invoice=invoice,
         )
