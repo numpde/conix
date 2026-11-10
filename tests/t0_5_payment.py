@@ -46,7 +46,7 @@ async def read_contract(rpc, descriptor, signature, types, values, outputs):
     return decode(outputs, bytes.fromhex(result[2:]))
 
 
-async def send(rpc, descriptor, sender, signature, types, values, *, value=0):
+async def send(rpc, descriptor, sender, signature, types, values, *, value=0, contract=None, wait=True):
     """Anvil impersonation avoids transmitting an account key to the RPC.
 
     This is deliberately confined to the campaign-owned chain; it cannot be
@@ -57,7 +57,7 @@ async def send(rpc, descriptor, sender, signature, types, values, *, value=0):
     try:
         tx_hash = await rpc(descriptor, "eth_sendTransaction", [{
             "from": sender,
-            "to": descriptor["contracts"]["PayToPlay"]["address"],
+            "to": contract or descriptor["contracts"]["PayToPlay"]["address"],
             "data": calldata(signature, types, values),
             "value": hex(value),
             "gas": hex(500000),
@@ -67,6 +67,12 @@ async def send(rpc, descriptor, sender, signature, types, values, *, value=0):
 
     require(type(tx_hash) is str and TRANSFER_BYTES.fullmatch(tx_hash) is not None,
             "Anvil did not return a transaction hash.")
+    if not wait:
+        return tx_hash
+    return await waited_receipt(rpc, descriptor, tx_hash)
+
+
+async def waited_receipt(rpc, descriptor, tx_hash):
     for _ in range(40):
         receipt = await rpc(descriptor, "eth_getTransactionReceipt", [tx_hash])
         if receipt is not None:
@@ -235,19 +241,21 @@ async def position(reader, checkpoint, customer, channel):
     return fields
 
 
-async def collect(rpc, descriptor, *, signer, customer, collector, channel, total, cap, invoice):
+async def collect(rpc, descriptor, *, signer, customer, collector, channel, total, cap, invoice, wait=True):
     signature = await sign_voucher(
         rpc, descriptor, signer=signer, customer=customer, channel=channel, total=total, invoice=invoice,
     )
     return await send(
         rpc, descriptor, collector, COLLECT,
         ("address", "uint256", "uint256", "bytes32", "uint256", "bytes"),
-        (customer, channel, total, invoice, cap, signature),
+        (customer, channel, total, invoice, cap, signature), wait=wait,
     )
 
 
-async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn):
+async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tokens):
     """Prove signed settlement, actual indexed history and historical state."""
+    from t0_5_tokens import initial_transfers, mixed_transfers, verify
+
     catalog = prepare_catalog(catalog_file)
     accounts = descriptor["publicFixtureAccounts"]
     admin = accounts["admin"]["address"]
@@ -283,6 +291,10 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn):
             ("uint256", "uint256"), (channel, amount), value=amount,
         )
 
+    # Token constructor Transfer events already exist from preparation.
+    # These transactions add distinct real emitted values before the mixed block.
+    initial_tokens = await initial_transfers(rpc, descriptor, tokens, send)
+
     async with open_writer(
         catalog=catalog, database_dsn=writer_dsn, rpc_url=descriptor["rpcUrl"],
     ) as writer:
@@ -294,10 +306,27 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn):
             require((await position(reader, funded, customer, 1))[7:9] == (100, 0),
                     "Funding checkpoint has the wrong position state.")
 
-        first = await collect(
-            rpc, descriptor, signer=key, customer=customer, collector=collector,
-            channel=1, total=70, cap=30, invoice=invoice_a,
-        )
+        # Three genuine transactions from distinct senders in one Anvil
+        # block: the first signed collection, ERC-20, and ERC-721 Transfer.
+        await rpc(descriptor, "anvil_setAutomine", [False])
+        try:
+            payment_tx = await collect(
+                rpc, descriptor, signer=key, customer=customer, collector=collector,
+                channel=1, total=70, cap=30, invoice=invoice_a, wait=False,
+            )
+            token20_tx, token721_tx = await mixed_transfers(
+                rpc, descriptor, tokens, send,
+            )
+            await rpc(descriptor, "evm_mine", [])
+        finally:
+            await rpc(descriptor, "anvil_setAutomine", [True])
+
+        first = await waited_receipt(rpc, descriptor, payment_tx)
+        mixed_tokens = {
+            "payment": first,
+            "token20": await waited_receipt(rpc, descriptor, token20_tx),
+            "token721": await waited_receipt(rpc, descriptor, token721_tx),
+        }
         await scan(writer)
         async with open_reader(
             catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
@@ -305,6 +334,10 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn):
             after_first = await reader.checkpoint()
             require((await position(reader, after_first, customer, 1))[7:9] == (70, 30),
                     "First collection checkpoint has the wrong position state.")
+            await verify(
+                reader, after_first, descriptor, tokens,
+                {"initial": initial_tokens, "mixed": mixed_tokens}, rpc,
+            )
 
         second = await collect(
             rpc, descriptor, signer=key, customer=customer, collector=collector,
@@ -461,8 +494,10 @@ def admit_exercise(state):
     return saved_checkpoint(state["checkpoint"])
 
 
-async def resume(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, state):
+async def resume(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, state, tokens):
     """Run in a NEW container/process after the producing phase has exited."""
+    from t0_5_tokens import verify_after_restart
+
     before = admit_exercise(state)
     catalog = prepare_catalog(catalog_file)
     require(before.source_id == catalog.source_id,
@@ -499,9 +534,11 @@ async def resume(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, state
                 and {e.transaction_hash.hex() for e in all_events.events}
                 == {tx[2:].lower() for tx in state["transactions"]},
                 "Restarted reader lost, duplicated or added mined positive collections.")
+        await verify_after_restart(reader, before, tokens)
+        await verify_after_restart(reader, newest, tokens)
 
 
-async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, state):
+async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, state, tokens):
     """Replace actual Anvil branch A with B; only the owned campaign may call."""
     previous = admit_exercise(state)
     catalog = prepare_catalog(catalog_file)
@@ -521,6 +558,11 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
             rpc, descriptor, signer=key, customer=account, collector=collector,
             channel=2, total=20, cap=5, invoice=invoice,
         )
+        token_a = await send(
+            rpc, descriptor, descriptor["publicFixtureAccounts"]["admin"]["address"],
+            "transfer(address,uint256)", ("address", "uint256"), (account, 5),
+            contract=tokens["token20"]["address"],
+        )
         await scan(writer)
 
         async with open_reader(
@@ -537,10 +579,14 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
 
         require(await rpc(descriptor, "evm_revert", [snapshot]) is True,
                 "Owned Anvil fixture did not revert to the shared ancestor.")
-        await send(
-            rpc, descriptor, account, "fund(uint256,uint256)",
-            ("uint256", "uint256"), (2, 2), value=2,
+        # Canonical branch B changes a different selected contract.
+        token_b = await send(
+            rpc, descriptor, collector, "transferFrom(address,address,uint256)",
+            ("address", "address", "uint256"),
+            (collector, descriptor["publicFixtureAccounts"]["payee"]["address"], 7),
+            contract=tokens["token721"]["address"],
         )
+        await rpc(descriptor, "evm_mine", [])
         replacement = await rpc(descriptor, "eth_getBlockByNumber", [hex(old.block.number), False])
         require(replacement is not None
                 and replacement["hash"].lower() != ("0x" + old.block.hash.hex()),
@@ -587,3 +633,19 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
             require(all(event.transaction_hash.hex() != branch_a["transactionHash"][2:].lower()
                         for event in page.events),
                     "Reorganized-out transaction survived Conix suffix repair.")
+            for alias, expected_count in (("token20", 3), ("token721", 4)):
+                events = await reader.events(
+                    checkpoint=current, contract=alias,
+                    event="Transfer(address,address,uint256)", where={}, limit=10,
+                )
+                require(events.complete and len(events.events) == expected_count,
+                        "Multi-contract recovery retained the wrong token event history.")
+                require(all(event.transaction_hash.hex()
+                            != token_a["transactionHash"][2:].lower()
+                            for event in events.events),
+                        "A branch-A token transfer survived checked suffix repair.")
+                if alias == "token721":
+                    require(any(event.transaction_hash.hex()
+                                == token_b["transactionHash"][2:].lower()
+                                for event in events.events),
+                            "Canonical branch-B token event was not reindexed.")
