@@ -23,9 +23,9 @@ class EvmImageChecks(unittest.TestCase):
         self.assertTrue(callable(generic_acceptance.main))
 
     def test_compiled_token_bytes_match_reviewed_solidity(self) -> None:
-        from t0_5_tokens import code_artifacts
+        from t0_5_tokens import token_creation_bytecode
 
-        fixtures = code_artifacts()
+        fixtures = token_creation_bytecode()
         self.assertEqual(set(fixtures), {"ConixToken20", "ConixToken721"})
         self.assertNotEqual(fixtures["ConixToken20"], fixtures["ConixToken721"])
 
