@@ -14,7 +14,7 @@ from psycopg import AsyncConnection
 
 from abi_golden_vectors import ERC20, FROM, TO, TRANSFER_SIGNATURE, word
 from anvil_catalog import catalog_for_anvil
-from conix.core import open_writer
+from conix.core import BranchConflict, open_writer
 from conix.reader import CursorInvalid, HistoricalCallUnavailable, HistoryUnavailable, open_reader
 from conix.rpc import RpcUnavailable
 
@@ -320,6 +320,29 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                         [block.number for block in ancestry.blocks],
                         list(range(mined_number, mined_number + 3)),
                     )
+
+                    # A provider can reorg immediately after a successful
+                    # pinned eth_call. The reader must not return the result
+                    # after observing a different canonical block header.
+                    ordinary_rpc = reader.rpc.call
+
+                    async def replaced_tip(method, params, *, deadline):
+                        observed = await ordinary_rpc(method, params, deadline=deadline)
+                        if (
+                            method == "eth_getBlockByNumber"
+                            and params[0] == hex(newest.block.number)
+                        ):
+                            return {**observed, "hash": "0x" + "ee" * 32}
+                        return observed
+
+                    with patch.object(reader.rpc, "call", side_effect=replaced_tip):
+                        with self.assertRaises(BranchConflict):
+                            await reader.call(
+                                checkpoint=newest,
+                                contract="token",
+                                function="balanceOf(address)",
+                                arguments=(FROM,),
+                            )
 
                     # Finality means a PROVIDER report, not an independent
                     # proof. A missing finalized tag has explicit UNKNOWN

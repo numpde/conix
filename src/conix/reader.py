@@ -43,7 +43,7 @@ from conix.abi import (
 from conix.catalog import Catalog, Contract, _rpc_url
 from conix.core import BranchConflict, _block, _bytes, _quantity, verify_source
 from conix.journal import Block, StorageUnavailable
-from conix.rpc import RPC, RpcUnavailable
+from conix.rpc import RPC, RpcProtocolError, RpcUnavailable
 
 
 class HistoryUnavailable(RuntimeError):
@@ -496,9 +496,15 @@ class Reader:
                 _bytes(result, None),
                 limits=self.catalog.limits.abi,
             )
-        except (RpcUnavailable, MalformedABIData) as error:
-            raise HistoricalCallUnavailable("Pinned historical call is unavailable or reverted.") from error
+        except (RpcUnavailable, RpcProtocolError, MalformedABIData) as error:
+            raise HistoricalCallUnavailable(
+                "Pinned historical call is unavailable, reverted or noncanonical."
+            ) from error
 
+        # requireCanonical applies when the RPC is executed. A reorg may
+        # happen immediately afterward without changing the SQL journal.
+        if await self._observed(checkpoint.block.number, deadline) != checkpoint.block:
+            raise BranchConflict("Historical call checkpoint became noncanonical.")
         await self._check_live(checkpoint)
         return decoded
 
