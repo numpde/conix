@@ -866,9 +866,10 @@ and input transport. The dapp32 campaign runs separately.
                        stale-generation rejection have executable cases.
                        Audit uncovered fault, sparse page and deadline cases.
   SQL and recovery     Real PostgreSQL writer exclusion, rollback, role
-                       separation, restart and repair. The lost COMMIT unit
-                       test proves retirement with a fake connection. Verify
-                       durable outcomes, interruption and reader contention.
+                       separation, restart and repair. Injected confirmation
+                       loss before and after COMMIT exercises both durable
+                       outcomes. Wire interruption, process termination,
+                       cancellation and reader contention still need proof.
   PostgreSQL baseline  Measure per-block catch-up, retained size and bounded
                        work. Capture filtered and sparse-page query plans on
                        representative retained histories.

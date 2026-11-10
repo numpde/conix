@@ -1,8 +1,10 @@
 """Exercise the installed one-block PostgreSQL publisher and checked repair."""
 
+from dataclasses import replace
 import os
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 from uuid import UUID
 
 import psycopg
@@ -220,6 +222,60 @@ class JournalContracts(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(recovered.last_block, block1)
             self.assertIsNone(recovered.blocked_reason)
             self.assertNotEqual(recovered.generation, finished.generation)
+
+        await self.check_unconfirmed_publication(
+            recovered, alternate, replace(event, transaction_hash=b"\xee" * 32),
+        )
+
+    async def check_unconfirmed_publication(self, before, block, event):
+        """Lose confirmation on either side of a real PostgreSQL COMMIT."""
+        runtime_dsn = os.environ["CONIX_TEST_DSN"]
+        for committed in (False, True):
+            with self.subTest(committed=committed):
+                async with open_journal(catalog=self.catalog, database_dsn=runtime_dsn) as writer:
+                    execute = writer.connection.execute
+
+                    async def lose_confirmation(statement, *args):
+                        if statement != "COMMIT":
+                            return await execute(statement, *args)
+                        if committed:
+                            await execute(statement, *args)
+                        raise psycopg.OperationalError("injected loss of COMMIT confirmation")
+
+                    with patch.object(writer.connection, "execute", lose_confirmation):
+                        with self.assertRaises(CommitOutcomeUnknown) as failure:
+                            await writer.publish_block(block=block, events=(event,))
+                    self.assertIsInstance(failure.exception.__cause__, psycopg.OperationalError)
+                    self.assertTrue(writer.retired)
+                    self.assertTrue(writer.connection.closed)
+
+                async with open_journal(catalog=self.catalog, database_dsn=runtime_dsn) as reopened:
+                    expected_progress = before
+                    if committed:
+                        expected_progress = replace(before, last_block=block, revision=before.revision + 1)
+                    self.assertEqual(await reopened.inspect(), expected_progress)
+                    if committed:
+                        with self.assertRaises(HistoryConflict):
+                            await reopened.publish_block(block=block, events=(event,))
+                        self.assertEqual(await reopened.inspect(), expected_progress)
+
+                async with await AsyncConnection.connect(
+                    os.environ["CONIX_TEST_READ_DSN"], connect_timeout=5,
+                ) as reader:
+                    rows = await (
+                        await reader.execute(
+                            "SELECT b.hash, e.transaction_hash, e.transaction_index, "
+                            "e.log_index, e.address, e.topic0, e.topic1, e.topic2, e.topic3, e.data "
+                            "FROM conix.blocks b LEFT JOIN conix.events e ON e.block_number = b.number "
+                            "WHERE b.number = %s",
+                            (block.number,),
+                        )
+                    ).fetchall()
+                    expected = [(
+                        block.hash, event.transaction_hash, event.transaction_index,
+                        event.log_index, event.address, *event.topics, None, event.data,
+                    )] if committed else []
+                    self.assertEqual(rows, expected)
 
 
 if __name__ == "__main__":
