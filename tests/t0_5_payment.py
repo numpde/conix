@@ -30,7 +30,6 @@ from t0_5_tokens import (
 )
 
 COLLECT = "collect(address,uint256,uint256,bytes32,uint256,bytes)"
-TRANSFER_BYTES = re.compile(r"0x[0-9a-fA-F]{64}\Z")
 SIGNATURE_BYTES = re.compile(r"0x[0-9a-fA-F]{130}\Z")
 
 
