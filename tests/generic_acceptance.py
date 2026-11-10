@@ -39,16 +39,45 @@ def request():
 
 
 async def rpc(descriptor, method, params):
-    async with httpx.AsyncClient(trust_env=False, timeout=8) as client:
-        response = await client.post(descriptor["rpcUrl"], json={
-            "jsonrpc": "2.0", "id": 1, "method": method, "params": params,
-        })
-        response.raise_for_status()
-        result = response.json()
-    if type(result) is not dict or result.get("id") != 1 or "error" in result or "result" not in result:
-        raise ScenarioFailure("Real Anvil returned an invalid RPC observation.")
-    return result["result"]
+    """Observe the selected Anvil without disclosing requests or upstream prose.
 
+    A lost response to a mutating method does not prove that its transaction
+    or chain change was rejected. The owned campaign must reconcile the chain,
+    not automatically repeat the request.
+    """
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=8) as client:
+            response = await client.post(
+                descriptor["rpcUrl"],
+                json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+            )
+            response.raise_for_status()
+            document = response.json()
+    except httpx.TimeoutException as error:
+        raise ScenarioFailure(f"Anvil RPC {method} timed out; operation outcome unknown.") from error
+    except httpx.HTTPStatusError as error:
+        status = error.response.status_code
+        raise ScenarioFailure(f"Anvil RPC {method} returned HTTP {status}; operation outcome unknown.") from error
+    except httpx.RequestError as error:
+        category = type(error).__name__
+        raise ScenarioFailure(f"Anvil RPC {method} transport failed ({category}); outcome unknown.") from error
+    except ValueError as error:
+        raise ScenarioFailure(f"Anvil RPC {method} returned malformed JSON.") from error
+
+    if type(document) is not dict or document.get("jsonrpc") != "2.0" or document.get("id") != 1:
+        raise ScenarioFailure(f"Anvil RPC {method} returned a mismatched response.")
+
+    if "error" in document:
+        failure = document["error"]
+        code = failure.get("code") if type(failure) is dict else None
+        if type(code) is int and -2**31 <= code < 2**31:
+            raise ScenarioFailure(f"Anvil RPC {method} rejected the request with code {code}.")
+        raise ScenarioFailure(f"Anvil RPC {method} rejected the request without a valid code.")
+
+    if "result" not in document:
+        raise ScenarioFailure(f"Anvil RPC {method} omitted its result.")
+
+    return document["result"]
 
 def is_hash(value):
     return (
