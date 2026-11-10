@@ -15,7 +15,7 @@ from psycopg import AsyncConnection
 from abi_golden_vectors import ERC20, FROM, TO, TRANSFER_SIGNATURE, word
 from anvil_catalog import catalog_for_anvil
 from conix.core import open_writer
-from conix.reader import CursorInvalid, HistoricalCallUnavailable, open_reader
+from conix.reader import CursorInvalid, HistoricalCallUnavailable, HistoryUnavailable, open_reader
 from conix.rpc import RpcUnavailable
 
 
@@ -204,6 +204,16 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                         list(range(source.chain.start_block, mined_number + 2)),
                     )
 
+                # A runtime DML credential cannot impersonate the dedicated
+                # SELECT-only read API, despite having SELECT permissions.
+                with self.assertRaises(HistoryUnavailable):
+                    async with open_reader(
+                        catalog=source,
+                        database_dsn=os.environ["CONIX_TEST_ANVIL_DSN"],
+                        rpc_url=url,
+                    ):
+                        self.fail("Runtime credentials were admitted as reader.")
+
                 # Another real Transfer is mined after the empty block.
                 # Paginating the new prefix must not change the old page.
                 second_hash = await call("eth_sendTransaction", [{
@@ -285,6 +295,43 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                         [block.number for block in ancestry.blocks],
                         list(range(mined_number, mined_number + 3)),
                     )
+
+                    # Finality means a PROVIDER report, not an independent
+                    # proof. A missing finalized tag has explicit UNKNOWN
+                    # status; a reported canonical header is KNOWN as reported.
+                    rpc_call = reader.rpc.call
+
+                    async def known_finality(method, params, *, deadline):
+                        if method == "eth_getBlockByNumber" and params[0] == "finalized":
+                            return await rpc_call(
+                                method,
+                                [hex(newest.block.number), False],
+                                deadline=deadline,
+                            )
+                        return await rpc_call(method, params, deadline=deadline)
+
+                    with patch.object(reader.rpc, "call", side_effect=known_finality):
+                        reported = await reader.evidence(
+                            checkpoint=newest,
+                            block_numbers=(),
+                            include_finalized=True,
+                        )
+                    self.assertEqual(reported.finalized_status, "known")
+                    self.assertEqual(reported.finalized, newest.block)
+
+                    async def missing_finality(method, params, *, deadline):
+                        if method == "eth_getBlockByNumber" and params[0] == "finalized":
+                            return None
+                        return await rpc_call(method, params, deadline=deadline)
+
+                    with patch.object(reader.rpc, "call", side_effect=missing_finality):
+                        unavailable = await reader.evidence(
+                            checkpoint=newest,
+                            block_numbers=(),
+                            include_finalized=True,
+                        )
+                    self.assertEqual(unavailable.finalized_status, "unknown")
+                    self.assertIsNone(unavailable.finalized)
 
                     # Simulate an unsupported pinned eth_call. The reader
                     # must not retry against a number or latest block.
