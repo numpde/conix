@@ -11,7 +11,7 @@ import asyncio
 import re
 from uuid import UUID
 
-from eth_abi import decode, encode
+from eth_abi import decode
 from eth_utils import keccak, to_checksum_address
 
 from conix.catalog import prepare_catalog
@@ -19,73 +19,13 @@ from conix.core import BranchConflict, open_writer
 from conix.journal import Block
 from conix.reader import Checkpoint, CursorInvalid, open_reader
 from fixture_protocol import ScenarioFailure
+from t0_5_chain import assert_event_matches_receipt, calldata, receipt as waited_receipt, require, send
+from t0_5_tokens import initial_transfers, mixed_transfers, only_transfer, verify, verify_after_restart
 
 VOUCHER = "VoucherCollected(address,uint256,address,uint256,uint256,bytes32)"
 COLLECT = "collect(address,uint256,uint256,bytes32,uint256,bytes)"
 TRANSFER_BYTES = re.compile(r"0x[0-9a-fA-F]{64}\Z")
 SIGNATURE_BYTES = re.compile(r"0x[0-9a-fA-F]{130}\Z")
-
-
-def require(condition: bool, message: str) -> None:
-    if not condition:
-        raise ScenarioFailure(message)
-
-
-def calldata(signature: str, types: tuple[str, ...], values: tuple) -> str:
-    """Encode test transactions independently from Conix's ABI compiler."""
-    return "0x" + (keccak(text=signature)[:4] + encode(types, values)).hex()
-
-
-async def read_contract(rpc, descriptor, signature, types, values, outputs):
-    data = calldata(signature, types, values)
-    result = await rpc(descriptor, "eth_call", [
-        {"to": descriptor["contracts"]["PayToPlay"]["address"], "data": data},
-        "latest",
-    ])
-    require(type(result) is str and result.startswith("0x"), "Real contract call has no hex result.")
-    return decode(outputs, bytes.fromhex(result[2:]))
-
-
-async def send(rpc, descriptor, sender, signature, types, values, *, value=0, contract=None, wait=True):
-    """Anvil impersonation avoids transmitting an account key to the RPC.
-
-    This is deliberately confined to the campaign-owned chain; it cannot be
-    used as evidence of signature authorization. Voucher signatures are
-    separately verified by the actual deployed PayToPlay contract.
-    """
-    await rpc(descriptor, "anvil_impersonateAccount", [sender])
-    try:
-        tx_hash = await rpc(descriptor, "eth_sendTransaction", [{
-            "from": sender,
-            "to": contract or descriptor["contracts"]["PayToPlay"]["address"],
-            "data": calldata(signature, types, values),
-            "value": hex(value),
-            "gas": hex(500000),
-        }])
-    finally:
-        await rpc(descriptor, "anvil_stopImpersonatingAccount", [sender])
-
-    require(type(tx_hash) is str and TRANSFER_BYTES.fullmatch(tx_hash) is not None,
-            "Anvil did not return a transaction hash.")
-    if not wait:
-        return tx_hash
-    return await waited_receipt(rpc, descriptor, tx_hash)
-
-
-async def waited_receipt(rpc, descriptor, tx_hash):
-    for _ in range(40):
-        receipt = await rpc(descriptor, "eth_getTransactionReceipt", [tx_hash])
-        if receipt is not None:
-            break
-        await asyncio.sleep(0.1)
-    else:
-        raise ScenarioFailure("Anvil did not mine the submitted contract transaction.")
-    require(
-        type(receipt) is dict and receipt.get("status") == "0x1"
-        and receipt.get("transactionHash", "").lower() == tx_hash.lower(),
-        "The actual contract transaction failed or has a contradictory receipt.",
-    )
-    return receipt
 
 
 async def fixture_voucher_key(rpc, descriptor):
@@ -227,8 +167,6 @@ async def collect(rpc, descriptor, *, signer, customer, collector, channel, tota
 
 async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tokens):
     """Prove signed settlement, actual indexed history and historical state."""
-    from t0_5_tokens import assert_event_matches_receipt, initial_transfers, mixed_transfers, verify
-
     catalog = prepare_catalog(catalog_file)
     accounts = descriptor["publicFixtureAccounts"]
     admin = accounts["admin"]["address"]
@@ -266,7 +204,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
 
     # Token constructor Transfer events already exist from preparation.
     # These transactions add distinct real emitted values before the mixed block.
-    initial_tokens = await initial_transfers(rpc, descriptor, tokens, send)
+    initial_tokens = await initial_transfers(rpc, descriptor, tokens)
 
     async with open_writer(
         catalog=catalog, database_dsn=writer_dsn, rpc_url=descriptor["rpcUrl"],
@@ -287,9 +225,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
                 rpc, descriptor, signer=key, customer=customer, collector=collector,
                 channel=1, total=70, cap=30, invoice=invoice_a, wait=False,
             )
-            token20_tx, token721_tx = await mixed_transfers(
-                rpc, descriptor, tokens, send,
-            )
+            (token20_tx, token721_tx) = await mixed_transfers(rpc, descriptor, tokens)
             await rpc(descriptor, "evm_mine", [])
         finally:
             await rpc(descriptor, "anvil_setAutomine", [True])
@@ -459,8 +395,6 @@ def admit_exercise(state):
 
 async def resume(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, state, tokens):
     """Run in a NEW container/process after the producing phase has exited."""
-    from t0_5_tokens import verify_after_restart
-
     before = admit_exercise(state)
     catalog = prepare_catalog(catalog_file)
     require(before.source_id == catalog.source_id,
@@ -509,8 +443,6 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
     collector = descriptor["publicFixtureAccounts"]["relayer"]["address"]
     key = await fixture_voucher_key(rpc, descriptor)
     invoice = bytes.fromhex("44" * 32)
-
-    from t0_5_tokens import assert_event_matches_receipt, only_transfer
 
     async with open_writer(
         catalog=catalog, database_dsn=writer_dsn, rpc_url=descriptor["rpcUrl"],
