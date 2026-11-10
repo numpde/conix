@@ -68,9 +68,10 @@ DATABASE_NETWORK, RPC_NETWORK  Explicit separate pre-existing networks.
 
 The dapp32 descriptor establishes test deployment facts, not cleanup rights.
 Only the producer's verified up/info/down contract grants owned-fixture cleanup.
-Test keys cross private stdin to the consumer only; the owner sees a bounded,
-public source record. The test-specific Foundry Cast binary is confined to
-the evm-test-runner image, not installed with the ordinary package.
+The host admits the private producer descriptor; test consumers receive only
+the public PayToPlay ABI and role addresses, while the owner receives a
+narrower source record. No child receives producer wallet keys. The test-only
+Foundry Cast binary stays in the EVM runner image, not the product wheel.
 
 Catalog admission is offline and immutable. Deployment transport still
 stages TOML/DSN only: add the prepared ABI bytes before enabling a worker.
