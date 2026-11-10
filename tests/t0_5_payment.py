@@ -191,6 +191,63 @@ async def collect(rpc, descriptor, *, signer, customer, collector, channel, tota
     )
 
 
+async def assert_collection_history(reader, checkpoint, *, expected, customer, payment_address, payee):
+    """A SQL-filtered customer/channel view must match independent mined logs."""
+    for (account, channel, receipt, outcome) in expected:
+        log = selected_receipt_log(receipt, payment_address)
+        page = await reader.events(
+            checkpoint=checkpoint, contract="payment", event=VOUCHER,
+            where={"customer": account, "channelId": channel},
+            limit=100,
+        )
+        matching = [
+            event for event in page.events
+            if event.transaction_hash.hex() == receipt["transactionHash"][2:].lower()
+        ]
+        require(len(matching) == 1, "A mined positive collection is missing from history.")
+        assert_event_matches_receipt(matching[0], log)
+        require(
+            matching[0].values ==
+            (to_checksum_address(account), channel, to_checksum_address(payee), *outcome),
+            "The indexed event has incorrect typed payment values.",
+        )
+
+    first_page = await reader.events(
+        checkpoint=checkpoint, contract="payment", event=VOUCHER,
+        where={"customer": customer, "channelId": 1}, limit=1,
+    )
+    require(len(first_page.events) == 1 and not first_page.complete
+            and first_page.next_cursor is not None,
+            "First filtered page is not a proper continuation.")
+    last_page = await reader.events(
+        checkpoint=checkpoint, contract="payment", event=VOUCHER,
+        where={"channelId": 1, "customer": customer},
+        cursor=first_page.next_cursor, limit=1,
+    )
+    require(len(last_page.events) == 1 and last_page.complete
+            and last_page.next_cursor is None,
+            "Final filtered page does not close the exact checkpoint.")
+    require([e.values[3] for e in (*first_page.events, *last_page.events)] == [30, 40],
+            "Customer/channel filtered pagination omitted or duplicated a collection.")
+
+    empty = await reader.events(
+        checkpoint=checkpoint, contract="payment", event=VOUCHER,
+        where={"customer": customer, "channelId": 999}, limit=1,
+    )
+    require(empty.complete and empty.events == () and empty.next_cursor is None,
+            "Unmatched selected history is not an empty complete page.")
+    try:
+        await reader.events(
+            checkpoint=checkpoint, contract="payment", event=VOUCHER,
+            where={"customer": customer, "channelId": 2},
+            cursor=first_page.next_cursor, limit=1,
+        )
+    except CursorInvalid:
+        pass
+    else:
+        raise ScenarioFailure("Cursor was accepted with a different indexed filter.")
+
+
 async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tokens):
     """Prove signed settlement, actual indexed history and historical state."""
     catalog = prepare_catalog(catalog_file)
@@ -342,60 +399,10 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
                 (customer, 2, other_channel, (15, 15, invoice_b)),
                 (other_customer, 1, other_actor, (20, 20, invoice_c)),
             ]
-            for account, channel, receipt, outcome in expected:
-                log = selected_receipt_log(receipt, payment)
-                page = await reader.events(
-                    checkpoint=current, contract="payment", event=VOUCHER,
-                    where={"customer": account, "channelId": channel},
-                    limit=100,
-                )
-                matching = [
-                    event for event in page.events
-                    if event.transaction_hash.hex() == receipt["transactionHash"][2:].lower()
-                ]
-                require(len(matching) == 1, "A mined positive collection is missing from history.")
-                assert_event_matches_receipt(matching[0], log)
-                require(
-                    matching[0].values ==
-                    (to_checksum_address(account), channel, to_checksum_address(payee), *outcome),
-                    "The indexed event has incorrect typed payment values.",
-                )
-
-            first_page = await reader.events(
-                checkpoint=current, contract="payment", event=VOUCHER,
-                where={"customer": customer, "channelId": 1}, limit=1,
+            await assert_collection_history(
+                reader, current, expected=expected,
+                customer=customer, payment_address=payment, payee=payee,
             )
-            require(len(first_page.events) == 1 and not first_page.complete
-                    and first_page.next_cursor is not None,
-                    "First filtered page is not a proper continuation.")
-            last_page = await reader.events(
-                checkpoint=current, contract="payment", event=VOUCHER,
-                where={"channelId": 1, "customer": customer},
-                cursor=first_page.next_cursor, limit=1,
-            )
-            require(len(last_page.events) == 1 and last_page.complete
-                    and last_page.next_cursor is None,
-                    "Final filtered page does not close the exact checkpoint.")
-            require([e.values[3] for e in (*first_page.events, *last_page.events)] == [30, 40],
-                    "Customer/channel filtered pagination omitted or duplicated a collection.")
-
-            empty = await reader.events(
-                checkpoint=current, contract="payment", event=VOUCHER,
-                where={"customer": customer, "channelId": 999}, limit=1,
-            )
-            require(empty.complete and empty.events == () and empty.next_cursor is None,
-                    "Unmatched selected history is not an empty complete page.")
-            try:
-                await reader.events(
-                    checkpoint=current, contract="payment", event=VOUCHER,
-                    where={"customer": customer, "channelId": 2},
-                    cursor=first_page.next_cursor, limit=1,
-                )
-            except CursorInvalid:
-                pass
-            else:
-                raise ScenarioFailure("Cursor was accepted with a different indexed filter.")
-
             payee_after = int(await rpc(descriptor, "eth_getBalance", [payee, "latest"]), 16)
             require(payee_after - before_payee == 105,
                     "Actual payee wallet did not receive the collected native asset.")
