@@ -273,6 +273,14 @@ def admit(rendered_graph, *, runner_image, postgres_image, rpc_network):
                 or service.get("network_mode") or service.get("devices")
                 or service.get("pid") or service.get("ipc") or service.get("uts")
                 or any(mount.get("type") == "bind" for mount in service.get("volumes", []))
+                # Required finite-job resource ceilings belong to the
+                # launched role, not merely to checked-in Compose prose.
+                or service.get("cpus") is None
+                or service.get("mem_limit") is None
+                or service.get("memswap_limit") is None
+                or type(service.get("pids_limit")) is not int
+                or not 1 <= service["pids_limit"] <= 128
+                or not service.get("tmpfs")
             ):
                 raise CampaignError("Fixture service has an unapproved image, privilege or host attachment.")
 
