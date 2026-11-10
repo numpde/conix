@@ -28,6 +28,33 @@ services:
       retries: 20
     networks: [tests]
 
+  # Test-only Anvil; the scanner does not submit transactions or use Anvil RPC.
+  # No ports reach the host or another network.
+  anvil:
+    image: ${CONIX_FOUNDRY_IMAGE:?reviewed Foundry image is required}
+    pull_policy: never
+    entrypoint: ["/usr/local/bin/anvil"]
+    command: ["--host", "0.0.0.0", "--chain-id", "31337"]
+    environment:
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,mode=0700,uid=65532,gid=65532,size=32m
+    healthcheck:
+      test: [CMD, "/usr/local/bin/cast", "block-number", "--rpc-url", "http://127.0.0.1:8545"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [tests]
+
   bootstrap:
     image: ${CONIX_POSTGRES_IMAGE:?reviewed pinned PostgreSQL image is required}
     pull_policy: never
@@ -89,6 +116,7 @@ services:
     environment:
       CONIX_TEST_DSN: postgresql://conix_runtime:conix-disposable-runtime@postgres:5432/conix_test
       CONIX_TEST_READ_DSN: postgresql://conix_reader:conix-disposable-reader@postgres:5432/conix_test
+      CONIX_TEST_ANVIL_URL: http://anvil:8545
     user: "65532:65532"
     read_only: true
     init: true

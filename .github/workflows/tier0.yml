@@ -22,6 +22,7 @@ jobs:
         run: |
           make image/python-base/acquire DOCKER_CONTEXT=default
           make image/postgres/acquire DOCKER_CONTEXT=default
+          make image/foundry/acquire DOCKER_CONTEXT=default
           make image/dockerfile-frontend/acquire DOCKER_CONTEXT=default
           # A fresh, operator-owned pool; the published tool and wheels are
           # shared flat files. Every selector/build uses the same Docker context.
@@ -34,7 +35,6 @@ jobs:
           make image/indexer/check DOCKER_CONTEXT=default IMAGE="$runtime"
           test_image="$(make -s image/test-runner/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
           make test/postgres/run DOCKER_CONTEXT=default RUNNER_IMAGE="$test_image"
-          make image/foundry/acquire DOCKER_CONTEXT=default
           fixture_image="$(make -s image/evm-test-runner/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
           make image/evm-test-runner/check DOCKER_CONTEXT=default IMAGE="$fixture_image"
           # Stage the real distribution's fixed inputs in a private engine volume.

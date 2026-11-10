@@ -400,6 +400,7 @@ class Docker(DockerClient):
 
         self.require_role(image, "test-runner")
         self.require_image(images["postgres"])
+        self.require_image(images["foundry"])
 
         test_project = "conix-tier0-" + secrets.token_hex(6)
         compose_argv = [
@@ -409,6 +410,7 @@ class Docker(DockerClient):
         compose_environment = self.docker_environment.copy()
         compose_environment["CONIX_TEST_RUNNER_IMAGE"] = image
         compose_environment["CONIX_POSTGRES_IMAGE"] = images["postgres"]
+        compose_environment["CONIX_FOUNDRY_IMAGE"] = images["foundry"]
 
         try:
             rendered_configuration = json.loads(self.run(
@@ -419,7 +421,12 @@ class Docker(DockerClient):
             rendered_networks = rendered_configuration["networks"]
 
             if (
-                set(rendered_services) != {"tests", "postgres", "bootstrap", "initializer"}
+                set(rendered_services) != {"tests", "postgres", "bootstrap", "initializer", "anvil"}
+                or rendered_services["anvil"].get("image") != images["foundry"]
+                or rendered_services["anvil"].get("user") != "65532:65532"
+                or rendered_services["anvil"].get("read_only") is not True
+                or rendered_services["anvil"].get("ports")
+                or rendered_services["anvil"].get("networks") not in (["tests"], {"tests": None})
                 or rendered_services["initializer"].get("image") != image
                 or rendered_services["initializer"].get("read_only") is not True
                 or rendered_services["initializer"].get("user") != "65532:65532"
@@ -452,7 +459,7 @@ class Docker(DockerClient):
             # would stop PostgreSQL when that one-shot initialization finishes.
             self.run(
                 *compose_argv, "up", "--detach", "--no-build", "--pull", "never",
-                "--wait", "--wait-timeout", "60", "postgres",
+                "--wait", "--wait-timeout", "60", "postgres", "anvil",
                 env=compose_environment, timeout=90,
             )
             self.run(*compose_argv, "run", "--rm", "--no-deps", "--pull",
@@ -478,7 +485,7 @@ class Docker(DockerClient):
                 self.run(*compose_argv, "ps", "--all", env=compose_environment, timeout=15)
                 self.run(
                     *compose_argv, "logs", "--no-color", "--tail", "35",
-                    "postgres", "bootstrap", "initializer", "tests",
+                    "postgres", "anvil", "bootstrap", "initializer", "tests",
                     env=compose_environment, timeout=15,
                 )
             except OperationError:

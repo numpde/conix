@@ -67,6 +67,8 @@ elif "compose" in args and "config" in args:
                       "read_only": True, "user": "65532:65532"},
             "postgres": {"read_only": True, "user": "999:999", "image": os.environ["CONIX_POSTGRES_IMAGE"]},
             "bootstrap": {"read_only": True, "user": "999:999", "image": os.environ["CONIX_POSTGRES_IMAGE"]},
+            "anvil": {"image": os.environ["CONIX_FOUNDRY_IMAGE"], "user": "65532:65532",
+                      "read_only": True, "networks": ["tests"]},
             "initializer": {"image": os.environ["CONIX_TEST_RUNNER_IMAGE"],
                             "read_only": True, "user": "65532:65532",
                             "environment": {"CONIX_TEST_OWNER_DSN": "private-fixture-owner"}}},
