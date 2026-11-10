@@ -3,7 +3,9 @@
 import os
 from pathlib import Path
 import unittest
+from uuid import UUID
 
+import psycopg
 from psycopg import AsyncConnection
 
 from abi_golden_vectors import ERC20
@@ -11,11 +13,53 @@ from conix.catalog import prepare_catalog
 from conix.journal import (
     Block,
     HistoryConflict,
+    CommitOutcomeUnknown,
+    Journal,
+    Progress,
     RawEvent,
     StorageUnavailable,
     WriterBusy,
     open_journal,
 )
+
+
+class UncertainCommitContracts(unittest.IsolatedAsyncioTestCase):
+    """A lost commit reply retires its writer instead of replaying a block."""
+
+    async def test_unknown_commit_retires_the_connection(self):
+        class LostReply:
+            closed = False
+
+            async def execute(self, statement, _parameters=None):
+                if statement == "COMMIT":
+                    raise psycopg.OperationalError("commit reply was lost")
+                return self
+
+            async def close(self):
+                self.closed = True
+
+        catalog = prepare_catalog(Path(__file__).resolve().parent / "fixtures" / "catalog.toml")
+        connection = LostReply()
+        writer = Journal(
+            connection=connection,
+            catalog=catalog,
+            basis=Progress(
+                source_id=catalog.source_id,
+                generation=UUID("00000000-0000-0000-0000-000000000001"),
+                history_start=catalog.chain.start_block,
+                revision=0,
+                last_block=None,
+                blocked_reason=None,
+            ),
+        )
+        with self.assertRaises(CommitOutcomeUnknown):
+            async with writer._transaction():
+                pass
+
+        self.assertTrue(writer.retired)
+        self.assertTrue(connection.closed)
+        with self.assertRaises(HistoryConflict):
+            await writer.inspect()
 
 
 @unittest.skipUnless(
