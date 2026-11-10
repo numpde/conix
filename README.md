@@ -103,8 +103,10 @@ project. The dapp32 deployment and contract are external test evidence,
 not a new PayToPlay-specific Conix code path.
 
 The generic acceptance runner uses the installed package, a real Anvil RPC,
-private stdin handoff, and separate schema-owner/consumer lifecycles.
-Private account data never reaches schema initialization.
+and separate schema-owner/consumer lifecycles. The host admits dapp32's
+private fixture descriptor, then sends only public contract, ABI and account
+coordinates to test consumers. The schema owner receives an even narrower
+source projection. No child phase receives dapp32 wallet keys.
 
 The owned campaign deploys real compiled ERC-20/ERC-721 fixtures before schema
 initialization, indexes a mixed token/payment block, verifies signed PayToPlay
