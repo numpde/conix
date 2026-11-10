@@ -1,8 +1,8 @@
 Conix — generic EVM raw-log indexer
 ===================================
 
-Current status (2026-11-10): T0-1 ABI codec and T0-2 offline catalog /
-owner-controlled generic PostgreSQL schema are implemented. The PayToPlay-specific
+Current status (2026-11-10): T0-1 ABI codec and T0-2 offline catalog,
+owner-controlled PostgreSQL schema and raw-history journal are implemented. The PayToPlay-specific
 experimental runtime, schema, journal, observer, CLI and suite were deleted. No deployed
 database, checkpoint or API contract needs migration.
 
@@ -24,8 +24,8 @@ eth-abi/eth-utils. No database, network or contract-specific callback enters
 the codec. The independent ABI vectors and supported/rejected type matrix
 live under tests/ and tests/fixtures/abi/.
 
-The generic catalog and owner-only table installer exist, but no generic
-journal writer, scanner, checkpoint reader or deployment CLI exists yet. The indexer-labelled image currently contains
+The generic catalog, owner-only table installer, and atomic raw-history
+journal exist. No RPC scanner, checkpoint reader or deployment CLI exists yet. The indexer-labelled image currently contains
 only the ABI package; image/indexer/check verifies its installed codec, NOT
 that a worker can scan. deployment/apply and database/schema/initialize are
 not published, and no command starts the deleted PayToPlay observer.
@@ -95,7 +95,9 @@ independently. Existing retained deployments may be inspected or removed
 using ownership-constrained deployment/status and deployment/remove; no
 new generic worker may be started until it is implemented and qualified.
 
-Next is T0-2: compile one immutable TOML/ABI catalog, initialize new
-owner-only PostgreSQL tables and grants, and publish complete raw-log blocks.
+Next is T0-3: acquire blockHash-pinned logs for every selection, validate
+their complete event coverage and ABI layout, and publish through the
+existing one-block journal. A caller-supplied event list is not evidence
+of completeness; no current code acquires or certifies RPC history.
 Do not reintroduce adapters, Collection models, legacy migration code,
 PayToPlay-specific event decoders, or permissive fake completeness.

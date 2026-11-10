@@ -6,7 +6,7 @@ Scope
 Conix's target is one generic EVM event indexer: a single-ABI-driven scanner,
 one complete-block PostgreSQL raw-log journal, and one checkpoint-bound reader
 supporting PayToPlay, ERC-20 and ERC-721 without contract-specific source code.
-T0-1 ABI and the T0-2 offline catalog/owner-only DDL are implemented;
+T0-1 ABI and the T0-2 offline catalog, owner-only DDL and journal are implemented;
 the experimental
 PayToPlay-only runtime has been deleted, without migration or adapters.
 

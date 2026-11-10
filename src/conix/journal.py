@@ -210,14 +210,18 @@ class Journal:
     async def _check_progress(self) -> None:
         record = await (
             await self.connection.execute(
-                "SELECT source_id, generation, revision, last_block "
+                "SELECT source_id, generation, revision, last_block, blocked_reason "
                 "FROM conix.source_progress WHERE singleton = 1 FOR UPDATE"
             )
         ).fetchone()
 
         expected_last = self.basis.last_block.number if self.basis.last_block else None
         if record != (
-            self.basis.source_id, self.basis.generation, self.basis.revision, expected_last,
+            self.basis.source_id,
+            self.basis.generation,
+            self.basis.revision,
+            expected_last,
+            self.basis.blocked_reason,
         ):
             raise HistoryConflict("Durable source generation or checkpoint changed during this session.")
 
@@ -317,11 +321,12 @@ class Journal:
             await self._check_progress()
             row = await (
                 await self.connection.execute(
-                    "SELECT hash FROM conix.blocks WHERE number = %s",
+                    "SELECT number, hash, parent_hash, timestamp "
+                    "FROM conix.blocks WHERE number = %s",
                     (ancestor.number,),
                 )
             ).fetchone()
-            if row is None or row[0] != ancestor.hash:
+            if row is None or Block(*row) != ancestor:
                 raise HistoryConflict("Repair ancestor does not match a retained block identity.")
 
             await self.connection.execute(
