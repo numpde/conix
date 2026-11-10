@@ -503,34 +503,23 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             rpc_url=descriptor["rpcUrl"],
         ) as reader:
             current = await reader.checkpoint()
-            position_state = await read_position(
-                reader, descriptor, current, customer, 1,
+            # Ordinary appends must not rewrite historical positions.
+            snapshots = (
+                ("funding", funded, 100, 0),
+                ("first collection", after_first, 70, 30),
+                ("second collection", after_second, 30, 70),
+                ("withdrawal", current, 0, 70),
             )
-            require(
-                (position_state["balance"], position_state["voucherPaid"]) == (0, 70),
-                "Withdrawal checkpoint has the wrong position state.",
-            )
-            position_state = await read_position(
-                reader, descriptor, funded, customer, 1,
-            )
-            require(
-                (position_state["balance"], position_state["voucherPaid"]) == (100, 0),
-                "Later appends changed the funding historical view.",
-            )
-            position_state = await read_position(
-                reader, descriptor, after_first, customer, 1,
-            )
-            require(
-                (position_state["balance"], position_state["voucherPaid"]) == (70, 30),
-                "Later appends changed the first historical view.",
-            )
-            position_state = await read_position(
-                reader, descriptor, after_second, customer, 1,
-            )
-            require(
-                (position_state["balance"], position_state["voucherPaid"]) == (30, 70),
-                "Later appends changed the second historical view.",
-            )
+            for (phase, selected_checkpoint, balance, voucher_paid) in snapshots:
+                position_state = await read_position(
+                    reader, descriptor, selected_checkpoint, customer, 1,
+                )
+                observed = (position_state["balance"], position_state["voucherPaid"])
+                expected_state = (balance, voucher_paid)
+                require(
+                    observed == expected_state,
+                    f"Historical PayToPlay position changed after {phase}.",
+                )
 
             expected = [
                 (customer, 1, first, (30, 30, invoice_a)),
