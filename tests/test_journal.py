@@ -106,6 +106,24 @@ class JournalContracts(unittest.IsolatedAsyncioTestCase):
             original = await writer.inspect()
             self.assertIsNone(original.last_block)
 
+            # Another authorized session can block a source without following
+            # the advisory-lock protocol. The publication UPDATE must reject
+            # that state using its own atomic condition.
+            async with await AsyncConnection.connect(runtime_dsn, connect_timeout=5) as other:
+                await other.execute(
+                    "UPDATE conix.source_progress SET blocked_reason = %s WHERE singleton = 1",
+                    ("requires repair",),
+                )
+            try:
+                with self.assertRaises(HistoryConflict):
+                    await writer.publish_block(block=block1, events=(event,))
+                self.assertIsNone((await writer.inspect()).last_block)
+            finally:
+                async with await AsyncConnection.connect(runtime_dsn, connect_timeout=5) as other:
+                    await other.execute(
+                        "UPDATE conix.source_progress SET blocked_reason = NULL WHERE singleton = 1"
+                    )
+
             published = await writer.publish_block(block=block1, events=(event,))
             self.assertEqual(published.last_block, block1)
             self.assertEqual(published.revision, original.revision + 1)

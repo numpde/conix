@@ -75,9 +75,6 @@ SCHEMA_DDL = (
 
 async def initialize(owner_dsn: str, catalog: Catalog) -> None:
     """Create empty tables and grants atomically; refuse upgrades or adoption."""
-    if type(catalog) is not Catalog:
-        raise TypeError("Schema initialization requires a prepared catalog.")
-
     async with await AsyncConnection.connect(
         owner_dsn,
         connect_timeout=5,

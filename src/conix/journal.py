@@ -207,32 +207,21 @@ class Journal:
                 f"PostgreSQL journal operation failed (SQLSTATE={error.sqlstate})."
             ) from error
 
-    async def _check_progress(self) -> None:
-        record = await (
-            await self.connection.execute(
-                "SELECT source_id, generation, revision, last_block, blocked_reason "
-                "FROM conix.source_progress WHERE singleton = 1 FOR UPDATE"
-            )
-        ).fetchone()
-
-        expected_last = self.basis.last_block.number if self.basis.last_block else None
-        if record != (
-            self.basis.source_id,
-            self.basis.generation,
-            self.basis.revision,
-            expected_last,
-            self.basis.blocked_reason,
-        ):
-            raise HistoryConflict("Durable source generation or checkpoint changed during this session.")
-
     async def _advance_progress(self, *, last_number: int, generation: UUID) -> None:
+        """Fence one mutation against the durable source, tip and blocked state.
+
+        The UPDATE both obtains PostgreSQL's row lock and verifies the
+        expected revision. A preliminary SELECT FOR UPDATE would repeat
+        this same check without establishing any additional authority.
+        """
         expected_last = self.basis.last_block.number if self.basis.last_block else None
         result = await self.connection.execute(
             "UPDATE conix.source_progress "
             "SET last_block = %s, generation = %s, revision = revision + 1, "
             "blocked_reason = NULL "
             "WHERE singleton = 1 AND source_id = %s AND generation = %s "
-            "AND revision = %s AND last_block IS NOT DISTINCT FROM %s",
+            "AND revision = %s AND last_block IS NOT DISTINCT FROM %s "
+            "AND blocked_reason IS NULL",
             (
                 last_number,
                 generation,
@@ -261,7 +250,6 @@ class Journal:
             raise HistoryConflict("Next block does not extend the retained checkpoint.")
 
         async with self._transaction():
-            await self._check_progress()
             await self.connection.execute(
                 "INSERT INTO conix.blocks (number, hash, parent_hash, timestamp) "
                 "VALUES (%s, %s, %s, %s)",
@@ -318,7 +306,6 @@ class Journal:
 
         new_generation = uuid4()
         async with self._transaction():
-            await self._check_progress()
             row = await (
                 await self.connection.execute(
                     "SELECT number, hash, parent_hash, timestamp "
