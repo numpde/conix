@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TOOL_FILES = {
     "tools/__init__.py",
     "tools/containers/__init__.py",
+    "tools/containers/client.py",
     "tools/containers/operator.py",
     "tools/fixtures/__init__.py",
     "tools/fixtures/pay_to_play.py",

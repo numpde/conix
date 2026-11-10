@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
-from tools.containers import operator
+from tools.containers import client, operator
 
 FAKE = r'''#!/usr/bin/env python3
 import json, os, sys
@@ -158,7 +158,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
             side_effect=subprocess.TimeoutExpired(["docker", private_argument], 5),
         ):
             with self.assertRaises(operator.OperationError) as timed_out:
-                operator.command(["docker", "run", private_argument], env={}, timeout=5)
+                client.command(["docker", "run", private_argument], env={}, working_dir=ROOT, timeout=5)
 
         self.assertIn("timed out", str(timed_out.exception))
         self.assertIn("unconfirmed", str(timed_out.exception))
@@ -170,7 +170,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
             side_effect=PermissionError(errno.EACCES, "denied"),
         ):
             with self.assertRaises(operator.OperationError) as refused:
-                operator.command(["docker", "run", private_argument], env={})
+                client.command(["docker", "run", private_argument], env={}, working_dir=ROOT)
 
         self.assertIn("PermissionError", str(refused.exception))
         self.assertIn(str(errno.EACCES), str(refused.exception))
@@ -178,36 +178,36 @@ class LocalDockerOperatorTests(unittest.TestCase):
 
     def test_terminal_permission_error_is_not_claimed_to_mean_no_terminal(self):
         with patch.object(
-            operator, "command", return_value="science\tunix:///tmp/science.sock\n"
+            client, "command", return_value="science\tunix:///tmp/science.sock\n"
         ), patch("builtins.open", side_effect=PermissionError(errno.EACCES, "denied")):
             with self.assertRaises(operator.OperationError) as refused:
-                operator.select_endpoint("", "undefined")
+                client.select_endpoint("", "undefined", working_dir=ROOT)
 
         self.assertIn("PermissionError", str(refused.exception))
         self.assertNotIn("No terminal", str(refused.exception))
 
     def test_endpoint_only_accepts_local_unix_socket(self):
         for value in ("unix:///run/docker.sock", "unix:///tmp/other.sock"):
-            self.assertTrue(operator.local_socket(value))
+            self.assertTrue(client.local_socket(value))
         for value in ("tcp://localhost:2375", "ssh://host", "unix://relative",
                       "unix:///", "unix:///run/docker.sock?query=1"):
-            self.assertFalse(operator.local_socket(value))
+            self.assertFalse(client.local_socket(value))
 
     def test_host_root_is_refused_before_engine_discovery(self):
-        with patch.object(operator.os, "geteuid", return_value=0), patch.object(
-            operator, "command", side_effect=AssertionError("Docker contacted before host identity admission")
+        with patch.object(client.os, "geteuid", return_value=0), patch.object(
+            client, "command", side_effect=AssertionError("Docker contacted before host identity admission")
         ):
             with self.assertRaises(operator.OperationError) as error:
-                operator.select_endpoint("science", "command line")
+                client.select_endpoint("science", "command line", working_dir=ROOT)
         self.assertIn("root", str(error.exception).lower())
 
     def test_invalid_or_ambient_context_does_not_choose_an_engine(self):
-        with patch.object(operator, "command", return_value="science\tunix:///tmp/science.sock\n"):
+        with patch.object(client, "command", return_value="science\tunix:///tmp/science.sock\n"):
             with self.assertRaises(operator.OperationError):
-                operator.select_endpoint("unknown", "command line")
+                client.select_endpoint("unknown", "command line", working_dir=ROOT)
             with patch("builtins.open", side_effect=OSError):
                 with self.assertRaises(operator.OperationError):
-                    operator.select_endpoint("science", "environment")
+                    client.select_endpoint("science", "environment")
 
     def run_fake(self, *, fail_up=False, fail_down=False, bad_network=False, role="test-runner"):
         """Use a recording Docker executable that refuses unrecognized effects."""

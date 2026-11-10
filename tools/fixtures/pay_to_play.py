@@ -20,9 +20,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from tools.containers.operator import (
-    CONTEXT_NAME, Docker, IMAGE_ID, OperationError, ROOT, pinned_images, select_endpoint,
-)
+from tools.containers.client import CONTEXT_NAME, IMAGE_ID, OperationError, select_endpoint
+from tools.containers.operator import Docker, ROOT, pinned_images
 
 from tools.fixtures.protocol import (
     FixtureError,
@@ -648,7 +647,7 @@ def main():
             # Borrowed descriptors are admitted before any Docker authority.
             borrowed_descriptor = read_borrowed_descriptor(options.fixture_descriptor)
 
-        docker_endpoint = select_endpoint(options.context, options.origin)
+        docker_endpoint = select_endpoint(options.context, options.origin, working_dir=ROOT)
 
         with tempfile.TemporaryDirectory(prefix="conix-test-client-") as directory:
             client_config_directory = Path(directory)
