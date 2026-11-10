@@ -272,12 +272,12 @@ class ScannerEvidenceContracts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.journal.publications, [])
 
     async def test_oversized_rpc_reply_refuses_publication(self):
-        configured = replace(
-            self.source,
-            limits=replace(self.source.limits, max_response_bytes=200),
+        writer = await self.writer()
+        writer.rpc.limits = replace(
+            self.source.limits,
+            max_response_bytes=200,
         )
-        self.journal = RecordingJournal(configured)
-        writer = await self.writer(configured)
+
         with self.assertRaises(ResourceExceeded):
             await writer.advance_one()
         self.assertEqual(self.journal.publications, [])
