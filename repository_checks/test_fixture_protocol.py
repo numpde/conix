@@ -257,9 +257,14 @@ class KeylessConsumerSourceContracts(unittest.TestCase):
 
         projected = public_test_source(descriptor)
         self.assertNotIn(fixture_key, json.dumps(projected))
+        views = projected["contracts"]["PayToPlay"]["abi"]
         self.assertEqual(
-            projected["contracts"]["PayToPlay"]["abi"],
-            [{
+            {view["name"] for view in views},
+            {"channelCount", "voucherDigest", "viewPosition"},
+        )
+        self.assertEqual(
+            next(view for view in views if view["name"] == "voucherDigest"),
+            {
                 "type": "function",
                 "name": "voucherDigest",
                 "inputs": [
@@ -267,7 +272,7 @@ class KeylessConsumerSourceContracts(unittest.TestCase):
                     for kind in ("address", "uint256", "uint256", "bytes32")
                 ],
                 "outputs": [],
-            }],
+            },
         )
 
     def test_malformed_or_private_consumer_source_is_refused(self):
