@@ -868,8 +868,10 @@ and input transport. The dapp32 campaign runs separately.
   SQL and recovery     Real PostgreSQL writer exclusion, rollback, role
                        separation, restart and repair. Injected confirmation
                        loss before and after COMMIT exercises both durable
-                       outcomes. Wire interruption, process termination,
-                       cancellation and reader contention still need proof.
+                       outcomes. An independent reader completes while a
+                       page snapshot is open; repair invalidates that page.
+                       Wire interruption, process termination, and
+                       cancellation still need proof.
   PostgreSQL baseline  Measure per-block catch-up, retained size and bounded
                        work. Capture filtered and sparse-page query plans on
                        representative retained histories.

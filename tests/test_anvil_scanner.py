@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 import httpx
-from psycopg import AsyncConnection
+from psycopg import AsyncConnection, AsyncServerCursor
 
 from abi_golden_vectors import ERC20, FROM, TO, TRANSFER_SIGNATURE, word
 from anvil_catalog import catalog_for_anvil
@@ -439,11 +439,9 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                         {"blockHash": hex_bytes(newest.block.hash), "requireCanonical": True},
                     )
 
-                    # Concurrent repair after the SQL snapshot is visible to
-                    # the post-snapshot generation check, not silently ignored.
-                    with self.assertRaises(CursorInvalid):
-                        async with reader._snapshot(newest):
-                            repaired = await writer.repair_to(ancestor=complete.last_block)
+                    repaired = await self.repair_during_event_page(
+                        reader, writer, newest, complete.last_block, first_page,
+                    )
 
                     self.assertEqual(repaired.last_block, complete.last_block)
                     self.assertNotEqual(repaired.generation, complete.generation)
@@ -480,6 +478,42 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                     )
                     self.assertEqual(len(restored_page.events), 2)
                     self.assertTrue(restored_page.complete)
+
+    async def repair_during_event_page(self, reader, writer, checkpoint, ancestor, first_page):
+        """Keep a real page snapshot open across an independent read and repair."""
+        cursor_opened = asyncio.Event()
+        repair_finished = asyncio.Event()
+        execute = AsyncServerCursor.execute
+
+        async def pause_page(cursor, *args, **kwargs):
+            result = await execute(cursor, *args, **kwargs)
+            if cursor.connection is reader.connection:
+                cursor_opened.set()
+                await repair_finished.wait()
+            return result
+
+        async def read_page(session):
+            return await session.events(
+                checkpoint=checkpoint, contract="token", event=TRANSFER_SIGNATURE,
+                where={"to": TO}, limit=1,
+            )
+
+        async def expect_invalidated_page():
+            with self.assertRaises(CursorInvalid):
+                await read_page(reader)
+
+        async with asyncio.timeout(10), open_reader(
+            catalog=reader.catalog, database_dsn=os.environ["CONIX_TEST_ANVIL_READ_DSN"],
+            rpc_url=os.environ["CONIX_TEST_ANVIL_URL"],
+        ) as independent_reader:
+            with patch.object(AsyncServerCursor, "execute", pause_page):
+                async with asyncio.TaskGroup() as tasks:
+                    tasks.create_task(expect_invalidated_page())
+                    await cursor_opened.wait()
+                    self.assertEqual(await read_page(independent_reader), first_page)
+                    repaired = await writer.repair_to(ancestor=ancestor)
+                    repair_finished.set()
+        return repaired
 
 
 if __name__ == "__main__":
