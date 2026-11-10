@@ -335,10 +335,13 @@ class Docker:
         self.require_role(image, "indexer")
         # Verify the generic codec, not a nonexistent worker entry point.
         smoke = (
-            "import conix.abi as abi;"
+            "import importlib.util;import conix.abi as abi;"
             "event=abi.compile_event({'type':'event','name':'Ready','anonymous':False,"
             "'inputs':[{'name':'value','type':'uint256','indexed':True}]});"
-            "assert len(abi.encode_indexed_filter(event,'value',7))==32"
+            "assert len(abi.encode_indexed_filter(event,'value',7))==32;"
+            "assert importlib.util.find_spec('conix.pay_to_play') is None;"
+            "assert importlib.util.find_spec('conix.journal') is None;"
+            "assert importlib.util.find_spec('conix.commands') is None"
         )
         self.run(
             "run", "--rm", "--pull", "never", "--network", "none", "--read-only",

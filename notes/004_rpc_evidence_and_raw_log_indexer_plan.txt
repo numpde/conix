@@ -2,7 +2,7 @@ Conix — pristine generic Tier 0: design, evidence, and execution plan
 =====================================================================
 
 Date: 2026-11-09
-Status: TARGET PLAN, NOT IMPLEMENTED. This note is the current Tier-0 scope
+Status: TARGET GENERIC TIER 0, NOT YET IMPLEMENTED IN FULL. T0-1 ABI only. This note is the current Tier-0 scope
 decision. 001 describes an earlier PayToPlay-specific implementation plan;
 003 is an exploratory generic design/type-safety workshop. 000 remains
 authoritative about Tier 1/2 delegation AFTER this new Tier 0 exists.
@@ -830,11 +830,11 @@ The opt-in gate obtains public genesis via a genuine RPC-connected Anvil
 consumer. The owner phase receives only a separately admitted public
 chain/contract-coordinate envelope and checked genesis, NOT the private
 producer descriptor or accounts. Both phases use one reviewed installed ABI
-fixture. It initializes via a separate owner-only identity, and invokes named
+fixture. It initializes via a separate owner-only identity and invokes named
 installed-code checks under a restricted runtime identity. It deliberately
-fails at catalog import until the new code exists. This is not a skipped test
-and the old prototype has no compatibility fallback. The legacy PayToPlay
-campaign must remain separate during replacement.
+fails at catalog import until the generic T0-2 catalog exists; this is not
+a skipped test. The old PayToPlay observer and its campaign have been
+deleted, without compatibility fallback.
 
 Still REQUIRED beyond today's acceptance skeleton before T0-6 release:
   - real-PostgreSQL restricted SELECT-only reader role and concurrent repair;
@@ -953,6 +953,30 @@ Verified package/documentation references (consulted 2026-11-10):
   https://www.psycopg.org/psycopg3/docs/basic/transactions.html
   https://github.com/joshstevens19/rindexer
   https://ponder.sh/docs/database
+
+10. Code-path retirement (2026-11-10)
+-------------------------------------
+
+The PayToPlay-only prototype's concrete scanner, observer, journal, schema,
+models, RPC wrapper and CLI are deleted. Its prior integration/test suites
+are retired; do not resurrect them to keep a superficial test count.
+The current installed Python package contains only the T0-1 generic ABI
+codec and the reusable private-input staging primitive. The test-runner
+continues to exercise independent ABI oracles and an unprivileged real
+PostgreSQL role-boundary baseline (owner/runtime/read), not old collections.
+
+No production indexer or schema initializer is published. The Docker
+image/indexer/check lane checks a real installed ABI operation, not a
+deleted conix CLI. Protected Docker context selection, hash-locked offline
+packaging, input-volume ownership, confinement, and the dapp32 generic
+acceptance operator remain. The standalone and owned generic acceptance
+lanes are intentionally RED until they can exercise the new journal,
+scanner, reader, signed voucher collection and repair. A green ABI/PG
+suite must never be reported as end-to-end indexing qualification.
+
+For T0-2, extend the single shared ABI/catalog boundary and stage immutable
+ABI bytes with the selected TOML/DSN. Do not treat transport-only staging as
+catalog admission or reintroduce legacy collection storage.
 
 Last line
 ---------
