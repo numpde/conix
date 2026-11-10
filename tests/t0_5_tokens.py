@@ -16,7 +16,8 @@ from eth_utils import keccak, to_checksum_address
 
 from abi_golden_vectors import TRANSFER_SIGNATURE as TRANSFER
 from t0_5_chain import (
-    assert_event_matches_receipt, calldata, require, send, wait_for_receipt,
+    assert_event_matches_receipt, calldata, require, send, submit_test_transaction,
+    wait_for_receipt,
 )
 
 ZERO = "0x" + "00" * 20
@@ -67,14 +68,11 @@ async def deploy_token_fixtures(descriptor, rpc) -> dict:
     creator = descriptor["publicFixtureAccounts"]["admin"]["address"]
     contracts = {}
     for (name, alias) in (("ConixToken20", "token20"), ("ConixToken721", "token721")):
-        await rpc(descriptor, "anvil_impersonateAccount", [creator])
-        try:
-            tx_hash = await rpc(descriptor, "eth_sendTransaction", [{
-                "from": creator, "data": bytecode[name], "gas": hex(3_000_000),
-            }])
-        finally:
-            await rpc(descriptor, "anvil_stopImpersonatingAccount", [creator])
-        receipt = await wait_for_receipt(rpc, descriptor, tx_hash)
+        receipt = await submit_test_transaction(
+            rpc, descriptor, creator,
+            {"data": bytecode[name], "gas": hex(3_000_000)},
+        )
+        tx_hash = receipt["transactionHash"]
         address = receipt.get("contractAddress")
         require(type(address) is str and address.startswith("0x") and len(address) == 42,
                 "Deployed Solidity fixture has no contract address.")
