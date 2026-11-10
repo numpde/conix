@@ -639,6 +639,28 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
                     "Branch A did not yield a real stale pagination cursor.")
             old_cursor = page.next_cursor
 
+            branch_a_position = await read_position(
+                reader, descriptor, old, account, 2,
+            )
+            require(
+                (branch_a_position["balance"], branch_a_position["voucherPaid"]) == (0, 20),
+                "The indexed branch A does not match its paid contract position.",
+            )
+            remaining = await reader.events(
+                checkpoint=old, contract="payment", event=VOUCHER,
+                where={"customer": account, "channelId": 2},
+                cursor=old_cursor, limit=1,
+            )
+            require(
+                remaining.complete and len(remaining.events) == 1
+                and remaining.events[0].values[3:5] == (5, 20),
+                "Branch A's added payment has incorrect typed values.",
+            )
+            assert_event_matches_receipt(
+                remaining.events[0],
+                selected_receipt_log(branch_a, descriptor["contracts"]["PayToPlay"]["address"]),
+            )
+
         require(await rpc(descriptor, "evm_revert", [snapshot]) is True,
                 "Owned Anvil fixture did not revert to the shared ancestor.")
         # Canonical branch B changes a different selected contract.
@@ -697,6 +719,13 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
             require(all(event.transaction_hash.hex() != branch_a["transactionHash"][2:].lower()
                         for event in page.events),
                     "Reorganized-out transaction survived Conix suffix repair.")
+            branch_b_position = await read_position(
+                reader, descriptor, current, account, 2,
+            )
+            require(
+                (branch_b_position["balance"], branch_b_position["voucherPaid"]) == (5, 15),
+                "Canonical branch B retained a paid position from orphaned branch A.",
+            )
             for (alias, expected_count) in (("token20", 3), ("token721", 4)):
                 events = await reader.events(
                     checkpoint=current, contract=alias,
@@ -718,3 +747,13 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
                     assert_event_matches_receipt(
                         surviving[0], only_transfer(token_b, tokens["token721"]["address"]),
                     )
+            from t0_5_tokens import call_token_view
+
+            nft_owner = await call_token_view(
+                rpc, descriptor, tokens["token721"]["address"],
+                "ownerOf(uint256)", ("uint256",), (7,), ("address",),
+            )
+            require(
+                nft_owner[0].lower() == descriptor["publicFixtureAccounts"]["payee"]["address"].lower(),
+                "Canonical branch B did not transfer token 7 to the intended recipient.",
+            )
