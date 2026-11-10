@@ -230,6 +230,8 @@ async def mine_mixed_block(rpc, descriptor, tokens, *, signer, customer, collect
     function may be called only for the campaign-owned disposable Anvil.
     """
     await rpc(descriptor, "anvil_setAutomine", [False])
+    mining_error = None
+
     try:
         payment_tx = await collect(
             rpc, descriptor, signer=signer, customer=customer, collector=collector,
@@ -237,8 +239,19 @@ async def mine_mixed_block(rpc, descriptor, tokens, *, signer, customer, collect
         )
         (token20_tx, token721_tx) = await mixed_transfers(rpc, descriptor, tokens)
         await rpc(descriptor, "evm_mine", [])
+    except BaseException as error:
+        mining_error = error
+        raise
     finally:
-        await rpc(descriptor, "anvil_setAutomine", [True])
+        try:
+            await rpc(descriptor, "anvil_setAutomine", [True])
+        except BaseException as restoration_error:
+            if mining_error is None:
+                raise
+            mining_error.add_note(
+                f"Anvil automining restoration failed ({type(restoration_error).__name__}); "
+                "the fixture state requires inspection."
+            )
 
     return {
         "payment": await waited_receipt(rpc, descriptor, payment_tx),
