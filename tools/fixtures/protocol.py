@@ -306,6 +306,11 @@ def acceptance_payments(raw: bytes) -> dict:
     except (ValueError, UnicodeError, RecursionError):
         raise FixtureError("Payment acceptance receipt is not strict JSON.") from None
 
+    return admit_payments(record)
+
+
+def admit_payments(record: dict) -> dict:
+    """One shared public checkpoint/receipt contract across processes."""
     if type(record) is not dict or set(record) != {
         "schema", "checkpoint", "transactions", "customer", "channel", "collected",
     } or record["schema"] != "conix.acceptance.payments.v1":
@@ -320,7 +325,7 @@ def acceptance_payments(raw: bytes) -> dict:
         or type(checkpoint["source"]) is not str
         or hex64.fullmatch(checkpoint["source"]) is None
         or type(checkpoint["generation"]) is not str
-        or re.fullmatch(r"[0-9a-f-]{36}", checkpoint["generation"]) is None
+        or re.fullmatch(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", checkpoint["generation"]) is None
         or not _uint(checkpoint["start"])
         or not _uint(checkpoint["revision"])
         or type(block) is not dict
@@ -345,7 +350,6 @@ def acceptance_payments(raw: bytes) -> dict:
         raise FixtureError("Payment acceptance receipt has invalid event facts.")
 
     return record
-
 
 
 def admit_tokens(record: dict | None) -> dict | None:
