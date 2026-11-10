@@ -217,7 +217,9 @@ async def baseline(descriptor, state):
 
 
 async def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in ("preflight", "initialize", "baseline"):
+    if len(sys.argv) != 2 or sys.argv[1] not in (
+        "preflight", "initialize", "baseline", "exercise", "resume", "reorg",
+    ):
         raise FixtureError("Select an explicit generic acceptance phase.")
     phase = sys.argv[1]
     try:
@@ -232,8 +234,32 @@ async def main():
             }, separators=(",", ":")))
         elif phase == "initialize":
             await initialize(descriptor, state)
-        else:
+        elif phase == "baseline":
             await baseline(descriptor, state)
+        else:
+            # Every phase is a distinct Docker process with the same journal.
+            # Only the owner campaign selects these test-only chain mutations.
+            import t0_5_payment
+
+            source = catalog_path(descriptor, await genesis(descriptor))
+            arguments = {
+                "writer_dsn": os.environ["CONIX_TEST_DSN"],
+                "reader_dsn": os.environ["CONIX_TEST_READ_DSN"],
+            }
+            if phase == "exercise":
+                preflight(state, descriptor)
+                record = await t0_5_payment.exercise(
+                    descriptor, source, rpc, **arguments,
+                )
+                print(json.dumps(record, separators=(",", ":")))
+            elif phase == "resume":
+                await t0_5_payment.resume(
+                    descriptor, source, rpc, state=state, **arguments,
+                )
+            else:
+                await t0_5_payment.reorganize(
+                    descriptor, source, rpc, state=state, **arguments,
+                )
     except BaseException as error:
         safe_error = error if isinstance(error, Exception) else ScenarioFailure("Acceptance interrupted.")
         print(phase_failure_record(phase, safe_error).decode("ascii"), file=sys.stderr)
