@@ -183,6 +183,25 @@ class Writer:
         next_number = previous.number + 1 if previous else self.catalog.chain.start_block
         candidate = await self._block(next_number, deadline)
         if candidate is None:
+            # A missing numbered block alone does not prove a chain tip.
+            # If the provider reports a later head, history is unavailable
+            # and must not be presented as caught up.
+            response = await self.rpc.call(
+                "eth_getBlockByNumber",
+                ["latest", False],
+                deadline=deadline,
+            )
+            if type(response) is not dict:
+                raise RpcUnavailable("Selected provider did not identify its current head.")
+
+            head_number = _quantity(response.get("number"), "latest block number")
+            head = _block(response, head_number)
+            if head.header.number >= next_number:
+                raise RpcUnavailable("Selected provider omitted a block below its reported head.")
+            if previous is not None and head.header.number < previous.number:
+                raise BranchConflict("Provider head is below the retained checkpoint.")
+            if previous is not None and head.header.number == previous.number and head.header != previous:
+                raise BranchConflict("Provider head contradicts the retained canonical block.")
             return None
 
         if previous is not None and candidate.header.parent_hash != previous.hash:

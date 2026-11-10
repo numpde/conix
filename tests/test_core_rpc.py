@@ -84,7 +84,15 @@ class Server:
         if method == "eth_chainId":
             result = "0x7a69"
         elif method == "eth_getBlockByNumber":
-            result = self.blocks.get(arguments[0])
+            if arguments[0] == "latest":
+                available = [
+                    (int(number, 16), block)
+                    for (number, block) in self.blocks.items()
+                    if block is not None
+                ]
+                result = max(available)[1]
+            else:
+                result = self.blocks.get(arguments[0])
             if arguments[0] == "0x1":
                 self.candidate_reads += 1
                 if self.reorg and self.candidate_reads > 1:
@@ -266,6 +274,15 @@ class ScannerEvidenceContracts(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RpcUnavailable) as error:
             await writer.advance_one()
         self.assertNotIn("secret upstream text", str(error.exception))
+        self.assertEqual(self.journal.publications, [])
+
+    async def test_missing_history_below_live_head_is_not_an_empty_tip(self):
+        self.server.blocks["0x1"] = None
+        self.server.blocks["0x2"] = rpc_block(2, HASH2, HASH1)
+        writer = await self.writer()
+
+        with self.assertRaises(RpcUnavailable):
+            await writer.advance_one()
         self.assertEqual(self.journal.publications, [])
 
     async def test_reorg_between_acquisition_and_commit_refuses_publication(self):
