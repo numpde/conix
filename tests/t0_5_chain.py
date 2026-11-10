@@ -57,8 +57,9 @@ async def submit_test_transaction(rpc, descriptor, sender, transaction, *, wait=
     submission_error = None
 
     try:
-        started = await rpc(descriptor, "anvil_impersonateAccount", [sender])
-        require(started is True, "Anvil did not confirm temporary test impersonation.")
+        # Anvil's unit-returning impersonation RPC succeeds with JSON null.
+        # The transport rejects an explicit JSON-RPC error separately.
+        await rpc(descriptor, "anvil_impersonateAccount", [sender])
         tx_hash = await rpc(
             descriptor, "eth_sendTransaction", [{**transaction, "from": sender}],
         )
