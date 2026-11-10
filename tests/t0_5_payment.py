@@ -247,10 +247,11 @@ async def mine_mixed_block(rpc, descriptor, tokens, *, signer, customer, collect
     The automining setting is restored even on a rejected submission. This
     function may be called only for the campaign-owned disposable Anvil.
     """
-    await rpc(descriptor, "anvil_setAutomine", [False])
     mining_error = None
 
     try:
+        # Even a lost start reply can leave automining disabled.
+        await rpc(descriptor, "anvil_setAutomine", [False])
         payment_tx = await collect_voucher(
             rpc, descriptor, signer=signer, customer=customer, collector=collector,
             channel=1, total=70, cap=30, invoice=invoice, wait=False,
