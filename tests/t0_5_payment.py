@@ -208,28 +208,20 @@ def checkpoint_record(checkpoint):
 
 
 def saved_checkpoint(record):
-    require(type(record) is dict and set(record) == {
-        "source", "generation", "start", "revision", "block",
-    }, "Stored acceptance checkpoint is malformed.")
+    """Reconstruct a checkpoint after shared public-receipt admission."""
     block = record["block"]
-    require(type(block) is dict and set(block) == {"number", "hash", "parent", "timestamp"},
-            "Stored acceptance block identity is malformed.")
-    try:
-        return Checkpoint(
-            source_id=bytes.fromhex(record["source"]),
-            generation=UUID(record["generation"]),
-            history_start=record["start"],
-            block=Block(
-                number=block["number"],
-                hash=bytes.fromhex(block["hash"]),
-                parent_hash=bytes.fromhex(block["parent"]),
-                timestamp=block["timestamp"],
-            ),
-            revision=record["revision"],
-        )
-    except (TypeError, ValueError, KeyError):
-        raise ScenarioFailure("Stored acceptance checkpoint cannot be decoded.") from None
-
+    return Checkpoint(
+        source_id=bytes.fromhex(record["source"]),
+        generation=UUID(record["generation"]),
+        history_start=record["start"],
+        block=Block(
+            number=block["number"],
+            hash=bytes.fromhex(block["hash"]),
+            parent_hash=bytes.fromhex(block["parent"]),
+            timestamp=block["timestamp"],
+        ),
+        revision=record["revision"],
+    )
 
 async def position(reader, checkpoint, customer, channel):
     (fields,) = await reader.call(
@@ -479,20 +471,10 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
 
 
 def admit_exercise(state):
-    """Accept the public phase receipt without granting it cleanup authority."""
-    require(type(state) is dict and set(state) == {
-        "schema", "checkpoint", "transactions", "customer", "channel", "collected",
-    }, "Payment acceptance receipt has a different schema.")
-    require(state["schema"] == "conix.acceptance.payments.v1"
-            and type(state["transactions"]) is list and len(state["transactions"]) == 4
-            and all(type(value) is str and TRANSFER_BYTES.fullmatch(value)
-                    for value in state["transactions"])
-            and type(state["customer"]) is str and re.fullmatch(r"0x[0-9a-fA-F]{40}", state["customer"])
-            and type(state["channel"]) is int and state["channel"] == 1
-            and state["collected"] == [30, 40],
-            "Payment acceptance receipt contains inconsistent public facts.")
-    return saved_checkpoint(state["checkpoint"])
+    """The operator and this fresh process use one public receipt contract."""
+    from fixture_protocol import admit_payments
 
+    return saved_checkpoint(admit_payments(state)["checkpoint"])
 
 async def resume(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, state, tokens):
     """Run in a NEW container/process after the producing phase has exited."""
