@@ -159,6 +159,25 @@ def _event(
     )
 
 
+async def verify_source(*, catalog: Catalog, rpc: RPC) -> None:
+    """Bind an RPC session to a selected chain ID AND genesis block.
+
+    Chain IDs may be reused by unrelated networks. This is startup
+    admission, not a substitute for checking canonicality per operation.
+    """
+    deadline = time.monotonic() + catalog.limits.operation_timeout_seconds
+    chain_id = _quantity(
+        (await rpc.call("eth_chainId", [], deadline=deadline)),
+    )
+    if chain_id != catalog.chain.chain_id:
+        raise BranchConflict("Selected provider has a different EVM chain ID.")
+
+    response = await rpc.call("eth_getBlockByNumber", ["0x0", False], deadline=deadline)
+    genesis = None if response is None else _block(response, 0)
+    if genesis is None or genesis.header.hash != catalog.chain.genesis_hash:
+        raise BranchConflict("Selected provider has a different genesis block.")
+
+
 class Writer:
     """Own the complete-evidence decision, not the SQL mutation.
 
@@ -181,22 +200,8 @@ class Writer:
         return None if response is None else _block(response, number)
 
     async def verify_source(self) -> None:
-        """Bind the session to the configured chain before writing history.
-
-        A chain ID alone is insufficient: distinct forks can use the same
-        number. Genesis matches source identity; later per-block checks
-        still handle reorganizations during an open session.
-        """
-        deadline = time.monotonic() + self.catalog.limits.operation_timeout_seconds
-        chain_id = _quantity(
-            (await self.rpc.call("eth_chainId", [], deadline=deadline)),
-        )
-        if chain_id != self.catalog.chain.chain_id:
-            raise BranchConflict("Selected provider has a different EVM chain ID.")
-
-        genesis = await self._block(0, deadline)
-        if genesis is None or genesis.header.hash != self.catalog.chain.genesis_hash:
-            raise BranchConflict("Selected provider has a different genesis block.")
+        """Bind the writer to the same chain identity used by readers."""
+        await verify_source(catalog=self.catalog, rpc=self.rpc)
 
     async def advance_one(self) -> Progress | None:
         """Publish at most one fully observed block or return None at the tip.

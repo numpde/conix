@@ -8,6 +8,7 @@ from importlib.util import find_spec
 
 from conix.abi import compile_event, encode_indexed_filter
 from conix.core import open_writer
+from conix.reader import open_reader
 
 
 def check_installation() -> None:
@@ -23,8 +24,8 @@ def check_installation() -> None:
     if actual_topic != expected_topic:
         raise RuntimeError(f"Installed ABI codec produced the wrong {actual_topic = !r}.")
 
-    if not callable(open_writer):
-        raise RuntimeError("Installed scanner writer API is unavailable.")
+    if not callable(open_writer) or not callable(open_reader):
+        raise RuntimeError("Installed scanner/reader context managers are unavailable.")
 
     for obsolete_module in ("conix.pay_to_play", "conix.commands"):
         if find_spec(obsolete_module) is not None:

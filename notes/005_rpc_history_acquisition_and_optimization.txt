@@ -301,8 +301,11 @@ tests use both hostile RPC replies and a real confined Anvil-to-PostgreSQL
 Transfer, empty block and checked suffix repair. No receipt/range
 acquisition or compatibility scaffolding is present.
 
-T0-4/5: validate checkpoint reads and real selected events using the same
-journal; keep EIP-1898 eth_call independent of historical event acquisition.
+T0-4 (implemented): checkpoint, SQL topic-filtered keyset pages and
+blockHash-pinned EIP-1898 eth_call use the same selected catalog and
+durable journal. The reader rechecks generation and canonicality without
+adding acquisition methods to the T0-3 scanner. T0-5 must qualify
+multi-contract and signed-voucher scenarios against dapp32.
 
 T0-6: freeze the concrete validated operations and prove absent higher tiers
 do not affect ordinary correctness. Record precise method/format support.
