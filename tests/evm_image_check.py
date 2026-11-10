@@ -31,7 +31,7 @@ class EvmImageChecks(unittest.TestCase):
         self.assertEqual(set(fixtures), {"ConixToken20", "ConixToken721"})
         self.assertNotEqual(fixtures["ConixToken20"], fixtures["ConixToken721"])
 
-    def test_cast_signs_fixed_prehashed_digest(self) -> None:
+    def test_cast_signs_and_verifies_fixed_prehashed_digest(self) -> None:
         digest = "0x" + "ab" * 32
         test_key = "0x" + "00" * 31 + "01"
 
@@ -51,6 +51,27 @@ class EvmImageChecks(unittest.TestCase):
         self.assertEqual(len(actual_signature), 132)
         self.assertTrue(actual_signature.startswith("0x"))
         self.assertIn(bytes.fromhex(actual_signature[2:])[-1], (27, 28))
+
+        # T0-5 uses wallet verify, not wallet sign, for the actual voucher.
+        signer = subprocess.run(
+            ["cast", "wallet", "address", "--private-key", test_key],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(signer.returncode, 0)
+        verified = subprocess.run(
+            [
+                "cast", "wallet", "verify", "--no-hash",
+                "--address", signer.stdout.strip(), digest, actual_signature,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(verified.returncode, 0, "Cast failed its actual T0-5 digest verification path")
 
 
 class InstalledFixtureWiring(unittest.IsolatedAsyncioTestCase):
