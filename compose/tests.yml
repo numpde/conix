@@ -80,6 +80,13 @@ services:
         GRANT USAGE ON SCHEMA conix TO conix_runtime, conix_reader;
         CREATE SCHEMA ledger AUTHORIZATION postgres;
         CREATE TABLE ledger.operator_private (secret text);
+        CREATE DATABASE conix_rpc_test;
+        REVOKE ALL ON DATABASE conix_rpc_test FROM PUBLIC;
+        GRANT CONNECT ON DATABASE conix_rpc_test TO conix_owner, conix_runtime, conix_reader;
+        \connect conix_rpc_test
+        REVOKE ALL ON SCHEMA public FROM PUBLIC;
+        CREATE SCHEMA conix AUTHORIZATION conix_owner;
+        GRANT USAGE ON SCHEMA conix TO conix_runtime, conix_reader;
         SQL
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
@@ -96,6 +103,8 @@ services:
     pull_policy: never
     environment:
       CONIX_TEST_OWNER_DSN: postgresql://conix_owner:conix-disposable-owner@postgres:5432/conix_test
+      CONIX_TEST_ANVIL_OWNER_DSN: postgresql://conix_owner:conix-disposable-owner@postgres:5432/conix_rpc_test
+      CONIX_TEST_ANVIL_URL: http://anvil:8545
     entrypoint: [python, -m, unittest, discover, -s, /tests, -p, test_schema_owner.py, -v]
     user: "65532:65532"
     read_only: true
@@ -117,6 +126,8 @@ services:
       CONIX_TEST_DSN: postgresql://conix_runtime:conix-disposable-runtime@postgres:5432/conix_test
       CONIX_TEST_READ_DSN: postgresql://conix_reader:conix-disposable-reader@postgres:5432/conix_test
       CONIX_TEST_ANVIL_URL: http://anvil:8545
+      CONIX_TEST_ANVIL_DSN: postgresql://conix_runtime:conix-disposable-runtime@postgres:5432/conix_rpc_test
+      CONIX_TEST_ANVIL_READ_DSN: postgresql://conix_reader:conix-disposable-reader@postgres:5432/conix_rpc_test
     user: "65532:65532"
     read_only: true
     init: true

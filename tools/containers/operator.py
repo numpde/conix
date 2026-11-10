@@ -431,7 +431,11 @@ class Docker(DockerClient):
                 or rendered_services["initializer"].get("read_only") is not True
                 or rendered_services["initializer"].get("user") != "65532:65532"
                 or "CONIX_TEST_OWNER_DSN" not in rendered_services["initializer"].get("environment", {})
-                or "CONIX_TEST_OWNER_DSN" in rendered_services["tests"].get("environment", {})
+                or "CONIX_TEST_ANVIL_OWNER_DSN" not in rendered_services["initializer"].get("environment", {})
+                or any(
+                    name in rendered_services["tests"].get("environment", {})
+                    for name in ("CONIX_TEST_OWNER_DSN", "CONIX_TEST_ANVIL_OWNER_DSN")
+                )
                 or rendered_services["tests"].get("image") != image
                 or rendered_services["tests"].get("read_only") is not True
                 or rendered_services["tests"].get("user") != "65532:65532"
