@@ -142,6 +142,8 @@ class SharedWheelhouseContracts(unittest.TestCase):
         self.assertIn("requirements/build.lock", selected)
         self.assertIn("src/conix/abi.py", selected)
         self.assertIn("tests/generic_acceptance.py", selected)
+        self.assertIn("tools/fixtures/protocol.py", selected)
+        self.assertNotIn("tests/fixture_protocol.py", selected)
         self.assertIn("tests/fixtures/abi/pay_to_play.json", selected)
         self.assertIn("tests/fixtures/abi/support_matrix.json", selected)
         expected_tests = {

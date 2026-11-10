@@ -37,6 +37,7 @@ WORKDIR /tmp
 FROM indexer AS test-runner
 LABEL io.conix.image-role=test-runner
 COPY tests /tests
+COPY tools/fixtures/protocol.py /tests/fixture_protocol.py
 ENTRYPOINT ["python", "-m", "unittest", "discover", "-s", "/tests", "-v"]
 
 # Optional *test-only* Foundry signing tool; absent from runtime and ordinary tests.
@@ -47,5 +48,6 @@ FROM indexer AS evm-test-runner
 LABEL io.conix.image-role=evm-test-runner
 COPY --from=fixture_signer /usr/local/bin/cast /usr/local/bin/cast
 COPY tests /tests
+COPY tools/fixtures/protocol.py /tests/fixture_protocol.py
 RUN --network=none cast --version
 ENTRYPOINT ["python", "-I", "/tests/generic_acceptance.py"]

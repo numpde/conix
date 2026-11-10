@@ -16,6 +16,7 @@ TOOL_FILES = {
     "tools/containers/operator.py",
     "tools/fixtures/__init__.py",
     "tools/fixtures/pay_to_play.py",
+    "tools/fixtures/protocol.py",
     "tools/wheelhouse/__init__.py",
     "tools/wheelhouse/acquire_tool.py",
     "tools/wheelhouse/locks.py",

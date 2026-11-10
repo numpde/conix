@@ -106,6 +106,9 @@ def source_allowlist(root=ROOT):
     fixed_inputs = (
         "Dockerfile", "pyproject.toml", "requirements/runtime.lock",
         "requirements/build.lock",
+        # Test-only wire protocol shared by the host fixture operator and
+        # installed EVM images; never included in the product wheel.
+        "tools/fixtures/protocol.py",
     )
 
     # Both the installed package AND its entire Python test suite are the

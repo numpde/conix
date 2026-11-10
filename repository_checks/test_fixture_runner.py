@@ -16,9 +16,8 @@ from contextlib import redirect_stderr
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
 from tools.fixtures import pay_to_play as runner
-from fixture_protocol import FixtureError, ScenarioFailure, phase_failure_record
+from tools.fixtures.protocol import FixtureError, ScenarioFailure, phase_failure_record
 from test_fixture_protocol import valid
 
 

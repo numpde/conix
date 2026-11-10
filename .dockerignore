@@ -10,3 +10,6 @@
 !src/**
 !tests/
 !tests/**/*.py
+!tools/
+!tools/fixtures/
+!tools/fixtures/protocol.py

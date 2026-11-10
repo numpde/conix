@@ -150,8 +150,11 @@ Tool ownership
 --------------
 tools/containers/operator.py is the sole general Docker operator: explicit
 engine selection, image and input-volume lifecycle, and runtime services.
-tools/fixtures/pay_to_play.py owns only the dapp32 JSON fixture campaign,
-using the selected Docker operator without changing the sibling checkout.
+tools/fixtures/pay_to_play.py owns the dapp32 fixture campaign using the
+selected Docker operator without changing the sibling checkout.
+tools/fixtures/protocol.py owns the test-only JSON fixture admission and
+phase records; its source is copied into EVM/test images but never packaged
+in the installed Conix runtime. Host operators must not import from tests/.
 tools/wheelhouse/ contains issuer lock regeneration, released NMR tool
 bootstrap, shared pool/source policy, contained target selector, and offline
 image-build orchestration. Invoke operators with python -m via Make; avoid new

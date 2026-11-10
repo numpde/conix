@@ -24,9 +24,13 @@ from tools.containers.operator import (
     CONTEXT_NAME, Docker, IMAGE_ID, OperationError, ROOT, pinned_images, select_endpoint,
 )
 
-sys.path.insert(0, str(ROOT / "tests"))
-from fixture_protocol import (FixtureError, acceptance_preflight,
-                              public_acceptance_source, decode, parse_phase_failure)
+from tools.fixtures.protocol import (
+    FixtureError,
+    acceptance_preflight,
+    public_acceptance_source,
+    decode,
+    parse_phase_failure,
+)
 
 ID = re.compile(r"conix-[0-9a-f]{12}\Z")
 GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")

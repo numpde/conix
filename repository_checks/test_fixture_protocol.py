@@ -1,12 +1,14 @@
 """Host-only adversarial descriptor tests; no Docker, chain or signing secrets."""
 import json
-import sys
-from pathlib import Path
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests"))
-from fixture_protocol import (FixtureError, ScenarioFailure, decode, parse_phase_failure,
-                              phase_failure_record)
+from tools.fixtures.protocol import (
+    FixtureError,
+    ScenarioFailure,
+    decode,
+    parse_phase_failure,
+    phase_failure_record,
+)
 
 IDENTITY = "conix-fixture01"
 CONTRACT = "0x" + "12" * 20
@@ -137,7 +139,7 @@ class AcceptancePreflightContracts(unittest.TestCase):
     """Public source preflight cannot smuggle credentials to schema owner."""
 
     def test_exact_record_and_rejected_mutations(self):
-        from fixture_protocol import acceptance_preflight
+        from tools.fixtures.protocol import acceptance_preflight
         safe = {
             "schema": "conix.acceptance.preflight.v1",
             "chainId": 31337,
@@ -159,7 +161,7 @@ class AcceptancePublicSourceContracts(unittest.TestCase):
     """Require an exact, credential-free schema-owner input."""
 
     def test_public_projection_and_admission(self):
-        from fixture_protocol import public_acceptance_source, admit_public_acceptance_source
+        from tools.fixtures.protocol import public_acceptance_source, admit_public_acceptance_source
         fixture = valid()
         projected = public_acceptance_source(fixture)
         self.assertEqual(admit_public_acceptance_source(projected), projected)
