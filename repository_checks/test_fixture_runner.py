@@ -571,6 +571,36 @@ class GenericAcceptanceOperatorContracts(unittest.TestCase):
             self.assertEqual(consumer.cleanup(), [])
 
 
+    def test_every_consumer_phase_receives_keyless_public_fixture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = descriptor_for("conix-abcdef123456")
+            docker = SimpleNamespace(docker_command_prefix=("docker",), docker_environment={})
+            consumer = runner.PayToPlayTest(
+                docker, "sha256:" + "a" * 64, Path(directory),
+                descriptor, owned_fixture=True,
+            )
+            consumer.compose_environment = {}
+
+            for phase in ("preflight", "baseline", "exercise", "resume", "reorg"):
+                with self.subTest(phase=phase), patch.object(
+                    runner, "owned_command", return_value=b""
+                ) as invoked:
+                    consumer._phase(
+                        "consumer", phase, prior_receipt=None, expect_receipt=False,
+                    )
+
+                payload = invoked.call_args.kwargs["payload"].decode("utf-8")
+                source = json.loads(payload)["descriptor"]
+                self.assertEqual(source["schema"], "conix.acceptance.public-test-source.v1")
+                self.assertEqual(set(source["contracts"]), {"PayToPlay"})
+                self.assertEqual(
+                    source["publicFixtureAccounts"]["admin"],
+                    {"address": descriptor["publicFixtureAccounts"]["admin"]["address"]},
+                )
+                self.assertNotIn("privateKey", payload)
+                for account in descriptor["publicFixtureAccounts"].values():
+                    self.assertNotIn(account["privateKey"], payload)
+
     def test_generic_owner_receives_no_private_fixture_descriptor(self):
         with tempfile.TemporaryDirectory() as path:
             descriptor = descriptor_for("conix-abcdef123456")
