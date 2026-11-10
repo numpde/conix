@@ -195,6 +195,54 @@ class AcceptancePublicSourceContracts(unittest.TestCase):
                 admit_public_acceptance_source(mutation)
 
 
+
+class KeylessConsumerSourceContracts(unittest.TestCase):
+    """Only the host operator needs the producer's public test private keys."""
+
+    def test_projection_preserves_public_coordinates_without_wallet_material(self):
+        from tools.fixtures.protocol import (
+            admit_public_test_source, public_test_source,
+        )
+
+        private_descriptor = valid()
+        projected = public_test_source(private_descriptor)
+        self.assertEqual(
+            admit_public_test_source(projected, fixture_id=IDENTITY),
+            projected,
+        )
+
+        serialized = json.dumps(projected)
+        self.assertNotIn("privateKey", serialized)
+        for account in private_descriptor["publicFixtureAccounts"].values():
+            self.assertNotIn(account["privateKey"], serialized)
+        self.assertEqual(
+            projected["contracts"]["PayToPlay"]["abi"],
+            private_descriptor["contracts"]["PayToPlay"]["abi"],
+        )
+        self.assertEqual(
+            projected["publicFixtureAccounts"]["customer"]["address"],
+            private_descriptor["publicFixtureAccounts"]["customer"]["address"],
+        )
+
+    def test_malformed_or_private_consumer_source_is_refused(self):
+        from tools.fixtures.protocol import (
+            admit_public_test_source, public_test_source,
+        )
+
+        projected = public_test_source(valid())
+        invalid = (
+            {**projected, "fixtureId": "foreign"},
+            {**projected, "chainId": True},
+            {**projected, "contracts": []},
+            {**projected, "contracts": {"PayToPlay": {"address": "0xdead"}}},
+            {**projected, "publicFixtureAccounts": valid()["publicFixtureAccounts"]},
+            {**projected, "privateKey": "0x" + "55" * 32},
+        )
+        for candidate in invalid:
+            with self.subTest(fields=set(candidate)), self.assertRaises(FixtureError):
+                admit_public_test_source(candidate, fixture_id=IDENTITY)
+
+
 class PaymentPhaseReceiptContracts(unittest.TestCase):
     """Only source and chain facts may pass from a test process to the next."""
 
