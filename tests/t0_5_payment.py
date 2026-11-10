@@ -497,8 +497,8 @@ async def resume(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, state
                 and {e.transaction_hash.hex() for e in all_events.events}
                 == {tx[2:].lower() for tx in state["transactions"]},
                 "Restarted reader lost, duplicated or added mined positive collections.")
-        await verify_after_restart(reader, before, tokens)
-        await verify_after_restart(reader, newest, tokens)
+        await verify_after_restart(reader, before, tokens, descriptor)
+        await verify_after_restart(reader, newest, tokens, descriptor)
 
 
 async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, state, tokens):
@@ -509,6 +509,8 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
     collector = descriptor["publicFixtureAccounts"]["relayer"]["address"]
     key = await fixture_voucher_key(rpc, descriptor)
     invoice = bytes.fromhex("44" * 32)
+
+    from t0_5_tokens import assert_event_matches_receipt, only_transfer
 
     async with open_writer(
         catalog=catalog, database_dsn=writer_dsn, rpc_url=descriptor["rpcUrl"],
@@ -608,7 +610,12 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
                             for event in events.events),
                         "A branch-A token transfer survived checked suffix repair.")
                 if alias == "token721":
-                    require(any(event.transaction_hash.hex()
-                                == token_b["transactionHash"][2:].lower()
-                                for event in events.events),
+                    surviving = [
+                        event for event in events.events
+                        if event.transaction_hash.hex() == token_b["transactionHash"][2:].lower()
+                    ]
+                    require(len(surviving) == 1,
                             "Canonical branch-B token event was not reindexed.")
+                    assert_event_matches_receipt(
+                        surviving[0], only_transfer(token_b, tokens["token721"]["address"]),
+                    )
