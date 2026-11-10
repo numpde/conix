@@ -545,31 +545,57 @@ class Docker:
         self.run("volume", "rm", volume, timeout=30)
 
     def deployment(self, *, operation, name, image, volume, database, rpc):
-        """Admit the rendered deployment before using the selected Docker Engine."""
-        for (name_kind, selected_name) in (
-            ("deployment", name), ("database network", database), ("RPC network", rpc),
-        ):
-            if type(selected_name) is not str or not CONTEXT_NAME.fullmatch(selected_name):
-                raise OperationError(f"Select one valid {name_kind} name without paths or control characters.")
+        """Separate recovery by project identity from prospective launch admission."""
+        if type(name) is not str or not CONTEXT_NAME.fullmatch(name):
+            raise OperationError("Select one valid Conix deployment name.")
 
-        if database == rpc:
-            raise OperationError("Source RPC and database networks must be separately selected.")
+        project = "conix-" + name
+        service_labels = (
+            "--filter", "label=com.docker.compose.project=" + project,
+            "--filter", "label=com.docker.compose.service=indexer",
+        )
 
-        if not IMAGE_ID.fullmatch(image or ""):
-            raise OperationError("Deployment requires immutable INDEXER_IMAGE=sha256:<id>.")
+        # These commands refer to existing Docker resources by labels.
+        # They remain usable after the image, input volume or Compose
+        # configuration changes or disappears.
+        if operation == "status":
+            self.run("ps", "--all", *service_labels, timeout=20)
+            return
 
-        # No generic worker is installed. Permit only non-starting
-        # inspection and recovery; never launch the old PayToPlay observer.
-        if operation not in ("config/check", "status", "remove"):
+        if operation == "remove":
+            observed_ids = self.run(
+                "ps", "--all", *service_labels, "--format", "{{.ID}}",
+                capture=True, timeout=20,
+            ).splitlines()
+
+            for container_id in observed_ids:
+                if re.fullmatch(r"[0-9a-f]{12,64}", container_id) is None:
+                    raise OperationError("Docker returned an invalid Conix container identity.")
+
+            for container_id in observed_ids:
+                self.run("container", "stop", "--time", "90", container_id, timeout=105)
+                self.run("container", "rm", container_id, timeout=30)
+
+            print(f"Retired {len(observed_ids)} Conix indexer container(s) from {project}; "
+                  "external networks, database and input volumes were retained.")
+            return
+
+        if operation != "config/check":
             raise OperationError("Generic indexer deployment is not installed.")
 
-        if not re.fullmatch(r"conix-inputs-[a-f0-9]{24}", volume or ""):
-            raise OperationError("Select the exact retained Conix input volume.")
+        for (label, selected) in (("database network", database), ("RPC network", rpc)):
+            if type(selected) is not str or not CONTEXT_NAME.fullmatch(selected):
+                raise OperationError(f"Select one valid {label} name.")
+        if database == rpc:
+            raise OperationError("Source RPC and database networks must be distinct.")
+        if not IMAGE_ID.fullmatch(image or ""):
+            raise OperationError("Select one immutable INDEXER_IMAGE=sha256:<id>.")
+        if not re.fullmatch(r"conix-inputs-[0-9a-f]{24}", volume or ""):
+            raise OperationError("Select an explicit Conix input-volume identity.")
 
-        compose_project = "conix-" + name
         compose_argv = [
             "compose", "--env-file", "/dev/null", "--project-directory", str(ROOT),
-            "-p", compose_project, "-f", str(ROOT / "compose/runtime.yml"),
+            "-p", project, "-f", str(ROOT / "compose/runtime.yml"),
         ]
         compose_environment = self.docker_environment.copy()
         compose_environment.update(
@@ -616,19 +642,7 @@ class Docker:
         except (ValueError, KeyError, IndexError, TypeError) as error:
             raise OperationError("Cannot validate the selected runtime deployment configuration.") from error
 
-        if operation == "config/check":
-            print(f"Verified constrained runtime Compose graph for {compose_project} on selected Engine.")
-            return
-
-        if operation == "status":
-            self.run(*compose_argv, "ps", "--all", env=compose_environment, timeout=20)
-            return
-
-        if operation == "remove":
-            self.run(*compose_argv, "stop", "--timeout", "90", "indexer", env=compose_environment, timeout=105)
-            self.run(*compose_argv, "down", "--remove-orphans", env=compose_environment, timeout=60)
-            print(f"Removed conix deployment project {compose_project}; external inputs and networks were retained.")
-            return
+        print(f"Verified constrained prospective runtime Compose graph for {project}.")
 
     def test(self, image, images):
         """Run an isolated PostgreSQL test project and retire only its resources."""

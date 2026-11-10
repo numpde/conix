@@ -83,6 +83,14 @@ elif "run" in args and "compose" not in args and args[args.index("run") + 1:]:
     ):
         print("Recording Docker refuses an unrecognized container run.", file=sys.stderr)
         sys.exit(97)
+elif "ps" in args and "compose" not in args:
+    if "--format" in args:
+        print("0123456789ab")
+elif "container" in args and "compose" not in args:
+    action = args[args.index("container") + 1]
+    if action not in ("stop", "rm"):
+        print("Unknown container mutation.", file=sys.stderr)
+        sys.exit(97)
 elif "compose" in args:
     # The recording client may simulate only the operations exercised by the
     # current operator. New Docker commands require an explicit fixture update.
@@ -286,8 +294,9 @@ class LocalDockerOperatorTests(unittest.TestCase):
     def test_runtime_stop_does_not_need_removed_external_resources(self):
         result, calls = self.run_runtime_fake(operation="remove", missing_resources=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(any("stop" in item["args"] for item in calls))
-        self.assertTrue(any("down" in item["args"] for item in calls))
+        self.assertTrue(any("container" in item["args"] and "stop" in item["args"] for item in calls))
+        self.assertTrue(any("container" in item["args"] and "rm" in item["args"] for item in calls))
+        self.assertFalse(any("compose" in item["args"] for item in calls))
         self.assertFalse(any("image" in item["args"] and "inspect" in item["args"] for item in calls))
         self.assertFalse(any("volume" in item["args"] and "inspect" in item["args"] for item in calls))
 
@@ -303,6 +312,30 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(any("image" in x["args"] and "inspect" in x["args"] for x in calls))
         self.assertFalse(any("volume" in x["args"] and "inspect" in x["args"] for x in calls))
+
+    def test_recovery_does_not_require_runtime_configuration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            fake = Path(folder) / "docker"
+            fake.write_text(FAKE)
+            fake.chmod(0o755)
+            log = Path(folder) / "docker.jsonl"
+            env = os.environ.copy()
+            env["PATH"] = folder + os.pathsep + env["PATH"]
+            env["CONIX_FAKE_LOG"] = str(log)
+
+            for action in ("status", "remove"):
+                with self.subTest(action=action):
+                    result = subprocess.run([
+                        sys.executable, "-m", "tools.containers.operator",
+                        "--context", "science", "--origin", "command line",
+                        "deployment/" + action, "--deployment", "pilot",
+                    ], cwd=ROOT, env=env, capture_output=True, text=True, timeout=15)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+
+            arguments = [json.loads(line)["args"] for line in log.read_text().splitlines()]
+            self.assertFalse(any("compose" in args for args in arguments))
+            self.assertFalse(any("up" in args for args in arguments))
+            self.assertFalse(any("image" in args and "inspect" in args for args in arguments))
 
     def test_runtime_bind_mount_rejected_before_start(self):
         run, calls = self.run_runtime_fake(bad_bind=True)
