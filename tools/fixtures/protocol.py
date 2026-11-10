@@ -289,6 +289,7 @@ def admit_public_acceptance_source(value: dict) -> dict:
         raise FixtureError("Owner phase requires exact public source metadata.")
     return value
 
+
 def acceptance_payments(raw: bytes) -> dict:
     """Admit only the public test receipt passed to a fresh process.
 
@@ -312,7 +313,7 @@ def acceptance_payments(raw: bytes) -> dict:
 
     checkpoint = record["checkpoint"]
     block = checkpoint.get("block") if type(checkpoint) is dict else None
-    hex64 = re.compile(r"[0-9a-f]{64}\\Z")
+    hex64 = re.compile(r"[0-9a-f]{64}\Z")
     if (
         type(checkpoint) is not dict
         or set(checkpoint) != {"source", "generation", "start", "revision", "block"}
