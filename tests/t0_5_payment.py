@@ -173,25 +173,6 @@ def selected_receipt_log(receipt, contract):
     return selected[0]
 
 
-def same_raw_event(event, log):
-    """Compare Conix rows against independently obtained chain receipt bytes."""
-    require(event.transaction_hash.hex() == log["transactionHash"][2:].lower(),
-            "Event transaction hash differs from its mined receipt.")
-    require(event.block.hash.hex() == log["blockHash"][2:].lower(),
-            "Event block hash differs from its mined receipt.")
-    require(event.block.number == int(log["blockNumber"], 16),
-            "Event block number differs from its mined receipt.")
-    require(event.transaction_index == int(log["transactionIndex"], 16),
-            "Event transaction index differs from its mined receipt.")
-    require(event.log_index == int(log["logIndex"], 16),
-            "Event log index differs from its mined receipt.")
-    require(tuple(topic.hex() for topic in event.topics) ==
-            tuple(topic[2:].lower() for topic in log["topics"]),
-            "Event topics differ from the actual mined receipt.")
-    require(event.data.hex() == log["data"][2:].lower(),
-            "Event data differ from the actual mined receipt.")
-
-
 def checkpoint_record(checkpoint):
     return {
         "source": checkpoint.source_id.hex(),
@@ -246,7 +227,7 @@ async def collect(rpc, descriptor, *, signer, customer, collector, channel, tota
 
 async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tokens):
     """Prove signed settlement, actual indexed history and historical state."""
-    from t0_5_tokens import initial_transfers, mixed_transfers, verify
+    from t0_5_tokens import assert_event_matches_receipt, initial_transfers, mixed_transfers, verify
 
     catalog = prepare_catalog(catalog_file)
     accounts = descriptor["publicFixtureAccounts"]
@@ -415,7 +396,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
                     if event.transaction_hash.hex() == receipt["transactionHash"][2:].lower()
                 ]
                 require(len(matching) == 1, "A mined positive collection is missing from history.")
-                same_raw_event(matching[0], log)
+                assert_event_matches_receipt(matching[0], log)
                 require(
                     matching[0].values ==
                     (to_checksum_address(account), channel, to_checksum_address(payee), *outcome),
