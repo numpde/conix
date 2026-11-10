@@ -26,6 +26,7 @@ from tools.containers.operator import Docker, ROOT, pinned_images
 from tools.fixtures.protocol import (
     FixtureError,
     acceptance_preflight,
+    acceptance_payments,
     public_acceptance_source,
     decode,
     parse_phase_failure,
@@ -327,8 +328,9 @@ def _json_request(descriptor, prior_phase_receipt):
 class PayToPlayTest:
     """Borrow the producer's Anvil; own only the disposable SQL/consumer project."""
 
-    def __init__(self, docker, runner_image, scratch, descriptor):
+    def __init__(self, docker, runner_image, scratch, descriptor, *, owned_fixture=False):
         self.preflight_record = None
+        self.owned_fixture = owned_fixture
         self.docker = docker
         self.runner_image = runner_image
         self.scratch_dir = scratch
@@ -444,7 +446,7 @@ class PayToPlayTest:
                 output=self._file("conix-" + phase + ".out"),
                 error_file=self._file("conix-" + phase + ".err"),
                 env=self.compose_environment,
-                timeout=75,
+                timeout=180 if phase == "exercise" else 120 if phase == "reorg" else 75,
                 payload=phase_payload,
                 label=f"Conix phase/{phase}",
             )
@@ -468,10 +470,11 @@ class PayToPlayTest:
         if not expect_receipt:
             return None
 
-        if phase != "preflight":
-            raise CampaignError("Only public source preflight may return an acceptance receipt.")
-
-        return acceptance_preflight(phase_stdout, chain_id=self.fixture_descriptor["chainId"])
+        if phase == "preflight":
+            return acceptance_preflight(phase_stdout, chain_id=self.fixture_descriptor["chainId"])
+        if phase == "exercise" and self.owned_fixture:
+            return acceptance_payments(phase_stdout)
+        raise CampaignError("Unexpected receipt from a nonpublic acceptance phase.")
 
     def execute(self):
         """Run only the generic installed-package acceptance, no legacy path."""
@@ -481,6 +484,18 @@ class PayToPlayTest:
             "consumer", "baseline",
             prior_receipt=self.preflight_record, expect_receipt=False,
         )
+        if self.owned_fixture:
+            # Each phase starts a distinct short-lived container. A fresh
+            # process verifies durable recovery; only our own Anvil can fork.
+            observations = self._phase(
+                "consumer", "exercise",
+                prior_receipt=self.preflight_record, expect_receipt=True,
+            )
+            for phase in ("resume", "reorg"):
+                self._phase(
+                    "consumer", phase,
+                    prior_receipt=observations, expect_receipt=False,
+                )
 
     def cleanup(self):
         """Retire only the owned SQL/consumer project, regardless of outcome."""
@@ -567,6 +582,7 @@ class Campaign:
         self.acquire()
         self.consumer_test = PayToPlayTest(
             self.docker, self.runner_image, self.scratch_dir, self.fixture_descriptor,
+            owned_fixture=True,
         )
         self.consumer_test.execute()
 
