@@ -55,6 +55,7 @@ class RPC:
                     "POST",
                     self.url,
                     json=request,
+                    headers={"Accept-Encoding": "identity"},
                 ) as response:
                     if response.status_code != 200:
                         raise RpcUnavailable(
@@ -62,7 +63,10 @@ class RPC:
                         )
 
                     content = bytearray()
-                    async for chunk in response.aiter_bytes():
+                    # Bound received bytes before any decompression. A
+                    # provider ignoring identity encoding cannot turn a
+                    # small compressed response into unbounded JSON memory.
+                    async for chunk in response.aiter_raw():
                         content.extend(chunk)
                         if len(content) > self.limits.max_response_bytes:
                             raise ResourceExceeded("RPC response exceeds its configured byte budget.")
