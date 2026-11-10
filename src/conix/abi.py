@@ -182,7 +182,7 @@ def _type(entry: dict, limits: AbiLimits, depth: int = 1) -> ABIValueType:
                 type=_type(item, limits, depth + len(dimensions) + 1),
                 ordinal=ordinal,
             )
-            for ordinal, item in enumerate(declared_components)
+            for (ordinal, item) in enumerate(declared_components)
         )
         canonical_base = "(" + ",".join(arg.type.canonical for arg in components) + ")"
     else:
@@ -208,7 +208,7 @@ def _type(entry: dict, limits: AbiLimits, depth: int = 1) -> ABIValueType:
             components=components,
         )
     elif isinstance(leaf, BasicType) and base != "tuple":
-        kind, width = leaf.base, leaf.sub
+        (kind, width) = (leaf.base, leaf.sub)
         if kind in ("uint", "int"):
             if type(width) is not int or width not in range(8, 257, 8):
                 raise UnsupportedABI("Unsupported ABI integer width.")
@@ -265,7 +265,7 @@ def _arguments(entries, limits, *, event):
         raise UnsupportedABI("ABI argument list must be bounded.")
     count = 0
     arguments = []
-    for ordinal, entry in enumerate(entries):
+    for (ordinal, entry) in enumerate(entries):
         if type(entry) is not dict:
             raise UnsupportedABI("ABI argument must be an object.")
         indexed = entry.get("indexed") if event else False
@@ -274,13 +274,15 @@ def _arguments(entries, limits, *, event):
         if not event and "indexed" in entry:
             raise UnsupportedABI("A function argument cannot have an indexed flag.")
         count += indexed
-        arguments.append(ABIArgument(
-            name=_name(entry.get("name", ""), allow_empty=True),
-            type=_type(entry, limits),
-            ordinal=ordinal,
-            indexed=indexed,
-            topic_index=count if indexed else None,
-        ))
+        arguments.append(
+            ABIArgument(
+                name=_name(entry.get("name", ""), allow_empty=True),
+                type=_type(entry, limits),
+                ordinal=ordinal,
+                indexed=indexed,
+                topic_index=count if indexed else None,
+            )
+        )
     if count > 3:
         raise UnsupportedABI("Nonanonymous event has more than three indexed arguments.")
     return tuple(arguments)
@@ -297,7 +299,9 @@ def compile_event(entry: dict, *, limits: AbiLimits = DEFAULT_LIMITS) -> EventDe
     # part of this descriptor, not the event signature hash.
     topic0 = event_signature_to_log_topic(signature)
     return EventDescriptor(
-        name=name, signature=signature, topic0=topic0,
+        name=name,
+        signature=signature,
+        topic0=topic0,
         arguments=arguments,
         nonindexed=tuple(arg.type for arg in arguments if not arg.indexed),
     )
@@ -314,9 +318,11 @@ def compile_function(entry: dict, *, limits: AbiLimits = DEFAULT_LIMITS) -> Func
     outputs = _arguments(entry.get("outputs"), limits, event=False)
     signature = name + "(" + ",".join(arg.type.canonical for arg in inputs) + ")"
     return FunctionDescriptor(
-        name=name, signature=signature,
+        name=name,
+        signature=signature,
         selector=function_signature_to_4byte_selector(signature),
-        inputs=inputs, outputs=outputs,
+        inputs=inputs,
+        outputs=outputs,
     )
 
 
@@ -330,7 +336,7 @@ def compile_contract(abi: list, selected_events: tuple[str, ...], *,
     ) or len(set(selected_events)) != len(selected_events):
         raise UnsupportedABI("Selected events must have unique canonical signatures.")
 
-    events, functions = {}, {}
+    (events, functions) = ({}, {})
     for entry in abi:
         if type(entry) is not dict:
             raise UnsupportedABI("ABI entry is not an object.")
@@ -428,14 +434,14 @@ def _decode(types, data, limits):
         # These describe rejected wire bytes; unexpected implementation
         # errors must remain visible rather than being blamed on the input.
         raise MalformedABIData("ABI decoding or canonicality verification failed.") from None
-    return tuple(_present(spec, value) for spec, value in zip(types, decoded, strict=True))
+    return tuple(_present(spec, value) for (spec, value) in zip(types, decoded, strict=True))
 
 
 def _present(spec, value):
     if spec.kind == "address":
         return to_checksum_address(value)
     if spec.kind == "tuple":
-        return tuple(_present(arg.type, item) for arg, item in zip(spec.components, value, strict=True))
+        return tuple(_present(arg.type, item) for (arg, item) in zip(spec.components, value, strict=True))
     if spec.kind == "array":
         return tuple(_present(spec.item, item) for item in value)
     return value
@@ -498,7 +504,7 @@ def _caller(spec, value, limits, budget):
     elif spec.kind == "tuple":
         if type(value) is not tuple or len(value) != len(spec.components):
             raise InvalidCallerValue("ABI tuple has the wrong Python shape.")
-        value = tuple(_caller(arg.type, item, limits, budget) for arg, item in zip(spec.components, value))
+        value = tuple(_caller(arg.type, item, limits, budget) for (arg, item) in zip(spec.components, value))
     elif spec.kind == "array":
         if type(value) is not tuple or len(value) > limits.max_elements or (
             spec.length is not None and len(value) != spec.length
@@ -544,7 +550,7 @@ def encode_call(descriptor: FunctionDescriptor, arguments: tuple, *,
     types = tuple(arg.type.canonical for arg in descriptor.inputs)
     budget = [0]
     values = tuple(
-        _caller(arg.type, value, limits, budget) for arg, value in zip(descriptor.inputs, arguments)
+        _caller(arg.type, value, limits, budget) for (arg, value) in zip(descriptor.inputs, arguments)
     )
     try:
         encoded = abi_encode(types, values)
