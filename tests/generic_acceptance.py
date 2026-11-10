@@ -88,9 +88,9 @@ def catalog_path(descriptor, genesis_hash, tokens=None):
     # Both owner and reader use one reviewed ABI snapshot bundled in the
     # installed test image, not data from the private fixture handoff.
     reviewed_abi = Path("/tests/fixtures/abi/pay_to_play.json")
-    abi = root / "payment.json"
-    abi.write_bytes(reviewed_abi.read_bytes())
-    abi.chmod(0o600)
+    payment_abi = root / "payment.json"
+    payment_abi.write_bytes(reviewed_abi.read_bytes())
+    payment_abi.chmod(0o600)
     deployment = (
         descriptor["payment"] if "payment" in descriptor
         else descriptor["contracts"]["PayToPlay"]
@@ -117,7 +117,7 @@ def catalog_path(descriptor, genesis_hash, tokens=None):
         f'rpc_url = {json.dumps(descriptor["rpcUrl"])}\n'
         '[contracts.payment]\n'
         f'address = "{deployment["address"]}"\n'
-        f'abi_file = "{abi}"\n'
+        f'abi_file = "{payment_abi}"\n'
         'events = ["VoucherCollected(address,uint256,address,uint256,uint256,bytes32)"]\n'
         + extra_contracts
         + '[database]\ndsn_file = "/run/conix/connection.dsn"\nruntime_role = "conix_runtime"\n'
@@ -281,7 +281,7 @@ async def main():
                 )
             else:
                 await t0_5_payment.reorganize(
-                    descriptor, source, rpc, state=state, **arguments,
+                    descriptor, source, rpc, state=state, tokens=tokens, **arguments,
                 )
     except BaseException as error:
         safe_error = error if isinstance(error, Exception) else ScenarioFailure("Acceptance interrupted.")
