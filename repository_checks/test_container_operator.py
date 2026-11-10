@@ -207,7 +207,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 client.select_endpoint("unknown", "command line", working_dir=ROOT)
             with patch("builtins.open", side_effect=OSError):
                 with self.assertRaises(operator.OperationError):
-                    client.select_endpoint("science", "environment")
+                    client.select_endpoint("science", "environment", working_dir=ROOT)
 
     def run_fake(self, *, fail_up=False, fail_down=False, bad_network=False, role="test-runner"):
         """Use a recording Docker executable that refuses unrecognized effects."""
