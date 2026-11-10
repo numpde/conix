@@ -14,9 +14,9 @@ from pathlib import Path
 from eth_abi import decode
 from eth_utils import keccak, to_checksum_address
 
+from abi_golden_vectors import TRANSFER_SIGNATURE as TRANSFER
 from t0_5_chain import assert_event_matches_receipt, calldata, receipt, require, send
 
-TRANSFER = "Transfer(address,address,uint256)"
 ZERO = "0x" + "00" * 20
 ROOT = Path(__file__).resolve().parent / "fixtures" / "evm"
 
