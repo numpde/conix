@@ -9,7 +9,7 @@ from unittest.mock import patch
 from eth_abi import encode as reference_encode
 from eth_utils import to_checksum_address
 
-from abi_golden_vectors import ERC20, ERC721, MIXED, HASHED, FROM, TO, word
+from abi_golden_vectors import ERC20, ERC721, MIXED, HASHED, FROM, TO, signature_topic, word
 from abi_contract_vectors import (
     COMPOUND, PAY_TO_PLAY, POSITION_ABI_TYPE, POSITION_CALL,
     POSITION_RETURN, POSITION_SAMPLE,
@@ -34,6 +34,62 @@ def scalar_event(kind, *, indexed=True, name="n"):
         "type": "event", "name": "Value", "anonymous": False,
         "inputs": [{"name": name, "type": kind, "indexed": indexed}],
     })
+
+
+class SupportedAbiFamilies(unittest.TestCase):
+
+    def test_declared_families_through_event_filters_and_read_calls(self):
+        pair = {"components": [{"type": "uint16"}, {"type": "bool"}]}
+        dynamic_pair = {"components": [{"type": "address"}, {"type": "string"}]}
+        specimens = {
+            "uintM": [("uint16", {}, 65535)],
+            "intM": [("int16", {}, -32768)],
+            "address": [("address", {}, TO)],
+            "bool": [("bool", {}, True)],
+            "bytesN": [("bytes4", {}, b"\x00\xffAB")],
+            "bytes": [("bytes", {}, b"\x00\xff")],
+            "string": [("string", {}, "é😀")],
+            "array": [("uint16[2]", {}, (0, 65535)), ("uint16[]", {}, (1, 2))],
+            "tuple": [("(uint16,bool)", pair, (3, True)), ("(address,string)", dynamic_pair, (TO, "é"))],
+        }
+        families = catalog("support_matrix")["families"]
+        self.assertEqual(set(specimens), {row["family"] for row in families})
+
+        for row in families:
+            for (canonical, shape, value) in specimens[row["family"]]:
+                with self.subTest(abi_type=canonical):
+                    self.check_family(canonical, shape, value, row["indexed_equality"])
+
+    def check_family(self, canonical, shape, value, indexed_equality):
+        field = {"type": "tuple" if shape else canonical, **shape}
+        event = compile_event({
+            "type": "event", "name": "MatrixValue", "anonymous": False,
+            "inputs": [
+                {**field, "name": "key", "indexed": True},
+                {**field, "name": "value", "indexed": False},
+            ],
+        })
+        echo = compile_function({
+            "type": "function", "name": "echo", "stateMutability": "pure",
+            "inputs": [field], "outputs": [field],
+        })
+        payload = reference_encode((canonical,), (value,))
+        topic0 = signature_topic(f"MatrixValue({canonical},{canonical})")
+        if indexed_equality:
+            (topic, key) = (payload, value)
+            self.assertEqual(encode_indexed_filter(event, "key", value), topic)
+        else:
+            topic = bytes(range(32))
+            key = IndexedHash(topic)
+            for invalid in (value, topic):
+                with self.assertRaises(InvalidCallerValue):
+                    encode_indexed_filter(event, "key", invalid)
+
+        self.assertEqual(decode_event(event, (topic0, topic), payload), (key, value))
+        with self.assertRaises(InvalidCallerValue):
+            encode_indexed_filter(event, "value", value)
+        self.assertEqual(encode_call(echo, (value,)), signature_topic(f"echo({canonical})")[:4] + payload)
+        self.assertEqual(decode_return(echo, payload), (value,))
 
 
 class ExactEventContracts(unittest.TestCase):
