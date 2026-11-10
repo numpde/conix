@@ -1,0 +1,43 @@
+name: Generate T0-5 token fixtures (temporary)
+
+on:
+  pull_request:
+
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Compile immutable token fixture bytes with Solidity 0.8.35
+        run: |
+          python3 - <<'PY' > "$RUNNER_TEMP/input.json"
+          import json
+          from pathlib import Path
+
+          source = Path("tests/fixtures/evm/T0Tokens.sol").read_text(encoding="utf-8")
+          print(json.dumps({
+              "language": "Solidity",
+              "sources": {"T0Tokens.sol": {"content": source}},
+              "settings": {
+                  "optimizer": {"enabled": True, "runs": 200},
+                  "evmVersion": "prague",
+                  "outputSelection": {"*": {"*": ["evm.bytecode.object", "abi"]}},
+              },
+          }))
+          PY
+          npx --yes solc@0.8.35 --standard-json < "$RUNNER_TEMP/input.json" > "$RUNNER_TEMP/output.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          content = (Path(os.environ["RUNNER_TEMP"]) / "output.json").read_text()
+          compilation = json.loads(content[content.index("{"):])
+          errors = [item for item in compilation.get("errors", []) if item.get("severity") == "error"]
+          if errors:
+              raise SystemExit(errors)
+          contracts = compilation["contracts"]["T0Tokens.sol"]
+          for name in ("ConixToken20", "ConixToken721"):
+              bytecode = contracts[name]["evm"]["bytecode"]["object"]
+              print("CONIX_FIXTURE_" + name + "_BYTECODE=" + bytecode)
+          PY
