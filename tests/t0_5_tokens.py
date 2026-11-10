@@ -11,23 +11,14 @@ from hashlib import sha1
 import json
 from pathlib import Path
 
-from eth_abi import decode, encode
+from eth_abi import decode
 from eth_utils import keccak, to_checksum_address
 
-from fixture_protocol import ScenarioFailure
+from t0_5_chain import assert_event_matches_receipt, calldata, receipt, require, send
 
 TRANSFER = "Transfer(address,address,uint256)"
 ZERO = "0x" + "00" * 20
 ROOT = Path(__file__).resolve().parent / "fixtures" / "evm"
-
-
-def require(condition: bool, message: str) -> None:
-    if not condition:
-        raise ScenarioFailure(message)
-
-
-def calldata(signature: str, types: tuple[str, ...], values: tuple) -> str:
-    return "0x" + (keccak(text=signature)[:4] + encode(types, values)).hex()
 
 
 async def call(rpc, descriptor, contract: str, signature: str, types: tuple[str, ...],
@@ -38,14 +29,6 @@ async def call(rpc, descriptor, contract: str, signature: str, types: tuple[str,
     require(type(raw) is str and raw.startswith("0x"),
             "Deployed token did not return ABI-encoded data.")
     return decode(results, bytes.fromhex(raw[2:]))
-
-
-async def mined(rpc, descriptor, tx_hash: str):
-    receipt = await rpc(descriptor, "eth_getTransactionReceipt", [tx_hash])
-    require(type(receipt) is dict and receipt.get("status") == "0x1"
-            and receipt.get("transactionHash", "").lower() == tx_hash.lower(),
-            "Deployed token transaction has no successful matching receipt.")
-    return receipt
 
 
 def code_artifacts() -> dict:
@@ -84,7 +67,7 @@ async def deploy(descriptor, rpc) -> dict:
             }])
         finally:
             await rpc(descriptor, "anvil_stopImpersonatingAccount", [creator])
-        receipt = await mined(rpc, descriptor, tx_hash)
+        receipt = await receipt(rpc, descriptor, tx_hash)
         address = receipt.get("contractAddress")
         require(type(address) is str and address.startswith("0x") and len(address) == 42,
                 "Deployed Solidity fixture has no contract address.")
@@ -119,21 +102,7 @@ def only_transfer(receipt, contract):
     return matching[0]
 
 
-def assert_event_matches_receipt(event, log):
-    require(
-        event.transaction_hash.hex() == log["transactionHash"][2:].lower()
-        and event.block.hash.hex() == log["blockHash"][2:].lower()
-        and event.block.number == int(log["blockNumber"], 16)
-        and event.transaction_index == int(log["transactionIndex"], 16)
-        and event.log_index == int(log["logIndex"], 16)
-        and tuple(topic.hex() for topic in event.topics)
-        == tuple(t[2:].lower() for t in log["topics"])
-        and event.data.hex() == log["data"][2:].lower(),
-        "Indexed token event differs from its independent mined receipt.",
-    )
-
-
-async def initial_transfers(rpc, descriptor, tokens, send):
+async def initial_transfers(rpc, descriptor, tokens):
     """Place meaningful transfers before the shared mixed-contract block."""
     admin = descriptor["publicFixtureAccounts"]["admin"]["address"]
     customer = descriptor["publicFixtureAccounts"]["customer"]["address"]
@@ -150,7 +119,7 @@ async def initial_transfers(rpc, descriptor, tokens, send):
     return {"token20": transfer20, "token721": transfer721}
 
 
-async def mixed_transfers(rpc, descriptor, tokens, send):
+async def mixed_transfers(rpc, descriptor, tokens):
     """Submit two pending token transfers; the caller also submits PayToPlay."""
     admin = descriptor["publicFixtureAccounts"]["admin"]["address"]
     customer = descriptor["publicFixtureAccounts"]["customer"]["address"]
@@ -189,7 +158,7 @@ async def verify(reader, checkpoint, descriptor, tokens, receipts, rpc):
     expected = expected_transfer_values(descriptor)
     for alias in ("token20", "token721"):
         address = tokens[alias]["address"]
-        constructor = await mined(rpc, descriptor, tokens[alias]["creationTransaction"])
+        constructor = await receipt(rpc, descriptor, tokens[alias]["creationTransaction"])
         actual_receipts = (constructor, receipts["initial"][alias], receipts["mixed"][alias])
         page = await reader.events(
             checkpoint=checkpoint, contract=alias, event=TRANSFER, where={}, limit=10,
