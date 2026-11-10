@@ -173,7 +173,11 @@ def _encode_cursor(binding: str, position: tuple[int, int, int]) -> Cursor:
 
 def _decode_cursor(cursor: Cursor, binding: str, checkpoint: Checkpoint) -> tuple[int, int, int]:
     """Reject mismatched/oversized cursors before constructing any SQL."""
-    if type(cursor) is not str or not 0 < len(cursor) <= CURSOR_LIMIT or CURSOR_CHARS.fullmatch(cursor) is None:
+    if (
+        type(cursor) is not str
+        or not 0 < len(cursor) <= CURSOR_LIMIT
+        or CURSOR_CHARS.fullmatch(cursor) is None
+    ):
         raise CursorInvalid("Continuation cursor is not a bounded opaque token.")
 
     try:
@@ -252,8 +256,6 @@ class Reader:
     @staticmethod
     def _validate_checkpoint(checkpoint: Checkpoint, state: _State) -> None:
         """An append preserves a prefix; any repair changes its generation."""
-        _require_checkpoint(checkpoint)
-
         if (
             checkpoint.source_id != state.source_id
             or checkpoint.generation != state.generation
@@ -271,10 +273,7 @@ class Reader:
 
     @asynccontextmanager
     async def _snapshot(self, checkpoint: Checkpoint | None = None):
-        """Keep page SQL on one repeatable-read view; recheck after leaving it."""
-        if checkpoint is not None:
-            _require_checkpoint(checkpoint)
-
+        """Use an admitted checkpoint inside one snapshot, then recheck it."""
         try:
             async with self.connection.transaction():
                 await self.connection.execute(
@@ -362,7 +361,7 @@ class Reader:
             raise ResourceExceeded("Event page size is outside its configured bounds.")
         _require_checkpoint(checkpoint)
 
-        selected, descriptor = self._event(contract, event)
+        (selected, descriptor) = self._event(contract, event)
         filters = self._filters(descriptor, where)
         binding = _cursor_binding(checkpoint, selected, descriptor, filters)
         after = None if cursor is None else _decode_cursor(cursor, binding, checkpoint)
@@ -552,7 +551,9 @@ class Reader:
             or len(set(block_numbers)) != len(block_numbers)
             or type(include_finalized) is not bool
         ):
-            raise InvalidCallerValue("Ancestry numbers must identify unique retained blocks within the evidence cap.")
+            raise InvalidCallerValue(
+                "Ancestry numbers must identify unique retained blocks within the evidence cap."
+            )
 
         async with self._snapshot(checkpoint):
             result = await self.connection.execute(
