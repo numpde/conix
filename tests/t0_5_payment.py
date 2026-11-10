@@ -82,13 +82,22 @@ async def send(rpc, descriptor, sender, signature, types, values, *, value=0):
     return receipt
 
 
-async def sign_voucher(rpc, descriptor, *, customer, channel, total, invoice):
-    """Sign the deployed contract's EIP-712 digest, not a local reimplementation.
+async def fixture_voucher_key(rpc, descriptor):
+    """Use a pre-funded, unlocked Anvil account; handle no wallet keys."""
+    addresses = await rpc(descriptor, "eth_accounts", [])
+    excluded = {
+        entry["address"].lower()
+        for entry in descriptor["publicFixtureAccounts"].values()
+    }
+    require(type(addresses) is list, "Anvil did not expose its test signer accounts.")
+    for address in addresses:
+        if type(address) is str and address.lower() not in excluded:
+            return address
+    raise ScenarioFailure("Anvil has no independent unlocked fixture voucher signer.")
 
-    The fixture uses deliberately PUBLIC, deterministic test keys published
-    by dapp32. Only that public test key enters this test-only Cast process.
-    No real wallet or operator-held key may be supplied to this routine.
-    """
+
+async def sign_voucher(rpc, descriptor, *, signer, customer, channel, total, invoice):
+    """Ask Anvil's unlocked test wallet to sign; verify the deployed digest."""
     (digest,) = await read_contract(
         rpc, descriptor,
         "voucherDigest(address,uint256,uint256,bytes32)",
@@ -96,19 +105,50 @@ async def sign_voucher(rpc, descriptor, *, customer, channel, total, invoice):
         (customer, channel, total, invoice),
         ("bytes32",),
     )
-    fixed_public_key = descriptor["publicFixtureAccounts"]["payee"]["privateKey"]
+    typed = {
+        "types": {
+            "EIP712Domain": [
+                {"name": "name", "type": "string"},
+                {"name": "version", "type": "string"},
+                {"name": "chainId", "type": "uint256"},
+                {"name": "verifyingContract", "type": "address"},
+            ],
+            "Voucher": [
+                {"name": "customer", "type": "address"},
+                {"name": "channelId", "type": "uint256"},
+                {"name": "cumulativeTotal", "type": "uint256"},
+                {"name": "invoiceHash", "type": "bytes32"},
+            ],
+        },
+        "primaryType": "Voucher",
+        "domain": {
+            "name": "PayToPlay",
+            "version": "2",
+            "chainId": descriptor["chainId"],
+            "verifyingContract": descriptor["contracts"]["PayToPlay"]["address"],
+        },
+        "message": {
+            "customer": customer,
+            "channelId": str(channel),
+            "cumulativeTotal": str(total),
+            "invoiceHash": "0x" + invoice.hex(),
+        },
+    }
+    signature = await rpc(descriptor, "eth_signTypedData_v4", [signer, typed])
+    require(type(signature) is str and SIGNATURE_BYTES.fullmatch(signature) is not None,
+            "Anvil returned an invalid signed voucher.")
+
+    # Cast independently recovers the signer from the deployed digest.
+    # This does not reproduce the contract's EIP-712 hashing implementation.
     process = await asyncio.create_subprocess_exec(
-        "cast", "wallet", "sign", "--no-hash", "0x" + digest.hex(),
-        "--private-key", fixed_public_key,
-        stdout=asyncio.subprocess.PIPE,
+        "cast", "wallet", "verify", "--no-hash",
+        "--address", signer, "0x" + digest.hex(), signature,
+        stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
-    output, _ = await process.communicate()
-    signature = output.decode("ascii", errors="replace").strip()
-    require(process.returncode == 0 and SIGNATURE_BYTES.fullmatch(signature) is not None,
-            "Test-only Cast did not sign the deployed voucher digest.")
+    require(await process.wait() == 0,
+            "Fixture signature does not verify against the deployed voucher digest.")
     return bytes.fromhex(signature[2:])
-
 
 async def scan(writer):
     """Advance through every available block, never a receipt-derived subset."""
@@ -195,9 +235,9 @@ async def position(reader, checkpoint, customer, channel):
     return fields
 
 
-async def collect(rpc, descriptor, *, customer, collector, channel, total, cap, invoice):
+async def collect(rpc, descriptor, *, signer, customer, collector, channel, total, cap, invoice):
     signature = await sign_voucher(
-        rpc, descriptor, customer=customer, channel=channel, total=total, invoice=invoice,
+        rpc, descriptor, signer=signer, customer=customer, channel=channel, total=total, invoice=invoice,
     )
     return await send(
         rpc, descriptor, collector, COLLECT,
@@ -215,7 +255,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn):
     other_customer = admin
     collector = accounts["relayer"]["address"]
     payee = accounts["payee"]["address"]
-    key = payee  # Known public test key, distinct from customer and collector.
+    key = await fixture_voucher_key(rpc, descriptor)
     payment = descriptor["contracts"]["PayToPlay"]["address"]
     invoice_a = bytes.fromhex("11" * 32)
     invoice_b = bytes.fromhex("22" * 32)
@@ -255,7 +295,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn):
                     "Funding checkpoint has the wrong position state.")
 
         first = await collect(
-            rpc, descriptor, customer=customer, collector=collector,
+            rpc, descriptor, signer=key, customer=customer, collector=collector,
             channel=1, total=70, cap=30, invoice=invoice_a,
         )
         await scan(writer)
@@ -267,7 +307,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn):
                     "First collection checkpoint has the wrong position state.")
 
         second = await collect(
-            rpc, descriptor, customer=customer, collector=collector,
+            rpc, descriptor, signer=key, customer=customer, collector=collector,
             channel=1, total=70, cap=70, invoice=invoice_a,
         )
         await scan(writer)
@@ -279,7 +319,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn):
                     "Second collection checkpoint has the wrong position state.")
 
         zero = await collect(
-            rpc, descriptor, customer=customer, collector=collector,
+            rpc, descriptor, signer=key, customer=customer, collector=collector,
             channel=1, total=70, cap=70, invoice=invoice_a,
         )
         require(not any(
@@ -289,11 +329,11 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn):
         ), "Exhausted voucher unexpectedly emitted a collection event.")
 
         other_channel = await collect(
-            rpc, descriptor, customer=customer, collector=collector,
+            rpc, descriptor, signer=key, customer=customer, collector=collector,
             channel=2, total=15, cap=15, invoice=invoice_b,
         )
         other_actor = await collect(
-            rpc, descriptor, customer=other_customer, collector=collector,
+            rpc, descriptor, signer=key, customer=other_customer, collector=collector,
             channel=1, total=20, cap=20, invoice=invoice_c,
         )
 
@@ -466,6 +506,7 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
     catalog = prepare_catalog(catalog_file)
     account = descriptor["publicFixtureAccounts"]["customer"]["address"]
     collector = descriptor["publicFixtureAccounts"]["relayer"]["address"]
+    key = await fixture_voucher_key(rpc, descriptor)
     invoice = bytes.fromhex("44" * 32)
 
     async with open_writer(
@@ -476,7 +517,7 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
                 "Reorganization was not started from the restarted durable prefix.")
         snapshot = await rpc(descriptor, "evm_snapshot", [])
         branch_a = await collect(
-            rpc, descriptor, customer=account, collector=collector,
+            rpc, descriptor, signer=key, customer=account, collector=collector,
             channel=2, total=20, cap=5, invoice=invoice,
         )
         await scan(writer)
