@@ -31,47 +31,32 @@ class EvmImageChecks(unittest.TestCase):
         self.assertEqual(set(fixtures), {"ConixToken20", "ConixToken721"})
         self.assertNotEqual(fixtures["ConixToken20"], fixtures["ConixToken721"])
 
-    def test_cast_signs_and_verifies_fixed_prehashed_digest(self) -> None:
+    def test_cast_verifies_a_fixed_public_digest_signature(self) -> None:
+        """Prove the actual no-hash verifier without any wallet key in argv."""
         digest = "0x" + "ab" * 32
-        test_key = "0x" + "00" * 31 + "01"
-
-        signed = subprocess.run(
-            [
-                "cast", "wallet", "sign", "--no-hash", digest,
-                "--private-key", test_key,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
+        signer = "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
+        signature_words = (
+            "6170354e527d7bb63343788c1b7b317b69cdc5ddb05e7e93aa4c1b1635e55be"
+            "4420ff721da6f5b2cbf49a7c5194264e47e1da3db875ea6cffe02a88e9d6ebf37"
         )
+        # A recovered secp256k1 signature has one of two recovery parities.
+        # Both candidate signatures are fixed, public test vectors.
+        successful_parities = []
+        for parity in (27, 28):
+            verified = subprocess.run(
+                [
+                    "cast", "wallet", "verify", "--no-hash", "--address",
+                    signer, digest, "0x" + signature_words + f"{parity:02x}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            if verified.returncode == 0:
+                successful_parities.append(parity)
 
-        self.assertEqual(signed.returncode, 0, "Cast rejected the fixed public signing vector")
-        actual_signature = signed.stdout.strip()
-        self.assertEqual(len(actual_signature), 132)
-        self.assertTrue(actual_signature.startswith("0x"))
-        self.assertIn(bytes.fromhex(actual_signature[2:])[-1], (27, 28))
-
-        # T0-5 uses wallet verify, not wallet sign, for the actual voucher.
-        signer = subprocess.run(
-            ["cast", "wallet", "address", "--private-key", test_key],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        self.assertEqual(signer.returncode, 0)
-        verified = subprocess.run(
-            [
-                "cast", "wallet", "verify", "--no-hash",
-                "--address", signer.stdout.strip(), digest, actual_signature,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        self.assertEqual(verified.returncode, 0, "Cast failed its actual T0-5 digest verification path")
+        self.assertEqual(len(successful_parities), 1)
 
 
 class InstalledFixtureWiring(unittest.IsolatedAsyncioTestCase):
