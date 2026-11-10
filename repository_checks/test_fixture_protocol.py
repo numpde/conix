@@ -175,3 +175,45 @@ class AcceptancePublicSourceContracts(unittest.TestCase):
         ):
             with self.subTest(case=mutation), self.assertRaises(FixtureError):
                 admit_public_acceptance_source(mutation)
+
+
+class PaymentPhaseReceiptContracts(unittest.TestCase):
+    """Only source and chain facts may pass from a test process to the next."""
+
+    def test_exact_public_receipt_is_admitted(self):
+        from tools.fixtures.protocol import acceptance_payments
+
+        record = {
+            "schema": "conix.acceptance.payments.v1",
+            "checkpoint": {
+                "source": "ab" * 32,
+                "generation": "00000000-0000-0000-0000-000000000001",
+                "start": 2,
+                "revision": 7,
+                "block": {
+                    "number": 9, "hash": "cd" * 32,
+                    "parent": "ef" * 32, "timestamp": 100,
+                },
+            },
+            "transactions": ["0x" + f"{i:02x}" * 32 for i in range(4)],
+            "customer": ADDRESS,
+            "channel": 1,
+            "collected": [30, 40],
+        }
+        self.assertEqual(acceptance_payments(encode(record)), record)
+
+        mutations = (
+            {**record, "privateKey": "0x" + "66" * 32},
+            {**record, "transactions": [record["transactions"][0]] * 4},
+            {**record, "checkpoint": {**record["checkpoint"], "source": "invalid"}},
+            {**record, "checkpoint": {**record["checkpoint"], "start": 10}},
+            {**record, "checkpoint": {**record["checkpoint"], "generation": "none"}},
+            {**record, "collected": [30, 30]},
+            {**record, "channel": True},
+        )
+        for mutation in mutations:
+            with self.subTest(fields=set(mutation)), self.assertRaises(FixtureError):
+                acceptance_payments(encode(mutation))
+
+        with self.assertRaises(FixtureError):
+            acceptance_payments(b'{"schema":0,"schema":1}\n')
