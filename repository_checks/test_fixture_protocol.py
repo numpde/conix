@@ -275,6 +275,21 @@ class KeylessConsumerSourceContracts(unittest.TestCase):
             },
         )
 
+    def test_selected_abi_type_and_name_cannot_smuggle_wallet_key_bytes(self):
+        from tools.fixtures.protocol import public_test_source
+
+        for (field, value_kind) in (("name", "name"), ("type", "type")):
+            descriptor = valid()
+            public_key = descriptor["publicFixtureAccounts"]["customer"]["privateKey"]
+            selected = next(
+                entry for entry in descriptor["contracts"]["PayToPlay"]["abi"]
+                if entry.get("name") == "viewPosition"
+            )
+            selected["inputs"][0][field] = public_key
+
+            with self.subTest(field=value_kind), self.assertRaises(FixtureError):
+                public_test_source(descriptor)
+
     def test_malformed_or_private_consumer_source_is_refused(self):
         from tools.fixtures.protocol import (
             admit_public_test_source, public_test_source,
