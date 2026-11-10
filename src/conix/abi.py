@@ -16,7 +16,7 @@ from eth_utils import (
     event_signature_to_log_topic, function_signature_to_4byte_selector,
     is_checksum_address, to_checksum_address,
 )
-from eth_utils.abi import abi_to_signature, collapse_if_tuple
+from eth_utils.abi import abi_to_signature
 
 
 class UnsupportedABI(ValueError):
@@ -140,129 +140,111 @@ def _name(value, *, allow_empty=False):
     return value
 
 
-def _check_depth(entry, limits, depth):
-    """Reject hostile tuple trees before a library recursively expands them."""
+def _type(entry: dict, limits: AbiLimits, depth: int = 1) -> ABIValueType:
+    """Compile one ABI declaration, using eth-abi as the grammar authority.
+
+    Component names are metadata; the library validates their types. The
+    recursion and fixed-array bounds protect grammar expansion from hostile
+    or cyclic JSON-like objects.
+    """
     if depth > limits.max_nesting:
         raise ResourceExceeded("ABI type nesting exceeds the admitted depth.")
     if type(entry) is not dict or type(entry.get("type")) is not str:
         raise UnsupportedABI("ABI argument lacks a type declaration.")
-    raw = entry["type"]
-    dimensions = raw.count("[")
-    if depth + dimensions > limits.max_nesting:
-        raise ResourceExceeded("ABI array dimensions exceed the admitted depth.")
-    if raw.split("[", 1)[0] == "tuple":
-        components = entry.get("components")
-        if type(components) is not list or not 0 < len(components) <= 256:
-            raise UnsupportedABI("Tuple requires bounded components.")
-        for component in components:
-            _check_depth(component, limits, depth + dimensions + 1)
 
-
-def _type(entry: dict, limits: AbiLimits) -> ABIValueType:
-    _check_depth(entry, limits, 1)
-    if type(entry) is not dict or type(entry.get("type")) is not str:
-        raise UnsupportedABI("ABI argument lacks a type declaration.")
-
-    raw = entry["type"]
-    if len(raw) > 256 or "[" in raw and len(raw.split("[", 1)[1]) > 128:
+    declared_type = entry["type"]
+    if len(declared_type) > 256:
         raise ResourceExceeded("Declared ABI type is too large.")
-    base = raw.split("[", 1)[0]
-    suffix = raw[len(base):]
-    if not _ARRAY.fullmatch(suffix) or not (
+
+    base = declared_type.split("[", 1)[0]
+    suffix = declared_type[len(base):]
+    if len(suffix) > 128 or not _ARRAY.fullmatch(suffix) or not (
         base == "tuple" or _SCALAR.fullmatch(base)
     ):
         raise UnsupportedABI("Unsupported Solidity ABI family or array syntax.")
-    for dimension in re.findall(r"\[([0-9]*)\]", suffix):
-        if dimension and (
-            len(dimension) > 6 or int(dimension) > limits.max_elements
-        ):
-            raise ResourceExceeded("Declared fixed ABI array exceeds the element cap.")
+
+    dimensions = re.findall(r"\[([0-9]*)\]", suffix)
+    if depth + len(dimensions) > limits.max_nesting:
+        raise ResourceExceeded("ABI array dimensions exceed the admitted depth.")
+
+    components = ()
     if base == "tuple":
-        components = entry.get("components")
-        if type(components) is not list or not 0 < len(components) <= 256:
+        declared_components = entry.get("components")
+        if type(declared_components) is not list or not 0 < len(declared_components) <= 256:
             raise UnsupportedABI("Tuple requires a bounded, nonempty component list.")
-    elif "components" in entry:
-        raise UnsupportedABI("Non-tuple argument has tuple components.")
+
+        components = tuple(
+            ABIArgument(
+                name=_name(item.get("name", ""), allow_empty=True),
+                type=_type(item, limits, depth + len(dimensions) + 1),
+                ordinal=ordinal,
+            )
+            for ordinal, item in enumerate(declared_components)
+        )
+        canonical_base = "(" + ",".join(arg.type.canonical for arg in components) + ")"
+    else:
+        if "components" in entry:
+            raise UnsupportedABI("Non-tuple argument has tuple components.")
+        canonical_base = base
 
     try:
-        # Reject unsupported original families before grammar normalization:
-        # notably, the eth-abi normalizer maps 'function' to 'bytes24'.
-        normalized = normalize(collapse_if_tuple(entry))
-        parsed = parse(normalized)
+        parsed = parse(normalize(canonical_base + suffix))
         parsed.validate()
     except Exception:
         raise UnsupportedABI("ABI type has an invalid Solidity grammar.") from None
 
-    def compile_node(node, depth):
-        if depth > limits.max_nesting:
-            raise ResourceExceeded("ABI type nesting exceeds the admitted depth.")
+    leaf = parsed
+    while leaf.is_array:
+        leaf = leaf.item_type
 
-        if node.is_array:
-            dimension = node.arrlist[-1]
-            count = dimension[0] if dimension else None
-            if count is not None and (type(count) is not int or not 1 <= count <= limits.max_elements):
-                raise ResourceExceeded("Fixed ABI array exceeds the admitted length.")
-            child = compile_node(node.item_type, depth + 1)
-            result = ABIValueType(
-                canonical=node.to_type_str(), kind="array", dynamic=node.is_dynamic,
-                item=child, length=count,
-            )
-        elif isinstance(node, TupleType):
-            declared = entry["components"] if base == "tuple" else None
-            if declared is None or len(declared) != len(node.components):
-                raise UnsupportedABI("Tuple component declaration is inconsistent.")
-            arguments = tuple(
-                ABIArgument(
-                    name=_name(item.get("name", ""), allow_empty=True),
-                    type=_type_member(item, limits, depth + 1),
-                    ordinal=index,
-                )
-                for index, item in enumerate(declared)
-            )
-            result = ABIValueType(
-                canonical=node.to_type_str(), kind="tuple", dynamic=node.is_dynamic,
-                components=arguments,
-            )
-        elif isinstance(node, BasicType):
-            kind, width = node.base, node.sub
-            if kind in ("uint", "int"):
-                if type(width) is not int or width not in range(8, 257, 8):
-                    raise UnsupportedABI("Unsupported ABI integer width.")
-            elif kind == "bytes":
-                if width is not None and (
-                    type(width) is not int or not 1 <= width <= 32
-                ):
-                    raise UnsupportedABI("Unsupported ABI bytesN width.")
-            elif kind not in ("address", "bool", "string"):
-                raise UnsupportedABI("Unsupported ABI scalar type.")
-            result = ABIValueType(
-                canonical=node.to_type_str(), kind=kind,
-                dynamic=node.is_dynamic, width=width,
-            )
-        else:
-            raise UnsupportedABI("Unrecognized ABI grammar node.")
+    if isinstance(leaf, TupleType) and base == "tuple":
+        result = ABIValueType(
+            canonical=leaf.to_type_str(),
+            kind="tuple",
+            dynamic=any(arg.type.dynamic for arg in components),
+            components=components,
+        )
+    elif isinstance(leaf, BasicType) and base != "tuple":
+        kind, width = leaf.base, leaf.sub
+        if kind in ("uint", "int"):
+            if type(width) is not int or width not in range(8, 257, 8):
+                raise UnsupportedABI("Unsupported ABI integer width.")
+        elif kind == "bytes":
+            if width is not None and (
+                type(width) is not int or not 1 <= width <= 32
+            ):
+                raise UnsupportedABI("Unsupported ABI bytesN width.")
+        elif kind not in ("address", "bool", "string"):
+            raise UnsupportedABI("Unsupported ABI scalar type.")
 
+        result = ABIValueType(
+            canonical=leaf.to_type_str(),
+            kind=kind,
+            dynamic=leaf.is_dynamic,
+            width=width,
+        )
+    else:
+        raise UnsupportedABI("ABI grammar and component declaration disagree.")
+
+    if _head_size(result) > limits.max_bytes:
+        raise ResourceExceeded("Static ABI shape exceeds maximum encoded size.")
+
+    for dimension in dimensions:
+        size = int(dimension) if dimension else None
+        if size is not None and not 1 <= size <= limits.max_elements:
+            raise ResourceExceeded("Fixed ABI array exceeds the admitted length.")
+
+        result = ABIValueType(
+            canonical=result.canonical + "[" + dimension + "]",
+            kind="array",
+            dynamic=size is None or result.dynamic,
+            item=result,
+            length=size,
+        )
         if _head_size(result) > limits.max_bytes:
             raise ResourceExceeded("Static ABI shape exceeds maximum encoded size.")
-        return result
 
-    return compile_node(parsed, 1)
-
-
-def _type_member(entry, limits, depth):
-    """The same compiler for nested components, with a cumulative depth cap."""
-    nested = _type(entry, limits)
-    if depth + _depth(nested) - 1 > limits.max_nesting:
-        raise ResourceExceeded("Nested ABI tuple/array exceeds the depth budget.")
-    return nested
-
-
-def _depth(spec):
-    if spec.kind == "array":
-        return 1 + _depth(spec.item)
-    if spec.kind == "tuple":
-        return 1 + max((_depth(arg.type) for arg in spec.components), default=0)
-    return 1
+    return result
 
 
 def _head_size(spec):
@@ -308,13 +290,8 @@ def compile_event(entry: dict, *, limits: AbiLimits = DEFAULT_LIMITS) -> EventDe
     name = _name(entry.get("name"))
     arguments = _arguments(entry.get("inputs"), limits, event=True)
     signature = name + "(" + ",".join(arg.type.canonical for arg in arguments) + ")"
-    # Keep the installed signature utility as a cross-check; unlike input
-    # layout, event topic0 does not encode indexed flags.
-    try:
-        if abi_to_signature(entry) != signature:
-            raise UnsupportedABI("Noncanonical event signature declaration.")
-    except (ValueError, TypeError, KeyError):
-        raise UnsupportedABI("Invalid event signature declaration.") from None
+    # A canonical compiled signature determines topic0; indexed flags remain
+    # part of this descriptor, not the event signature hash.
     topic0 = event_signature_to_log_topic(signature)
     return EventDescriptor(
         name=name, signature=signature, topic0=topic0,
@@ -333,11 +310,6 @@ def compile_function(entry: dict, *, limits: AbiLimits = DEFAULT_LIMITS) -> Func
     inputs = _arguments(entry.get("inputs"), limits, event=False)
     outputs = _arguments(entry.get("outputs"), limits, event=False)
     signature = name + "(" + ",".join(arg.type.canonical for arg in inputs) + ")"
-    try:
-        if abi_to_signature(entry) != signature:
-            raise UnsupportedABI("Noncanonical function signature declaration.")
-    except (ValueError, TypeError, KeyError):
-        raise UnsupportedABI("Invalid function signature declaration.") from None
     return FunctionDescriptor(
         name=name, signature=signature,
         selector=function_signature_to_4byte_selector(signature),
@@ -492,10 +464,7 @@ def _caller(spec, value, limits, budget):
     if spec.kind in ("uint", "int"):
         if type(value) is not int:
             raise InvalidCallerValue("ABI integer requires an exact Python int, not bool/float.")
-        minimum = 0 if spec.kind == "uint" else -(1 << (spec.width - 1))
-        maximum = (1 << spec.width) - 1 if spec.kind == "uint" else (1 << (spec.width - 1)) - 1
-        if not minimum <= value <= maximum:
-            raise InvalidCallerValue("ABI integer value is out of range.")
+        # eth-abi enforces the declared signedness and width during encoding.
     elif spec.kind == "bool":
         if type(value) is not bool:
             raise InvalidCallerValue("ABI bool requires a Python bool.")
