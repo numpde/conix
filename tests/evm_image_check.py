@@ -15,6 +15,13 @@ class EvmImageChecks(unittest.TestCase):
     def test_installed_acceptance_program(self) -> None:
         self.assertTrue(callable(generic_acceptance.main))
 
+    def test_compiled_token_bytes_match_reviewed_solidity(self) -> None:
+        from t0_5_tokens import code_artifacts
+
+        fixtures = code_artifacts()
+        self.assertEqual(set(fixtures), {"ConixToken20", "ConixToken721"})
+        self.assertNotEqual(fixtures["ConixToken20"], fixtures["ConixToken721"])
+
     def test_cast_signs_fixed_prehashed_digest(self) -> None:
         digest = "0x" + "ab" * 32
         test_key = "0x" + "00" * 31 + "01"
