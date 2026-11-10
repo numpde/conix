@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fixture_protocol import (FixtureError, ScenarioFailure, _bad_constant, _pairs,
                               admit_public_acceptance_source, admit_tokens, decode, phase_failure_record)
 from abi_contract_vectors import VOUCHER_SIGNATURE
+from abi_golden_vectors import TRANSFER_SIGNATURE
 import httpx
 
 
@@ -132,7 +133,7 @@ def catalog_path(descriptor, genesis_hash, tokens=None):
                 f'[contracts.{alias}]\n'
                 f'address = "{tokens[alias]["address"]}"\n'
                 f'abi_file = "{abi}"\n'
-                'events = ["Transfer(address,address,uint256)"]\n'
+                f'events = [{json.dumps(TRANSFER_SIGNATURE)}]\n'
             )
     config = root / "source.toml"
     config.write_text(
