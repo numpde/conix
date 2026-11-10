@@ -124,10 +124,18 @@ async def sign_voucher(rpc, descriptor, *, signer, customer, channel, total, inv
     )
     try:
         status = await asyncio.wait_for(process.wait(), timeout=10)
+    except TimeoutError as error:
+        raise ScenarioFailure(
+            "Cast voucher verification timed out; no collection transaction was submitted."
+        ) from error
     finally:
-        # A timed-out or cancelled test must not orphan its Cast child.
+        # A cancelled test must not orphan Cast, and an already-exited child
+        # must not replace the original failure with ProcessLookupError.
         if process.returncode is None:
-            process.kill()
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
             await process.wait()
 
     require(status == 0, "Fixture signature differs from the deployed voucher digest.")
