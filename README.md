@@ -103,16 +103,29 @@ project. The dapp32 deployment and contract are external test evidence,
 not a new PayToPlay-specific Conix code path.
 
 The generic acceptance runner uses the installed package, a real Anvil RPC,
-private stdin handoff, and a separate schema-owner/consumer lifecycle.
-Private account data never reaches schema initialization. The owned campaign now defines T0-5 test phases that deploy real compiled
-ERC-20/ERC-721 fixtures BEFORE owner schema initialization, index a mixed
-token/payment block, verify signed PayToPlay collections and filtered history,
-restart in new processes, then exercise an actual Anvil fork and manual repair.
-The borrowed-fixture mode retains the nondestructive baseline only.
+private stdin handoff, and separate schema-owner/consumer lifecycles.
+Private account data never reaches schema initialization.
 
-This opt-in cross-repository campaign must run successfully before T0-5 can be
-declared qualified. Ordinary CI Anvil tests establish generic reader/writer
-behavior, not this dapp32 end-to-end workflow.
+The owned campaign deploys real compiled ERC-20/ERC-721 fixtures before schema
+initialization, indexes a mixed token/payment block, verifies signed PayToPlay
+collections and filtered history, restarts in a fresh process, and exercises
+an Anvil reorganization with manual repair. Borrowed-fixture mode runs only
+the nondestructive baseline.
+
+After explicit dependency acquisition and a verified rootless Docker context,
+build the EVM test runner from the already selected wheelhouse, then run:
+
+    evm_runner="$(make -s image/evm-test-runner/build DOCKER_CONTEXT=agentic WHEELHOUSE="$HOME/Downloads/wheelhouse")"
+    make image/evm-test-runner/check DOCKER_CONTEXT=agentic IMAGE="$evm_runner"
+    make campaign/indexer/acceptance/run DOCKER_CONTEXT=agentic RUNNER_IMAGE="$evm_runner" DAPP32_DIR="$HOME/repos/dapp32"
+
+Select the actual local Docker context and prepared dapp32 checkout. The
+campaign creates and retires an isolated producer fixture and a separate
+Conix SQL project; on uncertain cleanup, inspect the reported ownership IDs.
+
+The cross-repository campaign must pass before T0-5 is qualified. Ordinary
+CI Anvil tests establish generic reader/writer behavior, not this dapp32
+end-to-end workflow.
 
 Security and next step
 ----------------------
