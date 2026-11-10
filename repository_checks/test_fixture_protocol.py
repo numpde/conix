@@ -217,3 +217,41 @@ class PaymentPhaseReceiptContracts(unittest.TestCase):
 
         with self.assertRaises(FixtureError):
             acceptance_payments(b'{"schema":0,"schema":1}\n')
+
+
+
+class TokenPhaseReceiptContracts(unittest.TestCase):
+    """Deployment coordinates, never wallet data, cross the schema-owner boundary."""
+
+    def test_two_distinct_deployed_contracts_are_required(self):
+        from tools.fixtures.protocol import acceptance_tokens, admit_tokens
+
+        record = {
+            "schema": "conix.acceptance.tokens.v1",
+            "token20": {
+                "address": "0x" + "11" * 20,
+                "deploymentBlock": 3,
+                "creationTransaction": "0x" + "12" * 32,
+            },
+            "token721": {
+                "address": "0x" + "22" * 20,
+                "deploymentBlock": 4,
+                "creationTransaction": "0x" + "23" * 32,
+            },
+        }
+        self.assertEqual(acceptance_tokens(encode(record)), record)
+        self.assertEqual(admit_tokens(record), record)
+        self.assertIsNone(admit_tokens(None))
+
+        mutants = (
+            {**record, "privateKey": "0x" + "aa" * 32},
+            {**record, "token721": record["token20"]},
+            {**record, "token20": {**record["token20"], "deploymentBlock": True}},
+            {**record, "token20": {**record["token20"], "creationTransaction": "wrong"}},
+            {**record, "token721": {**record["token721"], "address": "0xdead"}},
+        )
+        for candidate in mutants:
+            with self.subTest(mutation=candidate), self.assertRaises(FixtureError):
+                acceptance_tokens(encode(candidate))
+        with self.assertRaises(FixtureError):
+            acceptance_tokens(b'{"schema":0,"schema":1}\n')
