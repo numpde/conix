@@ -327,10 +327,8 @@ def public_test_source(descriptor: dict) -> dict:
 
 def admit_public_test_source(source: dict, *, fixture_id: str) -> dict:
     """Admit the one keyless source projected for installed test consumers."""
-    payment = (
-        source.get("contracts", {}).get("PayToPlay")
-        if type(source) is dict and type(source.get("contracts")) is dict else None
-    )
+    contracts = source.get("contracts") if type(source) is dict else None
+    payment = contracts.get("PayToPlay") if type(contracts) is dict else None
     accounts = source.get("publicFixtureAccounts") if type(source) is dict else None
 
     if (
@@ -342,7 +340,7 @@ def admit_public_test_source(source: dict, *, fixture_id: str) -> dict:
         or source["fixtureId"] != fixture_id
         or type(source["chainId"]) is not int or source["chainId"] != 31337
         or source["rpcUrl"] != "http://pay-to-play-anvil:8545"
-        or set(source["contracts"]) != {"PayToPlay"}
+        or type(contracts) is not dict or set(contracts) != {"PayToPlay"}
         or type(payment) is not dict
         or set(payment) != {"address", "deploymentBlock", "abi"}
         or not _address(payment["address"])
