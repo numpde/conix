@@ -50,7 +50,7 @@ def inventory(requirements, temp: Path, label: str) -> str:
         if len(parts) < 5:
             raise ValueError(f"Invalid wheel name in selected {label} closure.")
 
-        name, version = parts[:2]
+        (name, version) = parts[:2]
         project = name.lower().replace("_", "-")
         if project in seen:
             raise ValueError(f"Two selected wheels for {project}; an exact lock needs one.")

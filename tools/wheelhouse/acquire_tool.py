@@ -102,7 +102,7 @@ def download(url, target, expected):
             raise TransientDownload(detail, delay) from None
         raise OSError(detail) from None
     except (OSError, http.client.HTTPException) as error:
-        detail, transient = network_failure(error)
+        (detail, transient) = network_failure(error)
         if transient:
             raise TransientDownload(detail) from None
 
@@ -121,7 +121,7 @@ def download(url, target, expected):
             try:
                 block = source.read1(1024 * 1024)
             except (OSError, http.client.HTTPException) as error:
-                detail, transient = network_failure(error)
+                (detail, transient) = network_failure(error)
                 if transient:
                     raise TransientDownload(detail) from None
 
@@ -177,7 +177,7 @@ def cached(directory, name, expected):
 def acquire(pool, pin):
     """Publish one pinned tool without clobbering concurrent pool users."""
     release = json.loads(pin.read_text(encoding="utf-8"))
-    version, expected = release["version"], release["sha256"]
+    (version, expected) = (release["version"], release["sha256"])
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) or not re.fullmatch(r"[0-9a-f]{64}", expected):
         raise ValueError("the tool release pin is malformed")
 

@@ -35,7 +35,8 @@ class SharedWheelhouse:
         # CI uses the host account's nonzero numeric UID and GID instead.
         security_options_json = docker.run(
             "info", "--format", "{{json .SecurityOptions}}",
-            timeout=10, capture=True,
+            timeout=10,
+            capture=True,
         )
 
         try:
@@ -70,7 +71,9 @@ class SharedWheelhouse:
             "run", *worker_grants(self.pool, user=self.user, network=network, write=write),
             *self.input_mounts(), *extra_mounts, "--entrypoint", "python",
             self.images["python_base"], "-I", *argv,
-            timeout=timeout, capture=capture, public_diagnostic=network,
+            timeout=timeout,
+            capture=capture,
+            public_diagnostic=network,
         )
 
     def check(self):
@@ -98,7 +101,9 @@ class SharedWheelhouse:
                 extra_mounts=(
                     "--mount", f"type=bind,src={ROOT / 'tools/wheelhouse/acquire_tool.py'},dst=/input/bootstrap.py,readonly",
                 ),
-                network=True, write=True, timeout=390,
+                network=True,
+                write=True,
+                timeout=390,
             )
 
             if not has_tool(self.pool, self.pin):
@@ -131,7 +136,10 @@ class SharedWheelhouse:
                     "--lock", "/input/normalized.lock",
                     "--index-url", "https://pypi.org/simple",
                     "--pool", "/wheelhouse",
-                    network=True, write=False, timeout=240, capture=True,
+                    network=True,
+                    write=False,
+                    timeout=240,
+                    capture=True,
                     extra_mounts=source_lock_mount,
                 )
 
@@ -145,7 +153,9 @@ class SharedWheelhouse:
                         "acquire", "--lock", "/input/pylock.toml",
                         "--source-lock", "/input/normalized.lock",
                         "--pool", "/wheelhouse",
-                        network=True, write=True, timeout=390,
+                        network=True,
+                        write=True,
+                        timeout=390,
                         extra_mounts=source_lock_mount + (
                             "--mount", f"type=bind,src={pylock_path},dst=/input/pylock.toml,readonly",
                         ),
@@ -214,14 +224,21 @@ class SharedWheelhouse:
 
             with stream_error_path.open("wb") as stream_error_file:
                 streamer_process = subprocess.Popen(
-                    streamer_argv, cwd=ROOT, stdout=subprocess.PIPE,
-                    stderr=stream_error_file, start_new_session=True,
+                    streamer_argv,
+                    cwd=ROOT,
+                    stdout=subprocess.PIPE,
+                    stderr=stream_error_file,
+                    start_new_session=True,
                 )
 
                 try:
                     builder_process = subprocess.Popen(
-                        build_argv, cwd=ROOT, stdin=streamer_process.stdout,
-                        stdout=sys.stderr, stderr=sys.stderr, env=self.docker.docker_environment,
+                        build_argv,
+                        cwd=ROOT,
+                        stdin=streamer_process.stdout,
+                        stdout=sys.stderr,
+                        stderr=sys.stderr,
+                        env=self.docker.docker_environment,
                         start_new_session=True,
                     )
                 except BaseException:
