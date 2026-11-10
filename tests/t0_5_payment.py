@@ -125,10 +125,17 @@ async def sign_voucher(rpc, descriptor, *, signer, customer, channel, total, inv
             "Fixture signature does not verify against the deployed voucher digest.")
     return bytes.fromhex(signature[2:])
 
-async def scan(writer):
-    """Advance through every available block, never a receipt-derived subset."""
-    while await writer.advance_one() is not None:
-        pass
+async def scan_to_tip(writer):
+    """Complete the selected prefix, refusing an unexpectedly long fixture.
+
+    The campaign is a bounded acceptance test, not an unattended catch-up
+    worker. A continuously changing chain must not keep it running forever.
+    """
+    for _ in range(256):
+        if await writer.advance_one() is None:
+            return
+
+    raise ScenarioFailure("T0-5 fixture exceeded 256 blocks without reaching the tip.")
 
 
 def selected_receipt_log(receipt, contract):
@@ -359,7 +366,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
     async with open_writer(
         catalog=catalog, database_dsn=writer_dsn, rpc_url=descriptor["rpcUrl"],
     ) as writer:
-        await scan(writer)
+        await scan_to_tip(writer)
         async with open_reader(
             catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
         ) as reader:
@@ -372,7 +379,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             signer=key, customer=customer, collector=collector, invoice=invoice_a,
         )
         first = mixed_tokens["payment"]
-        await scan(writer)
+        await scan_to_tip(writer)
         async with open_reader(
             catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
         ) as reader:
@@ -388,7 +395,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             rpc, descriptor, signer=key, customer=customer, collector=collector,
             channel=1, total=70, cap=70, invoice=invoice_a,
         )
-        await scan(writer)
+        await scan_to_tip(writer)
         async with open_reader(
             catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
         ) as reader:
@@ -433,7 +440,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             ("address", "uint256"), (customer, 1),
         )
         require(withdrawal["status"] == "0x1", "Due withdrawal did not complete.")
-        await scan(writer)
+        await scan_to_tip(writer)
 
         async with open_reader(
             catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
@@ -544,7 +551,7 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
             "transfer(address,uint256)", ("address", "uint256"), (account, 5),
             contract=tokens["token20"]["address"],
         )
-        await scan(writer)
+        await scan_to_tip(writer)
 
         async with open_reader(
             catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
@@ -586,7 +593,7 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
         require(repaired.generation != old.generation
                 and repaired.last_block == ancestor,
                 "Explicit manual repair did not retire the conflicting suffix.")
-        await scan(writer)
+        await scan_to_tip(writer)
         require((await writer.inspect()).last_block.hash.hex() == replacement["hash"][2:].lower(),
                 "Reindexing did not publish the replacement canonical branch.")
 
