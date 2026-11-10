@@ -249,24 +249,38 @@ async def mine_mixed_block(rpc, descriptor, tokens, *, signer, customer, collect
 
 async def assert_collection_history(reader, checkpoint, *, expected, customer, payment_address, payee):
     """A SQL-filtered customer/channel view must match independent mined logs."""
-    for (account, channel, receipt, outcome) in expected:
-        log = selected_receipt_log(receipt, payment_address)
+    by_position = {}
+    for (account, channel, mined_receipt, values) in expected:
+        by_position.setdefault((account, channel), []).append((mined_receipt, values))
+
+    for ((account, channel), observations) in by_position.items():
         page = await reader.events(
-            checkpoint=checkpoint, contract="payment", event=VOUCHER,
+            checkpoint=checkpoint,
+            contract="payment",
+            event=VOUCHER,
             where={"customer": account, "channelId": channel},
             limit=100,
         )
-        matching = [
-            event for event in page.events
-            if event.transaction_hash.hex() == receipt["transactionHash"][2:].lower()
-        ]
-        require(len(matching) == 1, "A mined positive collection is missing from history.")
-        assert_event_matches_receipt(matching[0], log)
         require(
-            matching[0].values ==
-            (to_checksum_address(account), channel, to_checksum_address(payee), *outcome),
-            "The indexed event has incorrect typed payment values.",
+            page.complete and len(page.events) == len(observations),
+            "The filtered checkpoint has missing or unexpected payment events.",
         )
+
+        for (event, (mined_receipt, outcome)) in zip(
+            page.events, observations, strict=True,
+        ):
+            assert_event_matches_receipt(
+                event, selected_receipt_log(mined_receipt, payment_address),
+            )
+            require(
+                event.values == (
+                    to_checksum_address(account),
+                    channel,
+                    to_checksum_address(payee),
+                    *outcome,
+                ),
+                "The indexed event has incorrect typed payment values.",
+            )
 
     first_page = await reader.events(
         checkpoint=checkpoint, contract="payment", event=VOUCHER,
