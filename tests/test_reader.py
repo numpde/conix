@@ -5,8 +5,8 @@ from pathlib import Path
 import unittest
 from uuid import UUID
 
-from abi_golden_vectors import FROM, TO
-from conix.abi import InvalidCallerValue
+from abi_golden_vectors import ERC721_ABI, FROM, TO
+from conix.abi import InvalidCallerValue, compile_event
 from conix.catalog import prepare_catalog
 from conix.journal import Block
 from conix.reader import (
@@ -16,6 +16,7 @@ from conix.reader import (
     _cursor_binding,
     _decode_cursor,
     _encode_cursor,
+    _require_checkpoint,
 )
 
 
@@ -48,6 +49,23 @@ class ReaderCursorContracts(unittest.TestCase):
             self.reader._filters(self.event, {"value": 7})
         with self.assertRaises(InvalidCallerValue):
             self.reader._filters(self.event, {"from": 7})
+
+    def test_third_indexed_topic_is_a_distinct_sql_filter_position(self):
+        erc721 = compile_event(ERC721_ABI)
+        token_id = 1 << 255
+
+        selected = self.reader._filters(erc721, {"tokenId": token_id})
+        self.assertEqual(selected, ((2, 3, token_id.to_bytes(32, "big")),))
+
+    def test_malformed_external_checkpoint_is_rejected_before_cursor_encoding(self):
+        for invalid in (
+            replace(self.checkpoint, source_id="not bytes"),
+            replace(self.checkpoint, generation="not a UUID"),
+            replace(self.checkpoint, block=replace(self.checkpoint.block, hash=b"bad")),
+            replace(self.checkpoint, block=replace(self.checkpoint.block, number=True)),
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(CursorInvalid):
+                _require_checkpoint(invalid)
 
     def test_cursor_binds_exact_checkpoint_event_and_canonical_filters(self):
         filters = self.reader._filters(self.event, {"to": TO})
