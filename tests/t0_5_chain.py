@@ -68,6 +68,8 @@ async def send(
     destination = contract or descriptor["contracts"]["PayToPlay"]["address"]
 
     await rpc(descriptor, "anvil_impersonateAccount", [sender])
+    submission_error = None
+
     try:
         tx_hash = await rpc(descriptor, "eth_sendTransaction", [{
             "from": sender,
@@ -76,8 +78,19 @@ async def send(
             "value": hex(value),
             "gas": hex(500000),
         }])
+    except BaseException as error:
+        submission_error = error
+        raise
     finally:
-        await rpc(descriptor, "anvil_stopImpersonatingAccount", [sender])
+        try:
+            await rpc(descriptor, "anvil_stopImpersonatingAccount", [sender])
+        except BaseException as retirement_error:
+            if submission_error is None:
+                raise
+            submission_error.add_note(
+                f"Anvil impersonation retirement failed ({type(retirement_error).__name__}); "
+                "the fixture state requires inspection."
+            )
 
     require(
         type(tx_hash) is str
