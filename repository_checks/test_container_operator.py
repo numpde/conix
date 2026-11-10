@@ -1,4 +1,5 @@
 """Behavioral contract for the operation-owned Docker client; never contact a daemon."""
+import errno
 import json
 import os
 from pathlib import Path
@@ -148,6 +149,42 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertIsNone(operator._staging_failure(
             b"database password in upstream stderr only\n"
         ))
+
+    def test_docker_client_errors_retain_cause_without_private_arguments(self):
+        private_argument = "postgresql://private:password@secret.example"
+        with patch.object(
+            operator.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(["docker", private_argument], 5),
+        ):
+            with self.assertRaises(operator.OperationError) as timed_out:
+                operator.command(["docker", "run", private_argument], env={}, timeout=5)
+
+        self.assertIn("timed out", str(timed_out.exception))
+        self.assertIn("unconfirmed", str(timed_out.exception))
+        self.assertNotIn(private_argument, str(timed_out.exception))
+
+        with patch.object(
+            operator.subprocess,
+            "run",
+            side_effect=PermissionError(errno.EACCES, "denied"),
+        ):
+            with self.assertRaises(operator.OperationError) as refused:
+                operator.command(["docker", "run", private_argument], env={})
+
+        self.assertIn("PermissionError", str(refused.exception))
+        self.assertIn(str(errno.EACCES), str(refused.exception))
+        self.assertNotIn(private_argument, str(refused.exception))
+
+    def test_terminal_permission_error_is_not_claimed_to_mean_no_terminal(self):
+        with patch.object(
+            operator, "command", return_value="science\\tunix:///tmp/science.sock\\n"
+        ), patch("builtins.open", side_effect=PermissionError(errno.EACCES, "denied")):
+            with self.assertRaises(operator.OperationError) as refused:
+                operator.select_endpoint("", "undefined")
+
+        self.assertIn("PermissionError", str(refused.exception))
+        self.assertNotIn("No terminal", str(refused.exception))
 
     def test_endpoint_only_accepts_local_unix_socket(self):
         for value in ("unix:///run/docker.sock", "unix:///tmp/other.sock"):

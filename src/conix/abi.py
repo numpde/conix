@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import re
 
 from eth_abi import decode as abi_decode, encode as abi_encode
+from eth_abi.exceptions import DecodingError, EncodingError
 from eth_abi.grammar import BasicType, TupleType, normalize, parse
 from eth_utils import (
     event_signature_to_log_topic, function_signature_to_4byte_selector,
@@ -423,7 +424,9 @@ def _decode(types, data, limits):
             raise MalformedABIData("ABI payload has noncanonical padding, offsets or trailing bytes.")
     except MalformedABIData:
         raise
-    except Exception:
+    except (DecodingError, EncodingError, ValueError, OverflowError):
+        # These describe rejected wire bytes; unexpected implementation
+        # errors must remain visible rather than being blamed on the input.
         raise MalformedABIData("ABI decoding or canonicality verification failed.") from None
     return tuple(_present(spec, value) for spec, value in zip(types, decoded, strict=True))
 
@@ -524,7 +527,7 @@ def encode_indexed_filter(descriptor: EventDescriptor, field_name: str, value, *
     typed = _caller(argument.type, value, limits, [0])
     try:
         encoded = abi_encode((argument.type.canonical,), (typed,))
-    except Exception:
+    except (EncodingError, ValueError, OverflowError):
         raise InvalidCallerValue("Cannot encode the requested indexed scalar.") from None
     if len(encoded) != 32:
         raise UnsupportedABI("Indexed scalar did not encode to one topic.")
@@ -545,7 +548,7 @@ def encode_call(descriptor: FunctionDescriptor, arguments: tuple, *,
     )
     try:
         encoded = abi_encode(types, values)
-    except Exception:
+    except (EncodingError, ValueError, OverflowError):
         raise InvalidCallerValue("Cannot ABI-encode a read-only function call.") from None
     if len(encoded) > limits.max_bytes:
         raise ResourceExceeded("Encoded function arguments exceed the byte budget.")

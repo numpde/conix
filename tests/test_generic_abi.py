@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import random
 import unittest
+from unittest.mock import patch
 
 from eth_abi import encode as reference_encode
 from eth_utils import to_checksum_address
@@ -316,3 +317,19 @@ class AbiAdmissionContracts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class UnexpectedLibraryFailures(unittest.TestCase):
+    """A programming defect must not be reported as malformed ABI input."""
+
+    def test_decoder_runtime_error_propagates(self):
+        descriptor = compile_event(ERC20.abi)
+        with patch("conix.abi.abi_decode", side_effect=RuntimeError("decoder defect")):
+            with self.assertRaisesRegex(RuntimeError, "decoder defect"):
+                decode_event(descriptor, ERC20.topics, ERC20.data)
+
+    def test_encoder_runtime_error_propagates(self):
+        event = scalar_event("uint256")
+        with patch("conix.abi.abi_encode", side_effect=RuntimeError("encoder defect")):
+            with self.assertRaisesRegex(RuntimeError, "encoder defect"):
+                encode_indexed_filter(event, "n", 1)
+

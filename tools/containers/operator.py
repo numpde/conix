@@ -154,8 +154,19 @@ def command(argv, *, env, timeout=60, capture=False, progress_to_stderr=False, p
             capture_output=captures_output,
             stdout=None if captures_output else (sys.stderr if progress_to_stderr else None),
         )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise OperationError(f"{_docker_operation(argv)} failed to run ({type(error).__name__}).") from error
+    except subprocess.TimeoutExpired as error:
+        # The Docker CLI timed out; its daemon may still be performing work.
+        raise OperationError(
+            f"{_docker_operation(argv)} client timed out after {timeout}s; "
+            "the daemon-side effect is unconfirmed."
+        ) from error
+    except OSError as error:
+        # Errno is safe to report even when Docker argv contains private data.
+        raise OperationError(
+            f"{_docker_operation(argv)} could not start "
+            f"({type(error).__name__}, errno={error.errno}); "
+            "no successful client result was observed."
+        ) from error
 
     if completed_process.returncode:
         # Only the network-enabled wheel worker may contribute bounded stderr;
@@ -234,7 +245,9 @@ def select_endpoint(name, origin):
             selected_number = reader.readline().strip()
     except OSError as error:
         raise OperationError(
-            "No terminal. Pass DOCKER_CONTEXT=<name> on the Make command line. "
+            "Cannot access the local Docker context selection prompt "
+            f"({type(error).__name__}, errno={error.errno}); "
+            "pass DOCKER_CONTEXT=<name> on the command line. "
             f"Local contexts: {', '.join(sorted(local_endpoints))}."
         ) from error
 
