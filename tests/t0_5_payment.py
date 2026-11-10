@@ -121,8 +121,15 @@ async def sign_voucher(rpc, descriptor, *, signer, customer, channel, total, inv
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
-    require(await process.wait() == 0,
-            "Fixture signature does not verify against the deployed voucher digest.")
+    try:
+        status = await asyncio.wait_for(process.wait(), timeout=10)
+    finally:
+        # A timed-out or cancelled test must not orphan its Cast child.
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+
+    require(status == 0, "Fixture signature differs from the deployed voucher digest.")
     return bytes.fromhex(signature[2:])
 
 async def scan_to_tip(writer):
