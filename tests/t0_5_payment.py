@@ -489,9 +489,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             return {
                 "schema": "conix.acceptance.payments.v1",
                 "checkpoint": checkpoint_record(current),
-                "transactions": [item[2]["transactionHash"] for item in expected],
-                "customer": customer,
-                "channel": 1,
+                "transactions": [receipt["transactionHash"] for (_, _, receipt, _) in expected],
                 "collected": [30, 40],
             }
 
@@ -531,7 +529,10 @@ async def resume(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, state
                 "Ordinary append changed the retained history generation.")
         page = await reader.events(
             checkpoint=before, contract="payment", event=VOUCHER,
-            where={"customer": state["customer"], "channelId": state["channel"]},
+            where={
+                "customer": descriptor["publicFixtureAccounts"]["customer"]["address"],
+                "channelId": 1,
+            },
             limit=10,
         )
         require(page.complete and [e.values[3] for e in page.events] == state["collected"],
