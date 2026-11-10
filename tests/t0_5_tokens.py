@@ -32,7 +32,12 @@ async def call_token_view(rpc, descriptor, contract: str, signature: str, types:
 
 
 def token_creation_bytecode() -> dict:
-    """Reject drift between the reviewed source and pinned Solidity bytecode."""
+    """Require the source revision recorded with these precompiled fixtures.
+
+    The Git blob identity detects source edits without artifact review. It
+    does NOT prove a reproducible compiler output; that remains a separate
+    qualification requirement before promoting these test artifacts.
+    """
     source = (ROOT / "T0Tokens.sol").read_bytes()
     artifact = json.loads((ROOT / "token_bytecode.json").read_text(encoding="utf-8"))
     git_blob = b"blob " + str(len(source)).encode("ascii") + b"\x00" + source
