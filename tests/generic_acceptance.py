@@ -294,9 +294,10 @@ async def main():
                 await t0_5_payment.reorganize(
                     descriptor, source, rpc, state=state, tokens=tokens, **arguments,
                 )
-    except BaseException as error:
-        safe_error = error if isinstance(error, Exception) else ScenarioFailure("Acceptance interrupted.")
-        print(phase_failure_record(phase, safe_error).decode("ascii"), file=sys.stderr)
+    except Exception as error:
+        # Cancellation and keyboard interruption are not failed assertions.
+        # Preserve their signal semantics; the host operator owns cleanup.
+        print(phase_failure_record(phase, error).decode("ascii"), file=sys.stderr)
         raise SystemExit(1) from None
 
 
