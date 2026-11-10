@@ -845,6 +845,111 @@ Do not mark generic T0-0 or later stages qualified simply because the old
 PayToPlay tests are green. The installed-source inventory MUST include every
 tracked ABI fixture, rather than dropping JSON from the curated Docker context.
 
+
+9. Existing libraries — deliberate reuse decision (2026-11-10)
+---------------------------------------------------------------
+
+This decision narrows the implementation of T0-1; the public contract and
+T0-1 acceptance requirements above are unchanged. The goal is one small
+Conix boundary over tested external primitives, NOT another ABI package.
+
+Already locked in pyproject.toml (as inspected on 2026-11-10):
+  eth-abi 6.0.0, eth-utils 6.0.0, eth-typing 6.0.0,
+  eth-hash 0.8.0, HTTPX 0.28.1 and psycopg 3.3.6.
+
+Use these directly:
+  eth_abi.grammar.parse / normalize for Solidity ABI grammar and canonical
+  type trees; eth_utils.abi.collapse_if_tuple for JSON tuple components;
+  eth_utils.abi.abi_to_signature, event_abi_to_log_topic and
+  function_abi_to_4byte_selector for signatures/selectors;
+  eth_abi.encode / decode for ordinary ABI words, arrays, tuples, call
+  inputs and returns; eth_utils for EIP-55 address representation and Keccak;
+  HTTPX AsyncClient for bounded explicit JSON-RPC transport, with trust_env
+  disabled; psycopg AsyncConnection for the actual SQL transaction and
+  BYTEA transfer. Do not implement replacements for these primitives.
+
+Conix STILL owns a small descriptor/compiler:
+  - reject unsupported ABI families BEFORE alias/type normalization;
+    normalizing a type string cannot silently make an unsupported original
+    type admitted; reject ambiguous same-topic layouts, duplicate names where
+    public lookup would be ambiguous, bad indexed flags and unsupported
+    anonymous events;
+  - compile selected events and view/pure functions once from staged,
+    immutable, bounded ABI bytes, keyed by contract address and full layout;
+  - map indexed STATIC scalar values into one 32-byte topic using
+    eth_abi.encode after exact Python type/range validation;
+  - map indexed dynamic/array/tuple values to IndexedHash, preserving
+    the topic bytes without pretending the preimage was decoded;
+  - split topics and nonindexed payload by the declared ABI, decode
+    with eth_abi.decode(..., strict=True), and require exact
+    eth_abi.encode(types, decoded) == original_bytes. Decode/encode
+    equivalence rejects noncanonical or trailing representations, but is
+    not a substitute for upstream RPC checks, input budgets or the
+    independent Solidity-wire test vectors;
+  - check all resource budgets BEFORE handing any untrusted nested
+    offsets/lengths/response bodies to a general decoder. Catch and classify
+    library exceptions; never publish a partially decoded event;
+  - reject bool as integer, float/string coercions, invalid EIP-55 mixed
+    case, noncanonical UTF-8, wrong array/tuple shapes or ABI width overflows
+    before encoding supplied filter/call values.
+
+DO NOT introduce web3.py as a production dependency merely to get
+ContractEvent.get_logs, process_receipt, filter builders, or eth_call.
+web3.py 8.0.0 (2026-08-31) supplies those useful public APIs, but its
+high-level event handling includes permissive error options; documented
+process_receipt(errors=WARN) discards erroneous logs. ContractEvent.get_logs
+can also perform client-side filtering of NONindexed arguments. Conix must
+inspect all selected raw logs and refuse a block if any are malformed, so
+high-level decoded-event results are not authoritative acquisition evidence.
+A test-only, independently maintained web3.py decoder may provide additional
+differential checks, with STRICT error handling and literal wire oracles.
+
+eth-event 1.4.10 (2026-06-21) is a narrower maintained event-decoding library,
+but it duplicates the installed eth-abi/eth-utils primitives and does not
+replace Conix's ABI-layout, completeness, publication or query contracts.
+Likewise, psycopg_pool is a supported optional pool, not a Tier-0 necessity;
+a pool's background reconnection must not introduce silent recovery when a
+publication outcome is unknown.
+
+rindexer (Rust), Ponder (TypeScript) and other external indexers ALREADY
+implement ABI-driven event fetching, PostgreSQL integration and reorg handling.
+They are viable alternatives to Conix as an entire product if Python-native
+in-process reading, one selected-history checkpoint, raw-log provenance and
+Conix's explicit failure/repair semantics are not requirements. They are not
+drop-in Python codec or journal dependencies. Do not copy their callbacks,
+derived tables, GraphQL API, acceleration or implicit recovery into Tier 0.
+
+What remains ORIGINAL in Conix is the trust-boundary protocol, not ABI math:
+  - a verified selected-set RPC envelope and block-hash-pinned acquisition;
+  - one shared complete-block publication, including empty blocks;
+  - short fenced SQL transactions and stop-on-unknown-COMMIT;
+  - checked manual suffix repair and invalidatable generation handles;
+  - history-scoped, typed, sparse paginated SQL topic filtering;
+  - hash-pinned read-only calls, explicit unsupported historical state;
+  - separate owner/writer/read privileges and bounded contained operations.
+
+T0-1 exit gate therefore becomes: prove the small wrapper around the existing
+libraries admits EXACTLY the declared type matrix, rejects malformed wire,
+maintains full indexed-layout identity and agrees with independent literals
+and actual Anvil/Solidity emission. No bespoke scalar or compound ABI decoder
+may be introduced without a documented, test-backed reason that a maintained
+library cannot satisfy an accepted case. Do not add web3.py, eth-event or an ORM
+to the runtime lock by default.
+
+Verified package/documentation references (consulted 2026-11-10):
+  https://pypi.org/project/eth-abi/
+  https://eth-abi.readthedocs.io/en/latest/decoding.html
+  https://eth-abi.readthedocs.io/en/latest/encoding.html
+  https://eth-abi.readthedocs.io/en/stable-2.x/grammar.html
+  https://eth-utils.readthedocs.io/en/stable/utilities.html
+  https://pypi.org/project/web3/
+  https://web3py.readthedocs.io/en/latest/web3.contract.html
+  https://pypi.org/project/eth-event/
+  https://www.python-httpx.org/environment_variables/
+  https://www.psycopg.org/psycopg3/docs/basic/transactions.html
+  https://github.com/joshstevens19/rindexer
+  https://ponder.sh/docs/database
+
 Last line
 ---------
 
