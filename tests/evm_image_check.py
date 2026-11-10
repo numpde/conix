@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from eth_abi import encode
-from eth_utils import keccak, to_checksum_address
+from eth_utils import keccak
 
 import generic_acceptance
 import t0_5_payment
@@ -134,23 +134,74 @@ class InstalledFixtureWiring(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_payment_view_uses_the_deployed_function_declaration(self):
-        abi = json.loads(Path("/tests/fixtures/abi/pay_to_play.json").read_text())
-        contract = "0x" + "12" * 20
-        expected_asset = "0x" + "34" * 20
-        descriptor = {"contracts": {"PayToPlay": {"address": contract, "abi": abi}}}
+    async def test_projected_deployed_tuple_remains_callable_and_named(self):
+        """The exact viewPosition tuple survives the keyless source boundary."""
+        from eth_utils.abi import collapse_if_tuple
+        from fixture_protocol import public_test_source
+
+        reviewed_abi = json.loads(Path("/tests/fixtures/abi/pay_to_play.json").read_text())
+        customer = "0x" + "34" * 20
+        payment_address = "0x" + "12" * 20
+        descriptor = {
+            "fixtureId": "conix-example",
+            "chainId": 31337,
+            "rpcUrl": "http://pay-to-play-anvil:8545",
+            "contracts": {
+                "PayToPlay": {
+                    "address": payment_address,
+                    "deploymentBlock": 2,
+                    "abi": reviewed_abi,
+                },
+            },
+            "publicFixtureAccounts": {
+                name: {"address": "0x" + f"{ordinal:02x}" * 20}
+                for (ordinal, name) in enumerate(
+                    ("admin", "customer", "relayer", "payee"), start=1,
+                )
+            },
+        }
+        selected = public_test_source(descriptor)
+        position_abi = next(
+            entry for entry in selected["contracts"]["PayToPlay"]["abi"]
+            if entry["name"] == "viewPosition"
+        )
+        output = position_abi["outputs"][0]
+        values = []
+        for component in output["components"]:
+            name = component["name"]
+            kind = component["type"]
+            if kind == "address":
+                values.append(customer)
+            elif kind == "string[]":
+                values.append(["collect"])
+            elif kind.startswith("uint"):
+                values.append({"channelId": 1, "balance": 70,
+                               "voucherPaid": 30, "readyAt": 90}.get(name, 0))
+            else:
+                self.fail(f"Unexpected declared position field type {kind!r}")
+
+        encoded = encode((collapse_if_tuple(output),), (tuple(values),))
 
         async def observed_rpc(_descriptor, method, params):
             self.assertEqual(method, "eth_call")
-            self.assertEqual(params[0]["to"], contract)
-            self.assertEqual(params[0]["data"], "0x" + keccak(text="asset()")[:4].hex())
+            self.assertEqual(params[0]["to"], payment_address)
+            self.assertTrue(params[0]["data"].startswith(
+                "0x" + keccak(text="viewPosition(address,uint256,address)")[:4].hex()
+            ))
             self.assertEqual(params[1], "latest")
-            return "0x" + encode(("address",), (expected_asset,)).hex()
+            return "0x" + encoded.hex()
 
-        result = await t0_5_payment.payment_call(
-            observed_rpc, descriptor, "asset", (),
+        (fields,) = await t0_5_payment.payment_call(
+            observed_rpc,
+            selected,
+            "viewPosition",
+            (customer, 1, customer),
         )
-        self.assertEqual(result, (to_checksum_address(expected_asset),))
+        position = t0_5_payment.named_position(selected, fields)
+        self.assertEqual((position["channelId"], position["balance"],
+                          position["voucherPaid"], position["readyAt"]),
+                         (1, 70, 30, 90))
+        self.assertEqual(position["actions"], ("collect",))
 
     async def test_rpc_failure_uses_method_and_code_not_remote_message(self):
         secret = "privateKey=0x" + "ab" * 32
