@@ -33,6 +33,8 @@ def valid():
         "fund": ("uint256", "uint256"),
         "collect": ("address", "uint256", "uint256", "bytes32", "uint256", "bytes"),
         "voucherDigest": ("address", "uint256", "uint256", "bytes32"),
+        "channelCount": (),
+        "viewPosition": ("address", "uint256", "address"),
     }
     abi = [
         {"type": "event", "name": "VoucherCollected", "anonymous": False, "inputs": event},
@@ -86,6 +88,17 @@ class FixtureContractTests(unittest.TestCase):
                 document[changed[0]] = changed[1]
                 with self.assertRaises(FixtureError):
                     decode(encode(document), fixture_id=IDENTITY)
+
+    def test_missing_selected_view_preconditions_are_refused_at_admission(self):
+        """A real acceptance fixture needs both views before any SQL resources."""
+        for missing in ("channelCount", "viewPosition"):
+            fixture = valid()
+            abi = fixture["contracts"]["PayToPlay"]["abi"]
+            fixture["contracts"]["PayToPlay"]["abi"] = [
+                entry for entry in abi if entry.get("name") != missing
+            ]
+            with self.subTest(missing=missing), self.assertRaises(FixtureError):
+                decode(encode(fixture), fixture_id=IDENTITY)
 
     def test_wrong_abi_and_malformed_payloads_refused(self):
         data = valid()
@@ -221,7 +234,7 @@ class KeylessConsumerSourceContracts(unittest.TestCase):
         )
         self.assertEqual(
             {row["name"] for row in public_functions},
-            {"voucherDigest"},
+            {"voucherDigest", "channelCount", "viewPosition"},
         )
         self.assertEqual(
             projected["publicFixtureAccounts"]["customer"]["address"],
