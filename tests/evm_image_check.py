@@ -175,6 +175,32 @@ class InstalledFixtureWiring(unittest.IsolatedAsyncioTestCase):
              "anvil_stopImpersonatingAccount"],
         )
 
+    async def test_uncertain_impersonation_start_still_attempts_retirement(self):
+        operations = []
+
+        async def observed_rpc(_descriptor, method, _params):
+            operations.append(method)
+            if method == "anvil_impersonateAccount":
+                raise generic_acceptance.ScenarioFailure(
+                    "Anvil RPC anvil_impersonateAccount timed out; operation outcome unknown."
+                )
+            return True
+
+        with self.assertRaises(generic_acceptance.ScenarioFailure) as raised:
+            await t0_5_chain.submit_test_transaction(
+                observed_rpc,
+                {},
+                "0x" + "34" * 20,
+                {"data": "0x6000"},
+                wait=False,
+            )
+
+        self.assertEqual(
+            operations,
+            ["anvil_impersonateAccount", "anvil_stopImpersonatingAccount"],
+        )
+        self.assertIn("outcome unknown", str(raised.exception))
+
     async def test_failed_submission_keeps_cause_when_impersonation_cleanup_fails(self):
         operations = []
 
