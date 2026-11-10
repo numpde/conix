@@ -215,13 +215,46 @@ class KeylessConsumerSourceContracts(unittest.TestCase):
         self.assertNotIn("privateKey", serialized)
         for account in private_descriptor["publicFixtureAccounts"].values():
             self.assertNotIn(account["privateKey"], serialized)
+        public_functions = projected["contracts"]["PayToPlay"]["abi"]
+        self.assertTrue(
+            all(row["type"] == "function" for row in public_functions),
+        )
         self.assertEqual(
-            projected["contracts"]["PayToPlay"]["abi"],
-            private_descriptor["contracts"]["PayToPlay"]["abi"],
+            {row["name"] for row in public_functions},
+            {"voucherDigest"},
         )
         self.assertEqual(
             projected["publicFixtureAccounts"]["customer"]["address"],
             private_descriptor["publicFixtureAccounts"]["customer"]["address"],
+        )
+
+    def test_unused_abi_metadata_cannot_carry_fixture_keys_to_children(self):
+        from tools.fixtures.protocol import public_test_source
+
+        descriptor = valid()
+        fixture_key = descriptor["publicFixtureAccounts"]["customer"]["privateKey"]
+        abi = descriptor["contracts"]["PayToPlay"]["abi"]
+
+        # The producer's ABI contains arbitrary unrelated fields in this
+        # adversarial case. They must not travel to the installed test child.
+        abi[0]["metadata"] = {"operatorNote": fixture_key}
+        voucher = next(row for row in abi if row.get("name") == "voucherDigest")
+        voucher["privateKey"] = fixture_key
+        voucher["inputs"][0]["unrelatedMetadata"] = fixture_key
+
+        projected = public_test_source(descriptor)
+        self.assertNotIn(fixture_key, json.dumps(projected))
+        self.assertEqual(
+            projected["contracts"]["PayToPlay"]["abi"],
+            [{
+                "type": "function",
+                "name": "voucherDigest",
+                "inputs": [
+                    {"name": "", "type": kind}
+                    for kind in ("address", "uint256", "uint256", "bytes32")
+                ],
+                "outputs": [],
+            }],
         )
 
     def test_malformed_or_private_consumer_source_is_refused(self):
