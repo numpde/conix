@@ -24,6 +24,7 @@ import httpx
 
 from conix.abi import MalformedABIData, ResourceExceeded, decode_event
 from conix.catalog import Catalog, _rpc_url
+from conix.diagnostics import note_argument
 from conix.journal import Block, Journal, Progress, RawEvent, open_journal
 from conix.rpc import RPC, RpcProtocolError, RpcUnavailable
 
@@ -49,23 +50,25 @@ class ObservedBlock:
     transactions: tuple[bytes, ...]
 
 
-def _quantity(value: object, label: str) -> int:
+def _quantity(value: object) -> int:
     if type(value) is not str or QUANTITY.fullmatch(value) is None:
-        raise RpcProtocolError(f"RPC {label} is not a canonical hex quantity.")
+        raise note_argument(RpcProtocolError("RPC value is not a canonical hex quantity."))
 
     number = int(value, 16)
     if number >= 2**63:
-        raise ResourceExceeded(f"RPC {label} exceeds the supported integer range.")
+        raise note_argument(ResourceExceeded("RPC quantity exceeds the supported integer range."))
     return number
 
 
-def _bytes(value: object, size: int | None, label: str) -> bytes:
+def _bytes(value: object, size: int | None) -> bytes:
     if type(value) is not str or HEX.fullmatch(value) is None:
-        raise RpcProtocolError(f"RPC {label} is not a hexadecimal byte string.")
+        raise note_argument(RpcProtocolError("RPC value is not an even-length hexadecimal byte string."))
 
     decoded = bytes.fromhex(value[2:])
     if size is not None and len(decoded) != size:
-        raise RpcProtocolError(f"RPC {label} has an incorrect byte width.")
+        raise note_argument(
+            RpcProtocolError(f"RPC value has {len(decoded)} bytes; expected {size}.")
+        )
     return decoded
 
 
@@ -74,15 +77,15 @@ def _block(response: object, expected_number: int) -> ObservedBlock:
     if type(response) is not dict:
         raise RpcProtocolError("RPC block header is not an object.")
 
-    number = _quantity(response.get("number"), "block number")
+    number = _quantity(response.get("number"))
     if number != expected_number:
         raise RpcProtocolError(f"{number = }, {expected_number = }")
 
     block = Block(
         number=number,
-        hash=_bytes(response.get("hash"), 32, "block hash"),
-        parent_hash=_bytes(response.get("parentHash"), 32, "parent hash"),
-        timestamp=_quantity(response.get("timestamp"), "block timestamp"),
+        hash=_bytes(response.get("hash"), 32),
+        parent_hash=_bytes(response.get("parentHash"), 32),
+        timestamp=_quantity(response.get("timestamp")),
     )
     transaction_hashes = response.get("transactions")
     if type(transaction_hashes) is not list:
@@ -91,7 +94,7 @@ def _block(response: object, expected_number: int) -> ObservedBlock:
     return ObservedBlock(
         header=block,
         transactions=tuple(
-            _bytes(transaction_hash, 32, "block transaction hash")
+            _bytes(transaction_hash, 32)
             for transaction_hash in transaction_hashes
         ),
     )
@@ -116,15 +119,15 @@ def _event(
 
     header = observed.header
     if (
-        _bytes(response.get("blockHash"), 32, "log block hash") != header.hash
-        or _quantity(response.get("blockNumber"), "log block number") != header.number
-        or _bytes(response.get("address"), 20, "log emitting address") != contract_address
+        _bytes(response.get("blockHash"), 32) != header.hash
+        or _quantity(response.get("blockNumber")) != header.number
+        or _bytes(response.get("address"), 20) != contract_address
     ):
         raise RpcProtocolError("Selected RPC log belongs to a different block or contract.")
 
-    transaction_index = _quantity(response.get("transactionIndex"), "transaction index")
-    log_index = _quantity(response.get("logIndex"), "log index")
-    transaction_hash = _bytes(response.get("transactionHash"), 32, "transaction hash")
+    transaction_index = _quantity(response.get("transactionIndex"))
+    log_index = _quantity(response.get("logIndex"))
+    transaction_hash = _bytes(response.get("transactionHash"), 32)
 
     if (
         transaction_index >= len(observed.transactions)
@@ -138,8 +141,8 @@ def _event(
     if type(declared_topics) is not list:
         raise RpcProtocolError("Selected RPC log does not contain a topic array.")
 
-    topics = tuple(_bytes(topic, 32, "log topic") for topic in declared_topics)
-    data = _bytes(response.get("data"), None, "log data")
+    topics = tuple(_bytes(topic, 32) for topic in declared_topics)
+    data = _bytes(response.get("data"), None)
 
     try:
         decode_event(descriptor, topics, data, limits=limits.abi)
@@ -187,7 +190,6 @@ class Writer:
         deadline = time.monotonic() + self.catalog.limits.operation_timeout_seconds
         chain_id = _quantity(
             (await self.rpc.call("eth_chainId", [], deadline=deadline)),
-            "chain ID",
         )
         if chain_id != self.catalog.chain.chain_id:
             raise BranchConflict("Selected provider has a different EVM chain ID.")
@@ -228,7 +230,7 @@ class Writer:
             if type(response) is not dict:
                 raise RpcUnavailable("Selected provider did not identify its current head.")
 
-            head_number = _quantity(response.get("number"), "latest block number")
+            head_number = _quantity(response.get("number"))
             head = _block(response, head_number)
             if head.header.number >= next_number:
                 raise RpcUnavailable("Selected provider omitted a block below its reported head.")

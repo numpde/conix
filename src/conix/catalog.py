@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 from eth_utils import is_checksum_address
 
 from conix.abi import ABIValueType, AbiLimits, ContractDescriptor, DEFAULT_LIMITS, compile_contract
+from conix.diagnostics import note_argument
 
 
 MAX_CONFIG_BYTES = 64 * 1024
@@ -108,13 +109,17 @@ class Catalog:
 
 def _keys(document: object, expected: set[str], label: str) -> dict:
     if type(document) is not dict or set(document) != expected:
-        raise ConfigurationError(f"{label} requires exactly {sorted(expected)!r}.")
+        raise note_argument(
+            ConfigurationError(f"{label} requires exactly {sorted(expected)!r}.")
+        )
     return document
 
 
-def _quantity(value: object, label: str, maximum: int = 2**63 - 1) -> int:
+def _quantity(value: object, maximum: int = 2**63 - 1) -> int:
     if type(value) is not int or not 0 <= value <= maximum:
-        raise ConfigurationError(f"{label} must be an integer in [0, {maximum}].")
+        raise note_argument(
+            ConfigurationError(f"Expected an integer in [0, {maximum}].")
+        )
     return value
 
 
@@ -289,9 +294,9 @@ def prepare_catalog(config_path: str | Path) -> Catalog:
     if type(genesis) is not str or GENESIS.fullmatch(genesis) is None:
         raise ConfigurationError("Genesis hash must be 32 lowercase hexadecimal bytes.")
     chain = Chain(
-        chain_id=_quantity(chain_document["chain_id"], "chain_id"),
+        chain_id=_quantity(chain_document["chain_id"]),
         genesis_hash=bytes.fromhex(genesis[2:]),
-        start_block=_quantity(chain_document["start_block"], "start_block"),
+        start_block=_quantity(chain_document["start_block"]),
         rpc_url=_rpc_url(chain_document["rpc_url"]),
     )
 
