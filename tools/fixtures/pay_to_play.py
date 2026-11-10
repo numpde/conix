@@ -262,8 +262,12 @@ def admit(rendered_graph, *, runner_image, postgres_image, rpc_network):
         consumer_environment = rendered_services["consumer"].get("environment", {})
 
         if (
-            "CONIX_TEST_OWNER_DSN" not in owner_environment or "CONIX_TEST_DSN" in owner_environment
-            or "CONIX_TEST_DSN" not in consumer_environment or "CONIX_TEST_OWNER_DSN" in consumer_environment
+            "CONIX_TEST_OWNER_DSN" not in owner_environment
+            or "CONIX_TEST_DSN" in owner_environment
+            or "CONIX_TEST_READ_DSN" in owner_environment
+            or "CONIX_TEST_DSN" not in consumer_environment
+            or "CONIX_TEST_READ_DSN" not in consumer_environment
+            or "CONIX_TEST_OWNER_DSN" in consumer_environment
         ):
             raise CampaignError("One-shot owner credentials are not separated from the runtime.")
     except (TypeError, AttributeError, KeyError) as error:
