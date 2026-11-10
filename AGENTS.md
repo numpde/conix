@@ -182,8 +182,9 @@ fixture, then retires its own consumers before calling the producer's
 fixture/down. Do not reintroduce the old PayToPlay-only test command.
 
 IMAGE names the single image checked for its expected role; RUNNER_IMAGE names
-a composite test runner; INDEXER_IMAGE names the ABI-only package image used
-by private-input transport checks, NOT a runnable indexer worker. Both selectors are immutable sha256 IDs and
+a composite test runner; INDEXER_IMAGE names the installed core library image used by private-input
+transport checks, NOT a runnable indexer worker. Both selectors are
+immutable sha256 IDs and
 the image role is validated before any durable activity. WHEELHOUSE and
 DOCKER_CONTEXT stay explicit operator choices; source, test and build tooling
 must never change the selected engine implicitly. New test targets require

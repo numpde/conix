@@ -1,10 +1,9 @@
 Conix — generic EVM raw-log indexer
 ===================================
 
-Current status (2026-11-10): T0-1 ABI codec and T0-2 offline catalog,
-owner-controlled PostgreSQL schema and raw-history journal are implemented. The PayToPlay-specific
-experimental runtime, schema, journal, observer, CLI and suite were deleted. No deployed
-database, checkpoint or API contract needs migration.
+Current status (2026-11-10): T0-1 ABI and T0-2 offline catalog, owner-only
+PostgreSQL schema and raw-history journal are implemented. The obsolete
+PayToPlay-only runtime was deleted, with no production data to migrate.
 
 The authoritative end-state specification is
 notes/004_rpc_evidence_and_raw_log_indexer_plan.txt. The separate
@@ -24,11 +23,11 @@ eth-abi/eth-utils. No database, network or contract-specific callback enters
 the codec. The independent ABI vectors and supported/rejected type matrix
 live under tests/ and tests/fixtures/abi/.
 
-The generic catalog, owner-only table installer, and atomic raw-history
-journal exist. No RPC scanner, checkpoint reader or deployment CLI exists yet. The indexer-labelled image currently contains
-only the ABI package; image/indexer/check verifies its installed codec, NOT
-that a worker can scan. deployment/apply and database/schema/initialize are
-not published, and no command starts the deleted PayToPlay observer.
+The generic catalog, owner-only initializer and atomic raw-history journal
+are installed. The indexer image remains a library image: image/indexer/check
+verifies the codec, not RPC ingestion. No scanner, checkpoint reader or
+deployment worker CLI exists. Schema initialization is a separate owner-only
+Python API, not a published operator Make action.
 
 Build and checks
 ----------------
@@ -67,8 +66,9 @@ image pull, privilege escalation or implicit ambient Docker overrides.
 
 The separate private-input staging test verifies bounded TOML/DSN transport,
 non-root readability and cleanup of an engine-owned private volume. Staging
-proves *transport*, not configuration admission or successful deployment:
-ABI snapshots and the full catalog must be validated by T0-2.
+proves *transport*, not configuration admission or successful deployment.
+prepare_catalog() admits local immutable ABI snapshots; the deployment
+input volume still needs to carry those bytes before a worker can start.
 
 Real-chain acceptance
 ---------------------
@@ -83,8 +83,8 @@ not a new PayToPlay-specific Conix code path.
 The generic acceptance runner uses the installed package, a real Anvil RPC,
 private stdin handoff, and a separate schema-owner/consumer lifecycle.
 Private account data never reaches schema initialization. This acceptance
-campaign is intentionally RED until T0-2 through T0-5 deliver the generic
-catalog, journal, scanner, reader and actual signed collection scenario.
+campaign is intentionally RED until T0-3 through T0-5 deliver the scanner,
+reader and signed collection scenario.
 Ordinary CI does not claim to qualify these missing capabilities.
 
 Security and next step

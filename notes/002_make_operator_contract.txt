@@ -25,9 +25,9 @@ image/{indexer,test-runner,evm-test-runner}/build
 image/{indexer,evm-test-runner}/check
                                    Confined networkless installed-code smoke;
                                    NOT a running indexer qualification.
-test/postgres/run                  Fresh disposable PostgreSQL: installed ABI
-                                   tests plus owner/runtime/reader privilege
-                                   boundaries; no journal schema installed.
+test/postgres/run                  Fresh disposable PostgreSQL: separate
+                                   owner-only schema initialization, raw
+                                   journal tests and runtime/reader privileges.
 test/input-staging/run             Private TOML/DSN envelope staging,
                                    non-root read proof and owned cleanup.
 deployment/inputs/create           Retain one ownership-labelled private
@@ -37,9 +37,9 @@ deployment/inputs/remove           Remove only an explicitly selected
 deployment/config/check            Read-only inspection of a constrained
                                    *prospective* Compose graph; no worker.
 deployment/status                  Inspect a previously owned Conix project.
-deployment/remove                  Retire the exact Conix Compose project;
-                                   never remove externally owned DB, networks
-                                   or input volumes.
+deployment/remove                  Retire selected labelled Conix indexer
+                                   containers, retaining external DB, networks
+                                   and private input volumes.
 test/indexer/acceptance/run        Borrow an externally prepared dapp32
                                    PayToPlay fixture under strict source and
                                    network verification; own only Conix SQL.
@@ -53,7 +53,7 @@ DOCKER_CONTEXT             Explicit local Docker context (no ambient fallback).
 WHEELHOUSE                 Explicit existing host-local pinned wheel pool.
 IMAGE                      Exact immutable image ID for one-image check.
 RUNNER_IMAGE               Exact immutable test-runner image ID.
-INDEXER_IMAGE              Exact immutable ABI package image ID.
+INDEXER_IMAGE              Exact immutable installed core library image ID.
 FIXTURE_DESCRIPTOR          Existing private owner-owned mode-0600 descriptor.
 DAPP32_DIR                  Explicit absolute dapp32 checkout (owned campaign).
 CONFIG_FILE, DSN_FILE       Operator-owned staged inputs, never Docker env.
@@ -67,8 +67,7 @@ Test keys cross private stdin to the consumer only; the owner sees a bounded,
 public source record. The test-specific Foundry Cast binary is confined to
 the evm-test-runner image, not installed with the ordinary package.
 
-Hard boundary: the next generic catalog must stage immutable, bounded ABI
-bytes as well as the checked TOML/DSN. Current transport-only staging is not
-catalog admission. Worker startup and owner DDL require distinct T0-2/T0-3
-implementations with fresh tests. No disabled alias or silent fallback to
-legacy code is allowed.
+Catalog admission is offline and immutable. Deployment transport still
+stages TOML/DSN only: add the prepared ABI bytes before enabling a worker.
+Transport is not a second catalog validator. The owner-only initializer
+exists as a Python API but has no Make action yet. No legacy fallback.

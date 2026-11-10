@@ -3,7 +3,8 @@ Conix — historical RPC acquisition and Tier-2 substitution contract
 
 Date: 2026-11-10
 Status: NORMATIVE DESIGN for T0-3 and later acquisition optimizations;
-        NOT YET IMPLEMENTED. T0-1 presently has no RPC/SQL scanner.
+        NOT YET IMPLEMENTED. T0-1/T0-2 contain ABI, catalog and SQL
+        journal only; no RPC scanner exists.
 
 Authority and division of responsibility
 ----------------------------------------

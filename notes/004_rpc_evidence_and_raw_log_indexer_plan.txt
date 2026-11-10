@@ -3,7 +3,7 @@ Conix — pristine generic Tier 0: design, evidence, and execution plan
 
 Date: 2026-11-09
 Status: TARGET GENERIC TIER 0, NOT YET IMPLEMENTED IN FULL; T0-1 ABI
-foundation exists. This note owns product scope, correctness, public API,
+and T0-2 offline catalog, schema and journal exist. This note owns product scope, correctness, public API,
 source identity, journal and release gates. Note 005 is the SINGLE authority
 for historical RPC acquisition methods, admitted evidence and Tier-2 method
 substitution. Note 000 governs concrete delegation by later tiers.
@@ -839,10 +839,9 @@ consumer. The owner phase receives only a separately admitted public
 chain/contract-coordinate envelope and checked genesis, NOT the private
 producer descriptor or accounts. Both phases use one reviewed installed ABI
 fixture. It initializes via a separate owner-only identity and invokes named
-installed-code checks under a restricted runtime identity. It deliberately
-fails at catalog import until the generic T0-2 catalog exists; this is not
-a skipped test. The old PayToPlay observer and its campaign have been
-deleted, without compatibility fallback.
+installed-code checks under a restricted runtime identity. The catalog and owner-only installer now exist. Complete acceptance remains
+intentionally RED until a scanner and reader consume real selected history.
+The old PayToPlay observer was deleted without a compatibility fallback.
 
 Still REQUIRED beyond today's acceptance skeleton before T0-6 release:
   - real-PostgreSQL restricted SELECT-only reader role and concurrent repair;
@@ -969,23 +968,23 @@ Verified package/documentation references (consulted 2026-11-10):
 The PayToPlay-only prototype's concrete scanner, observer, journal, schema,
 models, RPC wrapper and CLI are deleted. Its prior integration/test suites
 are retired; do not resurrect them to keep a superficial test count.
-The current installed Python package contains only the T0-1 generic ABI
-codec and the reusable private-input staging primitive. The test-runner
-continues to exercise independent ABI oracles and an unprivileged real
-PostgreSQL role-boundary baseline (owner/runtime/read), not old collections.
+The current installed package contains the generic ABI codec, offline
+TOML/ABI catalog, owner-only PostgreSQL schema installer, raw-history
+journal and private-input staging primitive. Disposable PostgreSQL tests
+install the new schema using a separate owner credential; the runtime
+and reader have only their restricted grants.
 
-No production indexer or schema initializer is published. The Docker
-image/indexer/check lane checks a real installed ABI operation, not a
-deleted conix CLI. Protected Docker context selection, hash-locked offline
-packaging, input-volume ownership, confinement, and the dapp32 generic
-acceptance operator remain. The standalone and owned generic acceptance
-lanes are intentionally RED until they can exercise the new journal,
-scanner, reader, signed voucher collection and repair. A green ABI/PG
-suite must never be reported as end-to-end indexing qualification.
+No production scanner or reader exists. The owner initializer is an
+importable Python administrative API, not yet a published Make action.
+The installed image check proves ABI operations, not RPC ingestion.
+The opt-in dapp32 real-chain acceptance remains RED pending the scanner,
+reader and signed voucher collection. Green ABI/PostgreSQL tests are
+NOT end-to-end chain-indexing qualification.
 
-For T0-2, extend the single shared ABI/catalog boundary and stage immutable
-ABI bytes with the selected TOML/DSN. Do not treat transport-only staging as
-catalog admission or reintroduce legacy collection storage.
+Deployment input transport still stages TOML and DSN only. Before
+activating a real worker, it must also supply the immutable ABI snapshot
+files admitted by the catalog; do not duplicate catalog validation in
+the transport layer or resurrect the old collections schema.
 
 Last line
 ---------
