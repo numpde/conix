@@ -129,9 +129,9 @@ Sibling-fixture campaign
 ------------------------
 The explicit campaign/indexer/acceptance/run lane consumes the public dapp32 repository's
 supported fixture/up, fixture/info and fixture/down contract, never changes its
-source or starts a replacement Anvil implementation. The descriptor is a
-bounded private stdin handoff; its test keys cannot appear in output, Docker
-labels, environment variables, log messages or runtime image layers.
+source or starts a replacement Anvil implementation. The host admits the bounded private producer descriptor, but projects a
+keyless public source for all child phases. Producer test keys never enter
+child stdin, output, Docker labels, environments, logs or runtime images.
 The optional Foundry Cast binary belongs in the evm-test-runner image alone. Prefer
 the deployed contract's voucherDigest over a duplicate EIP-712 implementation.
 Only Conix-owned SQL and verified newly created producer fixtures may be
