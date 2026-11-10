@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 from eth_utils import is_checksum_address
 
-from conix.abi import AbiLimits, ContractDescriptor, ABIValueType, compile_contract
+from conix.abi import ABIValueType, AbiLimits, ContractDescriptor, DEFAULT_LIMITS, compile_contract
 
 
 MAX_CONFIG_BYTES = 64 * 1024
@@ -37,9 +37,9 @@ LIMIT_CEILINGS = {
     "max_page_size": 500,
     "max_evidence_blocks": 64,
     "max_logs_per_block": 10000,
-    "max_abi_bytes": 1048576,
-    "max_abi_nesting": 8,
-    "max_abi_elements": 4096,
+    "max_abi_bytes": DEFAULT_LIMITS.max_bytes,
+    "max_abi_nesting": DEFAULT_LIMITS.max_nesting,
+    "max_abi_elements": DEFAULT_LIMITS.max_elements,
 }
 TIMEOUTS = frozenset({"rpc_timeout_seconds", "operation_timeout_seconds"})
 

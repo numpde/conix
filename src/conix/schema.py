@@ -26,10 +26,8 @@ SCHEMA_DDL = (
         generation uuid NOT NULL,
         revision bigint NOT NULL CHECK (revision >= 0),
         last_block bigint,
-        observed_head bigint,
         blocked_reason text,
-        CHECK (last_block IS NULL OR last_block >= history_start),
-        CHECK (observed_head IS NULL OR observed_head >= 0)
+        CHECK (last_block IS NULL OR last_block >= history_start)
     )
     """,
     """
@@ -126,9 +124,17 @@ async def initialize(owner_dsn: str, catalog: Catalog) -> None:
                 ),
             )
 
+            # Grant exactly the journal's DML: progress is updated, blocks
+            # are appended or removed on repair, and event rows are appended.
+            # Deleting a block removes its events through the FK cascade.
             await connection.execute(
-                "GRANT SELECT, INSERT, UPDATE, DELETE "
-                "ON conix.source_progress, conix.blocks, conix.events TO conix_runtime"
+                "GRANT SELECT, UPDATE ON conix.source_progress TO conix_runtime"
+            )
+            await connection.execute(
+                "GRANT SELECT, INSERT, DELETE ON conix.blocks TO conix_runtime"
+            )
+            await connection.execute(
+                "GRANT SELECT, INSERT ON conix.events TO conix_runtime"
             )
             await connection.execute(
                 "GRANT SELECT "

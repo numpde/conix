@@ -62,6 +62,23 @@ class PostgreSQLBoundaryTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(("data", "bytea"), columns)
             self.assertIn(("topic3", "bytea"), columns)
 
+    async def test_runtime_cannot_edit_raw_events_or_delete_progress(self):
+        """The SQL role itself rules out mutations outside the journal API."""
+        async with await AsyncConnection.connect(
+            os.environ["CONIX_TEST_DSN"],
+            connect_timeout=5,
+        ) as connection:
+            for statement in (
+                "UPDATE conix.events SET data = data WHERE FALSE",
+                "DELETE FROM conix.events WHERE FALSE",
+                "UPDATE conix.blocks SET timestamp = timestamp WHERE FALSE",
+                "DELETE FROM conix.source_progress WHERE FALSE",
+            ):
+                with self.subTest(statement=statement):
+                    with self.assertRaises(InsufficientPrivilege):
+                        await connection.execute(statement)
+                    await connection.rollback()
+
     async def test_reader_has_distinct_identity_and_no_mutation_access(self):
         async with await AsyncConnection.connect(
             os.environ["CONIX_TEST_READ_DSN"], connect_timeout=5,

@@ -171,8 +171,8 @@ read or transform the current experimental collections schema.
 
     source_progress:
         exact source/catalog identity; history origin; nullable last
-        complete block; generation and revision; observed head and
-        blocked reason.
+        complete block; generation and revision; blocked reason.
+        The observed RPC head is not durable publication progress.
 
     blocks:
         contiguous indexed block number, hash, parent hash, timestamp;
