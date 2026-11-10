@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "conix"
 version = "0.1.0"
-description = "Generic EVM raw-log catalog and PostgreSQL journal"
+description = "Generic block-hash EVM event indexer and PostgreSQL journal"
 requires-python = ">=3.12"
 dependencies = [
     "httpx==0.28.1",

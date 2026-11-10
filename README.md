@@ -1,9 +1,10 @@
 Conix — generic EVM raw-log indexer
 ===================================
 
-Current status (2026-11-10): T0-1 ABI and T0-2 offline catalog, owner-only
-PostgreSQL schema and raw-history journal are implemented. The obsolete
-PayToPlay-only runtime was deleted, with no production data to migrate.
+Current status (2026-11-10): T0-1 ABI, T0-2 offline catalog and
+PostgreSQL journal, and T0-3 blockHash-pinned EVM log scanner are
+implemented. The obsolete PayToPlay-only runtime was deleted, with
+no production data to migrate.
 
 The authoritative end-state specification is
 notes/004_rpc_evidence_and_raw_log_indexer_plan.txt. The separate
@@ -24,10 +25,18 @@ the codec. The independent ABI vectors and supported/rejected type matrix
 live under tests/ and tests/fixtures/abi/.
 
 The generic catalog, owner-only initializer and atomic raw-history journal
-are installed. The indexer image remains a library image: image/indexer/check
-verifies the codec, not RPC ingestion. No scanner, checkpoint reader or
-deployment worker CLI exists. Schema initialization is a separate owner-only
-Python API, not a published operator Make action.
+are installed. src/conix/rpc.py and src/conix/core.py add one bounded
+no-proxy JSON-RPC transport and the public open_writer() context manager.
+It verifies the chain and genesis, queries every configured address/topic0
+using eth_getLogs(blockHash), checks block and transaction identities and
+ABI data, and rechecks canonicality before publishing one complete block.
+Missing evidence, unavailable history and changed branches never become
+a successful empty block. No receipts, range queries or retries are used.
+
+The indexer image remains a library image: image/indexer/check imports
+the installed scanner and checks a real ABI operation, but does not scan
+RPC by itself. No checkpoint reader or deployment worker CLI exists.
+Owner schema initialization remains a separate Python API, not a Make action.
 
 Build and checks
 ----------------
@@ -56,13 +65,14 @@ cache in the finished image.
     runner="$(make -s image/test-runner/build DOCKER_CONTEXT=agentic WHEELHOUSE="$HOME/Downloads/wheelhouse")"
     make test/postgres/run DOCKER_CONTEXT=agentic RUNNER_IMAGE="$runner"
 
-test/postgres/run uses a disposable PostgreSQL stack to install the generic
-journal schema through a separate owner-only container, then exercise the
-installed package and restricted runtime/reader roles. The test runner never
-receives the owner DSN. On termination, it
-retires its owned SQL containers, network and volume. The selected Docker
-context must be explicit and local; no host root, socket mount, unreviewed
-image pull, privilege escalation or implicit ambient Docker overrides.
+test/postgres/run uses a confined PostgreSQL and Anvil stack, with separate
+owner-initialized SQL databases for generic journal tests and real EVM
+ingestion. The scanner stores an actual Anvil-emitted Transfer, processes
+an empty block, repairs its suffix and reindexes it. Controlled HTTP tests
+also reject malformed selectors, duplicate logs, missing history and reorgs.
+The test runner never receives an owner DSN. Owned containers, network and
+volumes are retired after each run. No Docker socket mount, host port,
+unreviewed pull, privilege escalation or ambient Docker override is used.
 
 The separate private-input staging test verifies bounded TOML/DSN transport,
 non-root readability and cleanup of an engine-owned private volume. Staging
@@ -83,9 +93,9 @@ not a new PayToPlay-specific Conix code path.
 The generic acceptance runner uses the installed package, a real Anvil RPC,
 private stdin handoff, and a separate schema-owner/consumer lifecycle.
 Private account data never reaches schema initialization. This acceptance
-campaign is intentionally RED until T0-3 through T0-5 deliver the scanner,
-reader and signed collection scenario.
-Ordinary CI does not claim to qualify these missing capabilities.
+campaign remains intentionally RED until the checkpoint reader and
+actual dapp32 signed collection scenario are implemented. The ordinary
+CI Anvil event-emission test does not claim to qualify that workflow.
 
 Security and next step
 ----------------------
@@ -95,9 +105,9 @@ independently. Existing retained deployments may be inspected or removed
 using ownership-constrained deployment/status and deployment/remove; no
 new generic worker may be started until it is implemented and qualified.
 
-Next is T0-3: acquire blockHash-pinned logs for every selection, validate
-their complete event coverage and ABI layout, and publish through the
-existing one-block journal. A caller-supplied event list is not evidence
-of completeness; no current code acquires or certifies RPC history.
-Do not reintroduce adapters, Collection models, legacy migration code,
-PayToPlay-specific event decoders, or permissive fake completeness.
+Next is T0-4: implement the checkpoint-bound reader, including indexed
+topic equality, stable cursor pages, EIP-1898 historical calls and ancestry
+evidence over the complete retained prefix. The signer, economic policy,
+deployment worker and private ABI-snapshot staging remain separate work.
+Do not reintroduce Collection models, PayToPlay-specific decoders or
+unqualified completeness shortcuts.

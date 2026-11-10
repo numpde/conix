@@ -2,8 +2,9 @@ Conix — pristine generic Tier 0: design, evidence, and execution plan
 =====================================================================
 
 Date: 2026-11-09
-Status: TARGET GENERIC TIER 0, NOT YET IMPLEMENTED IN FULL; T0-1 ABI
-and T0-2 offline catalog, schema and journal exist. This note owns product scope, correctness, public API,
+Status: TARGET GENERIC TIER 0, NOT YET IMPLEMENTED IN FULL; T0-1 ABI,
+T0-2 offline catalog/SQL journal and T0-3 blockHash log scanner exist.
+This note owns product scope, correctness, public API,
 source identity, journal and release gates. Note 005 is the SINGLE authority
 for historical RPC acquisition methods, admitted evidence and Tier-2 method
 substitution. Note 000 governs concrete delegation by later tiers.
@@ -839,8 +840,9 @@ consumer. The owner phase receives only a separately admitted public
 chain/contract-coordinate envelope and checked genesis, NOT the private
 producer descriptor or accounts. Both phases use one reviewed installed ABI
 fixture. It initializes via a separate owner-only identity and invokes named
-installed-code checks under a restricted runtime identity. The catalog and owner-only installer now exist. Complete acceptance remains
-intentionally RED until a scanner and reader consume real selected history.
+installed-code checks under a restricted runtime identity. Catalog,
+owner-only schema and scanner now exist, but this dapp32 acceptance remains
+RED until a checkpoint reader and the signed collection scenario exist.
 The old PayToPlay observer was deleted without a compatibility fallback.
 
 Still REQUIRED beyond today's acceptance skeleton before T0-6 release:
@@ -968,18 +970,20 @@ Verified package/documentation references (consulted 2026-11-10):
 The PayToPlay-only prototype's concrete scanner, observer, journal, schema,
 models, RPC wrapper and CLI are deleted. Its prior integration/test suites
 are retired; do not resurrect them to keep a superficial test count.
-The current installed package contains the generic ABI codec, offline
+The installed package now includes the generic ABI codec, offline
 TOML/ABI catalog, owner-only PostgreSQL schema installer, raw-history
-journal and private-input staging primitive. Disposable PostgreSQL tests
-install the new schema using a separate owner credential; the runtime
-and reader have only their restricted grants.
+journal, one concrete blockHash eth_getLogs scanner, and private-input
+staging primitive. Disposable PostgreSQL tests use separate owner and
+runtime/read credentials. An isolated Anvil test mines a real Transfer
+and verifies its original raw bytes, empty-block advancement, checked
+suffix repair and reindexing through the installed writer and SQL journal.
 
-No production scanner or reader exists. The owner initializer is an
-importable Python administrative API, not yet a published Make action.
-The installed image check proves ABI operations, not RPC ingestion.
-The opt-in dapp32 real-chain acceptance remains RED pending the scanner,
-reader and signed voucher collection. Green ABI/PostgreSQL tests are
-NOT end-to-end chain-indexing qualification.
+The owner initializer remains a Python administrative API, not a Make
+action. No checkpoint reader or production worker CLI is installed.
+The image check alone proves only installed symbols/ABI behavior; the
+separate contained Anvil+PostgreSQL suite qualifies T0-3 ingestion.
+The opt-in dapp32 real-chain acceptance is still RED pending the reader
+and actual signed voucher collection, not a green payment-workflow claim.
 
 Deployment input transport still stages TOML and DSN only. Before
 activating a real worker, it must also supply the immutable ABI snapshot

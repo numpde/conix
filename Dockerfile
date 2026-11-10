@@ -32,7 +32,7 @@ RUN --network=none \
     && python -m pip check
 USER 65532:65532
 WORKDIR /tmp
-# The generic scanner CLI is not implemented. No legacy worker entry point.
+# The scanner is an installed Python API; no worker CLI or legacy entry point.
 
 FROM indexer AS test-runner
 LABEL io.conix.image-role=test-runner

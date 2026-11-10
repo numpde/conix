@@ -25,9 +25,10 @@ image/{indexer,test-runner,evm-test-runner}/build
 image/{indexer,evm-test-runner}/check
                                    Confined networkless installed-code smoke;
                                    NOT a running indexer qualification.
-test/postgres/run                  Fresh disposable PostgreSQL: separate
-                                   owner-only schema initialization, raw
-                                   journal tests and runtime/reader privileges.
+test/postgres/run                  Disposable PostgreSQL plus isolated
+                                   Anvil: two owner-initialized sources,
+                                   real raw-log scanner/journal tests and
+                                   restricted runtime/reader privileges.
 test/input-staging/run             Private TOML/DSN envelope staging,
                                    non-root read proof and owned cleanup.
 deployment/inputs/create           Retain one ownership-labelled private

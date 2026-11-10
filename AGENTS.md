@@ -6,9 +6,9 @@ Scope
 Conix's target is one generic EVM event indexer: a single-ABI-driven scanner,
 one complete-block PostgreSQL raw-log journal, and one checkpoint-bound reader
 supporting PayToPlay, ERC-20 and ERC-721 without contract-specific source code.
-T0-1 ABI and the T0-2 offline catalog, owner-only DDL and journal are implemented;
-the experimental
-PayToPlay-only runtime has been deleted, without migration or adapters.
+T0-1 ABI, T0-2 offline catalog/owner-only journal and T0-3
+blockHash-pinned scanner are implemented. The experimental
+PayToPlay-only runtime was deleted without migration or adapters.
 
 notes/004_rpc_evidence_and_raw_log_indexer_plan.txt governs the new Tier-0
 implementation and qualification. notes/005_rpc_history_acquisition_and_optimization.txt
@@ -98,8 +98,8 @@ Container and dependency authority
 - T0-2 provides owner-only schema.initialize() and a distinct one-shot
   initializer container for qualification. The installed runtime and reader
   must not receive that credential or execute DDL.
-- The future concrete generic journal/writer must not perform DDL. Keep
-  owner-only schema establishment separate from the scanner/read guard.
+- The installed generic journal and T0-3 scanner perform no DDL. Keep
+  owner-only schema establishment separate from the scanner/reader.
 - Disposable resources have exact owners and must be retired on success/failure.
   Report uncertain cleanup rather than claiming it succeeded.
 - Do not infer runtime egress isolation, UID mapping or genuine chain finality
@@ -127,8 +127,9 @@ the deployed contract's voucherDigest over a duplicate EIP-712 implementation.
 Only Conix-owned SQL and verified newly created producer fixtures may be
 retired automatically; preserve exact recovery records on uncertain outcomes.
 The borrowed and owned generic acceptance gates are distinct qualifications.
-Both are intentionally RED until the actual journal/scanner/reader exist;
-they do not qualify economic accounting or payment reconciliation.
+Both remain intentionally RED pending the checkpoint reader and actual
+signed PayToPlay collection; the contained Anvil Transfer test qualifies
+T0-3 indexing but not economic accounting or payment reconciliation.
 
 Shared wheelhouse
 -----------------
@@ -172,8 +173,8 @@ locations, implementation tiers or test mechanisms. Do not introduce aliases
 for retired names. Distinguish read-only check, explicit acquire, offline
 build, test run, retained resource create, status and remove. Owner schema
 initialization and deployment apply are absent until implemented generically. Config/check validates the concrete Compose graph but does
-not produce a rendered document. Deployment/remove deletes only its Conix
-Compose project, never external networks, PostgreSQL data or staged inputs.
+not produce a rendered document. Deployment/remove retires only the selected
+labelled Conix indexer containers, not external networks, SQL or inputs.
 
 The borrowed test/indexer/acceptance/run accepts a mode-0600 private JSON
 fixture descriptor and has NO producer lifecycle rights.

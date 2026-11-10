@@ -2,9 +2,10 @@ Conix — historical RPC acquisition and Tier-2 substitution contract
 =================================================================
 
 Date: 2026-11-10
-Status: NORMATIVE DESIGN for T0-3 and later acquisition optimizations;
-        NOT YET IMPLEMENTED. T0-1/T0-2 contain ABI, catalog and SQL
-        journal only; no RPC scanner exists.
+Status: T0-3 SELECTED_LOG_RESPONSES IMPLEMENTED (2026-11-10);
+        later receipt/range acquisition remains a normative design.
+        src/conix/core.py owns validation and one-block publication;
+        src/conix/rpc.py owns bounded HTTP JSON-RPC transport.
 
 Authority and division of responsibility
 ----------------------------------------
@@ -291,9 +292,14 @@ historical depth, not a statement about a vendor or chain in general.
 T0-2 (catalog + PostgreSQL): NO RPC acquisition-method commitment required.
 It must retain a source/catalog identity that excludes the physical method.
 
-T0-3 (scanner): implement blockHash eth_getLogs with one selected-log
-evidence admission path and one authoritative per-block publisher. No
-receipt acquisition, validation or compatibility plumbing is required.
+T0-3 (implemented): blockHash eth_getLogs supplies one selected-log
+evidence path to the existing atomic journal publisher. The scanner
+uses eth_chainId, eth_getBlockByNumber and eth_getLogs only. It checks
+transaction inventories, typed ABI logs and candidate canonicality.
+Missing numbered history is not mistaken for the chain tip. Installed
+tests use both hostile RPC replies and a real confined Anvil-to-PostgreSQL
+Transfer, empty block and checked suffix repair. No receipt/range
+acquisition or compatibility scaffolding is present.
 
 T0-4/5: validate checkpoint reads and real selected events using the same
 journal; keep EIP-1898 eth_call independent of historical event acquisition.
