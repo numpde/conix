@@ -145,6 +145,36 @@ class InstalledFixtureWiring(unittest.IsolatedAsyncioTestCase):
         self.assertIn("outcome unknown", str(raised.exception))
         self.assertNotIn("secret://", str(raised.exception))
 
+    async def test_token_creation_submits_bytecode_without_a_destination(self):
+        calls = []
+        creator = "0x" + "34" * 20
+        expected_hash = "0x" + "ab" * 32
+
+        async def observed_rpc(_descriptor, method, params):
+            calls.append(method)
+            if method == "eth_sendTransaction":
+                self.assertEqual(params, [{
+                    "data": "0x6000",
+                    "gas": "0x300000",
+                    "from": creator,
+                }])
+                return expected_hash
+            return True
+
+        transaction_hash = await t0_5_chain.submit_test_transaction(
+            observed_rpc,
+            {},
+            creator,
+            {"data": "0x6000", "gas": "0x300000"},
+            wait=False,
+        )
+        self.assertEqual(transaction_hash, expected_hash)
+        self.assertEqual(
+            calls,
+            ["anvil_impersonateAccount", "eth_sendTransaction",
+             "anvil_stopImpersonatingAccount"],
+        )
+
     async def test_failed_submission_keeps_cause_when_impersonation_cleanup_fails(self):
         operations = []
 
