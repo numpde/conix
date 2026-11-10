@@ -8,6 +8,7 @@ import json
 import httpx
 from pathlib import Path
 import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -190,6 +191,20 @@ class InstalledFixtureWiring(unittest.IsolatedAsyncioTestCase):
                           position["voucherPaid"], position["readyAt"]),
                          (1, 70, 30, 90))
         self.assertEqual(position["actions"], ("collect",))
+
+    async def test_cancellation_remains_cancellation_across_acceptance_phase(self):
+        """A cancelled phase must not become a generic failed scenario."""
+        descriptor = {"chainId": 31337}
+
+        with patch.object(
+            sys, "argv", ["generic_acceptance.py", "preflight"]
+        ), patch.object(
+            generic_acceptance, "request", return_value=(descriptor, None, None)
+        ), patch.object(
+            generic_acceptance, "genesis", side_effect=KeyboardInterrupt()
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                await generic_acceptance.main()
 
     async def test_rpc_failure_uses_method_and_code_not_remote_message(self):
         secret = "privateKey=0x" + "ab" * 32
