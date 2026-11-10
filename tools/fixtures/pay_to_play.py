@@ -164,11 +164,17 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
 
                     _progress(f"{label}: running ({int(time.monotonic() - started_at)}s)")
         except BaseException as error:
-            # Reaping the CLI does not certify that Docker retired daemon work.
+            # Preserve the original failure even when the child ignores both
+            # signals. A stopped CLI still does not prove Docker daemon work
+            # was retired; the campaign independently verifies Compose cleanup.
+            child_retirement_unconfirmed = False
+
             try:
                 os.killpg(owned_process.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
+            except OSError:
+                child_retirement_unconfirmed = True
 
             try:
                 owned_process.wait(timeout=10)
@@ -177,11 +183,27 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
                     os.killpg(owned_process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+                except OSError:
+                    child_retirement_unconfirmed = True
 
-                owned_process.wait(timeout=5)
+                try:
+                    owned_process.wait(timeout=5)
+                except (OSError, subprocess.TimeoutExpired):
+                    child_retirement_unconfirmed = True
+            except OSError:
+                child_retirement_unconfirmed = True
+
+            if child_retirement_unconfirmed:
+                error.add_note(
+                    "Fixture child retirement is unconfirmed; inspect the "
+                    "selected operation before deleting retained evidence."
+                )
 
             if isinstance(error, subprocess.TimeoutExpired):
-                raise CampaignError(f"{label} timed out after {timeout}s; daemon effects are unconfirmed.") from error
+                retirement = "; child retirement unconfirmed" if child_retirement_unconfirmed else ""
+                raise CampaignError(
+                    f"{label} timed out after {timeout}s; daemon effects are unconfirmed{retirement}."
+                ) from error
 
             raise
 
