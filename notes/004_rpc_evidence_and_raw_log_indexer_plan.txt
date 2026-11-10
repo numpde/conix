@@ -861,8 +861,9 @@ and input transport. The dapp32 campaign runs separately.
   Gate                 Existing evidence / remaining proof
   ABI                  Independent wire vectors, seeded compound cases,
                        and representative public codec paths for every
-                       admitted family. Malformed compound encodings and
-                       boundary cases still need coverage review.
+                       admitted family. Events and returns reject invalid
+                       UTF-8, nonzero dynamic padding, and aliased tails.
+                       Nested compound and boundary cases still need review.
   RPC and reader       Hostile responses, pinned calls, keyset pages, and
                        stale-generation rejection have executable cases.
                        Audit uncovered fault, sparse page and deadline cases.

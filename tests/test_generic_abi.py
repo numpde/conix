@@ -9,7 +9,7 @@ from unittest.mock import patch
 from eth_abi import encode as reference_encode
 from eth_utils import to_checksum_address
 
-from abi_golden_vectors import ERC20, ERC721, MIXED, HASHED, FROM, TO, signature_topic, word
+from abi_golden_vectors import ERC20, ERC721, MIXED, HASHED, FROM, TO, padded, signature_topic, word
 from abi_contract_vectors import (
     COMPOUND, PAY_TO_PLAY, POSITION_ABI_TYPE, POSITION_CALL,
     POSITION_RETURN, POSITION_SAMPLE,
@@ -259,6 +259,31 @@ class ExactEventContracts(unittest.TestCase):
 
 
 class ReadOnlyFunctionContracts(unittest.TestCase):
+
+    def test_noncanonical_dynamic_wire_is_refused_in_events_and_returns(self):
+        cases = (
+            ("invalid UTF-8", ("string",), ("x",), word(32) + word(1) + padded(b"\xff")),
+            ("nonzero padding", ("bytes",), (b"x",), word(32) + word(1) + b"x" + bytes(30) + b"\x01"),
+            ("aliased tails", ("bytes", "bytes"), (b"x", b"x"), word(64) * 2 + word(1) + padded(b"x")),
+        )
+        for (label, types, values, invalid_wire) in cases:
+            with self.subTest(case=label):
+                fields = [{"name": f"value{index}", "type": kind} for (index, kind) in enumerate(types)]
+                event = compile_event({
+                    "type": "event", "name": "Value", "anonymous": False,
+                    "inputs": [{**field, "indexed": False} for field in fields],
+                })
+                view = compile_function({
+                    "type": "function", "name": "echo", "stateMutability": "pure",
+                    "inputs": fields, "outputs": fields,
+                })
+                valid_wire = reference_encode(types, values)
+                self.assertEqual(decode_event(event, (event.topic0,), valid_wire), values)
+                self.assertEqual(decode_return(view, valid_wire), values)
+                with self.assertRaises(MalformedABIData):
+                    decode_event(event, (event.topic0,), invalid_wire)
+                with self.assertRaises(MalformedABIData):
+                    decode_return(view, invalid_wire)
 
     def test_actual_view_position_tuple_and_function_selector(self):
         source = next(row for row in catalog("pay_to_play") if row.get("name") == "viewPosition")
