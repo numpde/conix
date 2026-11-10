@@ -175,6 +175,33 @@ class InstalledFixtureWiring(unittest.IsolatedAsyncioTestCase):
              "anvil_stopImpersonatingAccount"],
         )
 
+    async def test_uncertain_automine_start_still_attempts_restoration(self):
+        changes = []
+
+        async def observed_rpc(_descriptor, method, params):
+            changes.append((method, params))
+            if method == "anvil_setAutomine" and params == [False]:
+                raise generic_acceptance.ScenarioFailure(
+                    "Anvil RPC anvil_setAutomine timed out; operation outcome unknown."
+                )
+            return None
+
+        with self.assertRaises(generic_acceptance.ScenarioFailure):
+            await t0_5_payment.mine_mixed_block(
+                observed_rpc,
+                {},
+                {},
+                signer="0x" + "11" * 20,
+                customer="0x" + "22" * 20,
+                collector="0x" + "33" * 20,
+                invoice=bytes(32),
+            )
+
+        self.assertEqual(
+            changes,
+            [("anvil_setAutomine", [False]), ("anvil_setAutomine", [True])],
+        )
+
     async def test_uncertain_impersonation_start_still_attempts_retirement(self):
         operations = []
 
