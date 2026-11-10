@@ -5,9 +5,11 @@ discovery. Fixed public test vectors cannot disclose fixture account keys.
 """
 
 import json
+import httpx
 from pathlib import Path
 import subprocess
 import unittest
+from unittest.mock import patch
 
 from eth_abi import encode
 from eth_utils import keccak, to_checksum_address
@@ -71,6 +73,56 @@ class InstalledFixtureWiring(unittest.IsolatedAsyncioTestCase):
             observed_rpc, descriptor, "asset", (),
         )
         self.assertEqual(result, (to_checksum_address(expected_asset),))
+
+    async def test_rpc_failure_uses_method_and_code_not_remote_message(self):
+        secret = "privateKey=0x" + "ab" * 32
+        url = "http://fixture.invalid:8545"
+        request = httpx.Request("POST", url)
+        reply = httpx.Response(200, json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {"code": -32000, "message": secret},
+        }, request=request)
+
+        class SelectedTransport:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+            async def post(self, *_args, **_kwargs):
+                return reply
+
+        with patch.object(generic_acceptance.httpx, "AsyncClient", return_value=SelectedTransport()):
+            with self.assertRaises(generic_acceptance.ScenarioFailure) as raised:
+                await generic_acceptance.rpc({"rpcUrl": url}, "eth_call", [])
+
+        self.assertIn("eth_call", str(raised.exception))
+        self.assertIn("-32000", str(raised.exception))
+        self.assertNotIn(secret, str(raised.exception))
+
+    async def test_rpc_timeout_preserves_unknown_mutation_outcome(self):
+        url = "http://fixture.invalid:8545"
+        request = httpx.Request("POST", url)
+
+        class TimedOutTransport:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+            async def post(self, *_args, **_kwargs):
+                raise httpx.ReadTimeout("secret://upstream-password", request=request)
+
+        with patch.object(generic_acceptance.httpx, "AsyncClient", return_value=TimedOutTransport()):
+            with self.assertRaises(generic_acceptance.ScenarioFailure) as raised:
+                await generic_acceptance.rpc({"rpcUrl": url}, "eth_sendTransaction", [])
+
+        self.assertIn("eth_sendTransaction", str(raised.exception))
+        self.assertIn("outcome unknown", str(raised.exception))
+        self.assertNotIn("secret://", str(raised.exception))
 
     async def test_failed_submission_keeps_cause_when_impersonation_cleanup_fails(self):
         operations = []
