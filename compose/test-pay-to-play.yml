@@ -1,6 +1,7 @@
 # Disposable consumer stack. dapp32 alone owns the external Anvil network.
 # All services use prebuilt local images; no host ports, bind mounts, image pulls
-# or Docker socket. Private fixture accounts cross stdin only to the runner.
+# or Docker socket. The host projects keyless public fixture coordinates
+# into child stdin; raw producer wallet keys are never sent to these services.
 services:
   postgres:
     image: ${CONIX_POSTGRES_IMAGE:?select the reviewed pinned PostgreSQL image}
