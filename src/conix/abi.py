@@ -369,6 +369,7 @@ def _word(data, offset):
 
 def _check_sequence(types, data, start, limits, budget):
     """Bound nested array lengths and offset targets before eth-abi decoding."""
+    types = tuple(types)
     head_bytes = sum(_head_size(spec) for spec in types)
     if start < 0 or start + head_bytes > len(data):
         raise MalformedABIData("ABI tuple/array head is truncated.")
