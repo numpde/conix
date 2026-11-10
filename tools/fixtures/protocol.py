@@ -159,7 +159,7 @@ def decode(raw: bytes, *, fixture_id: str | None):
 # nonsecret assertion messages, but never an upstream exception's raw value.
 # The campaign prints this verified record only after it has attempted cleanup.
 _FAILURE_PREFIX = b"CONIX_PHASE_FAILURE "
-_PHASES = frozenset({"preflight", "initialize", "baseline"})
+_PHASES = frozenset({"preflight", "initialize", "baseline", "exercise", "resume", "reorg"})
 _PUBLIC_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.,:;()/'-]{0,239}\Z")
 _CATEGORY = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}\Z")
 _PRIVATE_MARKERS = ("privatekey", "postgresql:", "password", "secret", "://")
@@ -288,3 +288,59 @@ def admit_public_acceptance_source(value: dict) -> dict:
     ):
         raise FixtureError("Owner phase requires exact public source metadata.")
     return value
+
+def acceptance_payments(raw: bytes) -> dict:
+    """Admit only the public test receipt passed to a fresh process.
+
+    The test process may hold fixture wallet keys; its stdout must instead
+    carry exclusively source/checkpoint and transaction facts.
+    """
+    if type(raw) is not bytes or not 0 < len(raw) <= 4096 or len(raw.splitlines()) != 1:
+        raise FixtureError("Expected one bounded payment acceptance receipt.")
+
+    try:
+        record = json.loads(
+            raw.decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_bad_constant,
+        )
+    except (ValueError, UnicodeError, RecursionError):
+        raise FixtureError("Payment acceptance receipt is not strict JSON.") from None
+
+    if type(record) is not dict or set(record) != {
+        "schema", "checkpoint", "transactions", "customer", "channel", "collected",
+    } or record["schema"] != "conix.acceptance.payments.v1":
+        raise FixtureError("Payment acceptance receipt has an invalid envelope.")
+
+    checkpoint = record["checkpoint"]
+    block = checkpoint.get("block") if type(checkpoint) is dict else None
+    hex64 = re.compile(r"[0-9a-f]{64}\\Z")
+    if (
+        type(checkpoint) is not dict
+        or set(checkpoint) != {"source", "generation", "start", "revision", "block"}
+        or type(checkpoint["source"]) is not str
+        or hex64.fullmatch(checkpoint["source"]) is None
+        or type(checkpoint["generation"]) is not str
+        or re.fullmatch(r"[0-9a-f-]{36}", checkpoint["generation"]) is None
+        or not _uint(checkpoint["start"])
+        or not _uint(checkpoint["revision"])
+        or type(block) is not dict
+        or set(block) != {"number", "hash", "parent", "timestamp"}
+        or not _uint(block["number"]) or not _uint(block["timestamp"])
+        or block["number"] < checkpoint["start"]
+        or any(type(block[field]) is not str or hex64.fullmatch(block[field]) is None
+               for field in ("hash", "parent"))
+    ):
+        raise FixtureError("Payment acceptance receipt has an invalid checkpoint.")
+
+    if (
+        type(record["transactions"]) is not list
+        or len(record["transactions"]) != 4
+        or any(type(tx) is not str or KEY.fullmatch(tx) is None
+               for tx in record["transactions"])
+        or len(set(record["transactions"])) != 4
+        or not _address(record["customer"])
+        or record["channel"] != 1
+        or record["collected"] != [30, 40]
+    ):
+        raise FixtureError("Payment acceptance receipt has invalid event facts.")
+
+    return record
