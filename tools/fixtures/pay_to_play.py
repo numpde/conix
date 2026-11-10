@@ -27,6 +27,7 @@ from tools.fixtures.protocol import (
     FixtureError,
     acceptance_preflight,
     acceptance_payments,
+    acceptance_tokens,
     public_acceptance_source,
     decode,
     parse_phase_failure,
@@ -324,9 +325,9 @@ def _compose(docker, compose_project):
     )
 
 
-def _json_request(descriptor, prior_phase_receipt):
+def _json_request(descriptor, prior_phase_receipt, *, tokens):
     """Pass private fixture keys through stdin, never argv or environment."""
-    return (json.dumps({"descriptor": descriptor, "state": prior_phase_receipt}, separators=(",", ":")) + "\n").encode()
+    return (json.dumps({"descriptor": descriptor, "state": prior_phase_receipt, "tokens": tokens}, separators=(",", ":")) + "\n").encode()
 
 
 class PayToPlayTest:
@@ -334,6 +335,7 @@ class PayToPlayTest:
 
     def __init__(self, docker, runner_image, scratch, descriptor, *, owned_fixture=False):
         self.preflight_record = None
+        self.tokens = None
         self.owned_fixture = owned_fixture
         self.docker = docker
         self.runner_image = runner_image
@@ -419,6 +421,13 @@ class PayToPlayTest:
         self.preflight_record = self._phase(
             "consumer", "preflight", prior_receipt=None, expect_receipt=True,
         )
+        if self.owned_fixture:
+            # All selected source addresses must be known BEFORE owner
+            # initializes the immutable event-history identity.
+            self.tokens = self._phase(
+                "consumer", "prepare",
+                prior_receipt=self.preflight_record, expect_receipt=True,
+            )
         self._phase(
             "initialize", "initialize",
             prior_receipt=self.preflight_record, expect_receipt=False,
@@ -441,7 +450,7 @@ class PayToPlayTest:
             if phase == "initialize"
             else self.fixture_descriptor
         )
-        phase_payload = _json_request(source, prior_receipt) if phase != "bootstrap" else None
+        phase_payload = _json_request(source, prior_receipt, tokens=self.tokens) if phase != "bootstrap" else None
         self.consumer_retired = False
 
         try:
@@ -450,7 +459,7 @@ class PayToPlayTest:
                 output=self._file("conix-" + phase + ".out"),
                 error_file=self._file("conix-" + phase + ".err"),
                 env=self.compose_environment,
-                timeout=180 if phase == "exercise" else 120 if phase == "reorg" else 75,
+                timeout=180 if phase == "exercise" else 120 if phase in ("prepare", "reorg") else 75,
                 payload=phase_payload,
                 label=f"Conix phase/{phase}",
             )
@@ -476,6 +485,8 @@ class PayToPlayTest:
 
         if phase == "preflight":
             return acceptance_preflight(phase_stdout, chain_id=self.fixture_descriptor["chainId"])
+        if phase == "prepare" and self.owned_fixture:
+            return acceptance_tokens(phase_stdout)
         if phase == "exercise" and self.owned_fixture:
             return acceptance_payments(phase_stdout)
         raise CampaignError("Unexpected receipt from a nonpublic acceptance phase.")
