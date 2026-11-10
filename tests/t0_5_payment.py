@@ -28,6 +28,35 @@ TRANSFER_BYTES = re.compile(r"0x[0-9a-fA-F]{64}\Z")
 SIGNATURE_BYTES = re.compile(r"0x[0-9a-fA-F]{130}\Z")
 
 
+async def payment_call(rpc, descriptor, name, arguments):
+    """Use the deployed PayToPlay ABI as the view-call type authority.
+
+    This is direct JSON-RPC, independent of Conix's caller encoder and
+    return decoder. The exact Solidity declaration supplies the tuple shape.
+    """
+    from eth_utils.abi import abi_to_signature, collapse_if_tuple
+
+    declarations = [
+        entry for entry in descriptor["contracts"]["PayToPlay"]["abi"]
+        if entry.get("type") == "function" and entry.get("name") == name
+    ]
+    require(len(declarations) == 1, "Deployed PayToPlay ABI lacks a unique requested view.")
+
+    function = declarations[0]
+    signature = abi_to_signature(function)
+    input_types = tuple(collapse_if_tuple(arg) for arg in function["inputs"])
+    output_types = tuple(collapse_if_tuple(arg) for arg in function["outputs"])
+    transaction = {
+        "to": descriptor["contracts"]["PayToPlay"]["address"],
+        "data": calldata(signature, input_types, arguments),
+    }
+
+    result = await rpc(descriptor, "eth_call", [transaction, "latest"])
+
+    require(type(result) is str and result.startswith("0x"), "PayToPlay view has no ABI result.")
+    return decode(output_types, bytes.fromhex(result[2:]))
+
+
 async def fixture_voucher_key(rpc, descriptor):
     """Use a pre-funded, unlocked Anvil account; handle no wallet keys."""
     addresses = await rpc(descriptor, "eth_accounts", [])
@@ -44,12 +73,9 @@ async def fixture_voucher_key(rpc, descriptor):
 
 async def sign_voucher(rpc, descriptor, *, signer, customer, channel, total, invoice):
     """Ask Anvil's unlocked test wallet to sign; verify the deployed digest."""
-    (digest,) = await read_contract(
-        rpc, descriptor,
-        "voucherDigest(address,uint256,uint256,bytes32)",
-        ("address", "uint256", "uint256", "bytes32"),
+    (digest,) = await payment_call(
+        rpc, descriptor, "voucherDigest",
         (customer, channel, total, invoice),
-        ("bytes32",),
     )
     typed = {
         "types": {
@@ -181,9 +207,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
     invoice_c = bytes.fromhex("33" * 32)
     before_payee = int(await rpc(descriptor, "eth_getBalance", [payee, "latest"]), 16)
 
-    (count,) = await read_contract(
-        rpc, descriptor, "channelCount()", (), (), ("uint256",),
-    )
+    (count,) = await payment_call(rpc, descriptor, "channelCount", ())
     require(count == 1, "Fresh PayToPlay fixture unexpectedly has service channels.")
     for _ in (1, 2):
         await send(
@@ -283,10 +307,8 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
             rpc, descriptor, customer, "requestWithdrawal(uint256,uint256)",
             ("uint256", "uint256"), (1, 30),
         )
-        ready = await read_contract(
-            rpc, descriptor, "viewPosition(address,uint256,address)",
-            ("address", "uint256", "address"), (customer, 1, customer),
-            ("(address,uint256,address,uint64,uint256,address,address,uint256,uint256,uint256,uint256,uint256,address,uint256,uint256,uint256,uint256,uint256,address,uint8,string[])",),
+        ready = await payment_call(
+            rpc, descriptor, "viewPosition", (customer, 1, customer),
         )
         ready_at = ready[0][10]
         tip = await rpc(descriptor, "eth_getBlockByNumber", ["latest", False])
