@@ -8,8 +8,8 @@ Status: NORMATIVE DESIGN for T0-3 and later acquisition optimizations;
 Authority and division of responsibility
 ----------------------------------------
 This note is the sole active authority for WHAT physical RPC methods obtain
-event history, WHICH raw evidence forms Tier 0 must admit, and HOW Tier 2
-may change acquisition. Note 004 remains authoritative for the selected
+event history, which raw evidence Tier 0 actually admits, and HOW a new
+method may be qualified without creating a competing scanner. Note 004 remains authoritative for the selected
 history, immutable source/catalog identity, ABI rules, complete-block
 publication, reader contract, release stages and resource ceilings. Note
 000 governs mandatory concrete Tier-0 delegation and no-bypass extension
@@ -75,13 +75,15 @@ view/pure functions; historical state availability is NOT a prerequisite
 for historical event-log ingestion. Optional eth_getCode verification at
 the selected call block is read-only and must not become a scanner gate.
 
-2. Two explicit core-admitted evidence forms
---------------------------------------------
+2. One initial evidence form; a possible future alternative
+------------------------------------------------------------
 
 The sole Tier-0 validator, not acquisition machinery, owns the decision
-whether all selected events were acquired. It must admit these TWO concrete
-raw evidence forms before Tier 0 is frozen. This is deliberate preparation
-for a measured Tier-2 switch to receipts without a second validator.
+whether selected events were acquired completely. The initial scanner
+admits ONLY SELECTED_LOG_RESPONSES. Do not implement a receipt-inventory
+validator until a measured need warrants using block receipts. The
+alternative below describes what such a later feature would have to prove;
+it is not a Tier-0 release gate or an unused validation framework.
 
 A. SELECTED_LOG_RESPONSES:
    - Identified candidate block (height/hash) and immutable catalog identity.
@@ -95,7 +97,7 @@ A. SELECTED_LOG_RESPONSES:
      being silently discarded. Empty responses are checked coverage facts
      only for their exact requested selector under the trusted-RPC model.
 
-B. COMPLETE_BLOCK_RECEIPTS:
+B. COMPLETE_BLOCK_RECEIPTS (PROPOSED LATER; NOT CURRENTLY ADMITTED):
    - Identified candidate block (height/hash).
    - The block's original transaction-hash inventory from a checked header/
      block query, plus the ORIGINAL bounded receipts for that identified
@@ -128,17 +130,13 @@ language, not additional public Python APIs):
         receipt_request_and_response_records,
     )
 
-These objects carry raw evidence and acquisition provenance, NEVER decoded
+These forms carry raw evidence and acquisition provenance, NEVER decoded
 "trusted events", "complete=True" flags or permissions to advance SQL.
-The core may parse them into a narrow internal representation AFTER its
-format-specific proof obligations pass. One validator, one event
-representation, one canonicality guard, one writer, one publisher.
-
-Receipt validation belongs to Tier 0 even if the baseline fetcher continues
-to use eth_getLogs exclusively. Tests need independently prepared full
-receipts and a real provider/Anvil path that supports the method. If this
-validation is postponed, eth_getBlockReceipts cannot be introduced by Tier 2
-as a transparent optimization: it requires an explicit shared-core redesign.
+Only the selected-log form exists initially. A receipt form must enter
+the SAME authoritative core once its acquisition has demonstrated a
+benefit, using the same event representation, canonicality guard, writer
+and publisher. It is an explicit reviewed core enhancement, NOT a
+transparent Tier-2 override and NOT a second validator or journal.
 
 3. How Tier 2 can change physical acquisition
 ----------------------------------------------
@@ -156,11 +154,13 @@ Eligible without changing the frozen core, once qualified:
     each original request/response identity and deadline survives.
   - Coalescing identical bounded raw reads and caching immutable eligible
     block-hash-bound payloads, never canonicality/finality/ready conclusions.
-  - eth_getBlockReceipts(blockHash) when the provider supports it and the
-    complete receipt inventory passes Tier-0 validation.
-  - Per-tx eth_getTransactionReceipt after independently obtaining the
-    full identified block transaction inventory: materialize the SAME
-    complete-receipts evidence form, not a new receipt-side publisher.
+
+NOT YET an eligible transparent Tier-2 optimization:
+  - eth_getBlockReceipts(blockHash).
+  - Per-transaction eth_getTransactionReceipt with a complete block inventory.
+These require a measured case, an explicitly admitted complete-receipts
+proof in the shared core and appropriate independent tests. No separate
+receipt-side scanner/publisher is permitted.
 
 The choice is separate from the event-history source_id: the same contract
 selection and chain history do not become a new source merely because raw
@@ -254,21 +254,21 @@ Any new bounded streaming/chunking policy must be reviewed and qualified
 before adding it to the authoritative core. No opportunistic provider
 fallback in the middle of publication, and no retry of an unknown COMMIT.
 
-Core T0-3 tests (installed package; actual Anvil and independent hostile RPC
-responses) must exercise BOTH evidence forms before freezing the Tier 0:
-  - same selected raw event bytes, ordering and checkpoints via both routes;
-  - ERC-20 and ERC-721 same topic0 / different indexed layouts;
-  - multiple contracts/events in one block; blocks with no selected logs;
-  - a failed/missing selected-log selector and selector ignored by provider;
-  - duplicate/conflicting/out-of-order occurrences and malformed ABI bytes;
-  - receipt inventory shorter/longer than the block transaction list,
-    duplicate/mismatched transaction hash/index, wrong block hash/height,
-    missing receipt/log, invalid global logIndex or receipt envelopes;
-  - provider error, timeout, large/truncated response and resource exhaustion;
-  - fork during acquisition or before commit, empty block replacement,
-    restart, checked repair, cached orphaned evidence, unknown COMMIT.
-The SAME concrete validator and one-block publisher must execute in every
-qualified composition. Inspect execution/delegation, not only equal outputs.
+Core T0-3 tests (installed package, real Anvil and hostile RPC responses)
+qualify the SELECTED_LOG_RESPONSES form actually used:
+  - ERC-20/721 same topic0 with distinct indexed layouts;
+  - multiple contracts/events in one block and empty selected blocks;
+  - missing/failed selectors, provider ignoring a selector, duplicate or
+    conflicting occurrences, wrong block and malformed ABI bytes;
+  - RPC timeout, oversized/truncated payload, reorg, empty-block
+    replacement, restart, checked repair and unknown COMMIT.
+
+WHEN complete receipts become a real feature, add focused tests for their
+new evidence admission: full transaction coverage, missing/duplicate
+receipts, mismatched hash/index, block identity, global log ordering,
+the same selected raw event bytes and the SAME core publisher. It must
+not create a parallel validator or publication path. Keep the
+concrete-delegation proof from Note 000 for every accelerated composition.
 
 Tier-2 qualification additionally measures, per method and actual endpoint:
   request counts (not just HTTP round trips), bytes transferred, provider
@@ -290,11 +290,9 @@ historical depth, not a statement about a vendor or chain in general.
 T0-2 (catalog + PostgreSQL): NO RPC acquisition-method commitment required.
 It must retain a source/catalog identity that excludes the physical method.
 
-T0-3 (scanner): implement blockHash eth_getLogs as the independent default.
-Establish and test the two admitted raw evidence validators and one actual
-authoritative publication path. No alternate publisher. If a receipt method
-is not supported by the selected endpoint, T0 can still operate via logs;
-this does not excuse omission of receipt evidence tests in the release gate.
+T0-3 (scanner): implement blockHash eth_getLogs with one selected-log
+evidence admission path and one authoritative per-block publisher. No
+receipt acquisition, validation or compatibility plumbing is required.
 
 T0-4/5: validate checkpoint reads and real selected events using the same
 journal; keep EIP-1898 eth_call independent of historical event acquisition.

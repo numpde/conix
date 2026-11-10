@@ -201,11 +201,11 @@ For next block N, the ONE concrete advance operation:
      event. The default uses blockHash eth_getLogs; Note 005 defines other
      admitted forms and their qualification. Do not acquire only events
      matching a consumer's later customer or channel predicates.
-  3. Through ONE concrete Tier-0 validator, prove the selected-log
-     selector coverage OR the complete block-receipt inventory, then
-     validate the original log envelopes: block identity, address,
-     topics/data, transaction/log indices, order, uniqueness and
-     structurally correct ABI values. Enforce all response/work limits.
+  3. Through ONE concrete Tier-0 validator, prove coverage of every
+     selected blockHash log query and validate original envelopes:
+     block identity, address, topics/data, transaction/log indices,
+     order, uniqueness and structurally correct ABI values. Enforce
+     response/work limits. See Note 005 for future alternative evidence.
   4. Recheck candidate canonicality and preceding checkpoint
      compatibility BEFORE publication. A changed branch, missing
      evidence or failed acquisition prevents the ENTIRE block from
@@ -331,16 +331,15 @@ concurrent readers, empty blocks, config drift, source identity,
 SQL failure before/after COMMIT and real process termination.
 Exit: no partial publication or unknown-commit double write.
 
-T0-3. One concrete scanner, with blockHash eth_getLogs as its default.
-Qualify BOTH raw evidence validators before freezing Tier 0: exact
-selected-log selector coverage and complete block-receipt inventory
-(see Note 005). Multi-contract/event blocks are mandatory. Hostile
-RPC exercises wrong chain, forks, ignored selectors, absent/duplicate
-receipts or events, out-of-order positions, timeouts, oversized or
-truncated results, empty blocks and contradictory identities.
+T0-3. One concrete scanner with blockHash eth_getLogs and one
+selected-log evidence admission path. Multi-contract/event blocks
+are mandatory. Hostile RPC exercises wrong chain, forks, ignored or
+missing selectors, duplicates, out-of-order events, timeouts, oversized
+or truncated results, empty blocks and contradictory identities.
 Exact generic ABI validation runs before commit. Exit: only verified
-complete evidence under the declared RPC trust model may advance one
-block. A provider need not support receipts to run the default route.
+complete selected evidence under the trusted RPC model advances one
+block. Receipt validation is NOT a requirement until receipt acquisition
+becomes a justified, reviewed shared-core feature (Note 005).
 
 T0-4. One reader for events(), call(), checkpoint(), evidence().
 Test topic equality for ALL admitted indexed scalars, filtered-empty
@@ -394,12 +393,12 @@ selected live-RPC qualification campaign are Tier-1 OPERATIONS tests,
 not reasons to make Tier 0 depend on a paid provider.
 
 Tier 2: measured PHYSICAL acquisition and bounded I/O assistance only.
-Note 005 owns permitted RPC strategy substitution, receipt evidence,
-range-query caveats and qualification. Every optimized route supplies
-admitted raw evidence to the SAME Tier-0 validator and one-block
-publisher. A new evidence/completeness format requires an explicit
-shared-core design change, not an alternative scanner or a silent
-"optimized" publication. No speculative extension framework.
+Note 005 owns permitted RPC strategy changes, prospective receipt
+evidence, range-query caveats and qualification. Optimizations that
+reuse the selected-log evidence form delegate to the SAME Tier-0
+validator and publisher. New evidence/completeness formats require a
+reviewed shared-core enhancement when actually needed, never a second
+scanner or a silently substituted publication. No speculative extension framework.
 
 Outside these tiers: new EVM business semantics, arbitrary expression
 filters, unindexed-field global indexes, derived balances, generated
@@ -716,8 +715,8 @@ identifies one block and obtains a complete admitted raw evidence set for
 EVERY configured selection. It executes ONE Tier-0 evidence/ABI validator,
 checks IDs, order, duplicates, continuity and canonicality, and commits
 events + block + checkpoint atomically with a generation/revision CAS.
-The default physical method is blockHash eth_getLogs; Note 005 owns both
-admitted formats and any later physical substitution. No RPC runs inside
+The initial physical method is blockHash eth_getLogs; Note 005 owns
+the admission boundary and any justified future evidence format. No RPC runs inside
 the SQL transaction. Any failed/incomplete acquisition publishes NOTHING,
 including when other selectors are empty. At the tip, check the retained
 hash against the live canonical branch. Unknown COMMIT retires the writer
