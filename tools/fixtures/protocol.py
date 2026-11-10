@@ -339,7 +339,7 @@ def acceptance_payments(raw: bytes) -> dict:
                for tx in record["transactions"])
         or len(set(record["transactions"])) != 4
         or not _address(record["customer"])
-        or record["channel"] != 1
+        or type(record["channel"]) is not int or record["channel"] != 1
         or record["collected"] != [30, 40]
     ):
         raise FixtureError("Payment acceptance receipt has invalid event facts.")
