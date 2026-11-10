@@ -297,6 +297,69 @@ def admit_public_acceptance_source(value: dict) -> dict:
     return value
 
 
+
+def public_test_source(descriptor: dict) -> dict:
+    """Give test consumers public contract/account facts, never wallet keys.
+
+    The host has already admitted the complete private dapp32 descriptor.
+    No test phase signs with its fixture keys: transactions use Anvil test
+    impersonation and typed-data signing uses a separate unlocked test account.
+    """
+    payment = descriptor["contracts"]["PayToPlay"]
+    return {
+        "schema": "conix.acceptance.public-test-source.v1",
+        "fixtureId": descriptor["fixtureId"],
+        "chainId": descriptor["chainId"],
+        "rpcUrl": descriptor["rpcUrl"],
+        "contracts": {
+            "PayToPlay": {
+                "address": payment["address"],
+                "deploymentBlock": payment["deploymentBlock"],
+                "abi": payment["abi"],
+            },
+        },
+        "publicFixtureAccounts": {
+            role: {"address": account["address"]}
+            for (role, account) in descriptor["publicFixtureAccounts"].items()
+        },
+    }
+
+
+def admit_public_test_source(source: dict, *, fixture_id: str) -> dict:
+    """Admit the one keyless source projected for installed test consumers."""
+    payment = (
+        source.get("contracts", {}).get("PayToPlay")
+        if type(source) is dict and type(source.get("contracts")) is dict else None
+    )
+    accounts = source.get("publicFixtureAccounts") if type(source) is dict else None
+
+    if (
+        type(source) is not dict
+        or set(source) != {
+            "schema", "fixtureId", "chainId", "rpcUrl", "contracts", "publicFixtureAccounts",
+        }
+        or source["schema"] != "conix.acceptance.public-test-source.v1"
+        or source["fixtureId"] != fixture_id
+        or type(source["chainId"]) is not int or source["chainId"] != 31337
+        or source["rpcUrl"] != "http://pay-to-play-anvil:8545"
+        or set(source["contracts"]) != {"PayToPlay"}
+        or type(payment) is not dict
+        or set(payment) != {"address", "deploymentBlock", "abi"}
+        or not _address(payment["address"])
+        or not _uint(payment["deploymentBlock"])
+        or type(payment["abi"]) is not list
+        or not 0 < len(payment["abi"]) <= 256
+        or any(type(entry) is not dict for entry in payment["abi"])
+        or type(accounts) is not dict or set(accounts) != REQUIRED_ACCOUNTS
+        or any(type(account) is not dict or set(account) != {"address"}
+               or not _address(account["address"]) for account in accounts.values())
+        or len({account["address"].lower() for account in accounts.values()}) != 4
+    ):
+        raise FixtureError("The consumer source does not match the selected keyless fixture.")
+
+    return source
+
+
 def acceptance_payments(raw: bytes) -> dict:
     """Admit only the public test receipt passed to a fresh process.
 
