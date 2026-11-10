@@ -498,6 +498,37 @@ class FixtureRunnerTests(unittest.TestCase):
             self.assertEqual(len(records), 1)
             shutil.rmtree(records[0].removeprefix("Private phase receipts: "))
 
+    def test_unreapable_child_does_not_replace_primary_operation_failure(self):
+        """Process-retirement failure must not erase the first causal error."""
+        with tempfile.TemporaryDirectory() as directory:
+            class StuckChild:
+                pid = 73159
+                returncode = None
+
+                def communicate(self, **_kwargs):
+                    raise RuntimeError("original operation failed")
+
+                def wait(self, *, timeout):
+                    raise runner.subprocess.TimeoutExpired("test-child", timeout)
+
+            killed = []
+            with patch.object(
+                runner.subprocess, "Popen", return_value=StuckChild()
+            ), patch.object(
+                runner.os, "killpg", side_effect=lambda pid, signal: killed.append((pid, signal))
+            ):
+                with self.assertRaisesRegex(RuntimeError, "original operation failed") as raised:
+                    runner.owned_command(
+                        ["test-child"],
+                        output=Path(directory) / "stdout",
+                        error_file=Path(directory) / "stderr",
+                        env={},
+                        timeout=1,
+                    )
+
+            self.assertEqual(len(killed), 2)
+            self.assertIn("retirement", " ".join(raised.exception.__notes__).lower())
+
     def test_timed_out_owned_process_is_reaped_before_retirement(self):
         import time
         with tempfile.TemporaryDirectory() as directory:
