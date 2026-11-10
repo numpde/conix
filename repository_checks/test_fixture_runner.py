@@ -39,6 +39,9 @@ def graph(fixture_image, postgres_image, rpc):
             "read_only": True, "cap_drop": ["ALL"],
             "security_opt": ["no-new-privileges:true"],
             "networks": networks, "environment": environment or {},
+            "cpus": 0.5, "pids_limit": 64,
+            "mem_limit": "256m", "memswap_limit": "256m",
+            "tmpfs": ["/tmp:rw,nosuid,nodev,noexec,size=16m"],
         }
     return {
         "services": {
@@ -157,6 +160,10 @@ class FixtureRunnerTests(unittest.TestCase):
             lambda d: d["services"]["consumer"].update({"build": {"context": ".."}}),
             lambda d: d["networks"]["rpc"].update({"name": "foreign"}),
             lambda d: d["services"]["consumer"].update({"ports": ["5432:5432"]}),
+            lambda d: d["services"]["consumer"].pop("pids_limit"),
+            lambda d: d["services"]["consumer"].pop("mem_limit"),
+            lambda d: d["services"]["consumer"].pop("memswap_limit"),
+            lambda d: d["services"]["consumer"].update({"tmpfs": []}),
         ):
             candidate = json.loads(json.dumps(baseline))
             change(candidate)
