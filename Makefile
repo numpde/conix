@@ -20,77 +20,81 @@ override export CONIX_MAKE_DEPLOYMENT := $(value DEPLOYMENT)
 override export CONIX_MAKE_DATABASE_NETWORK := $(value DATABASE_NETWORK)
 override export CONIX_MAKE_RPC_NETWORK := $(value RPC_NETWORK)
 
-.PHONY: help test/repository/run repository/inputs/check \
- image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire \
- wheelhouse/check wheelhouse/acquire \
- image/indexer/build image/test-runner/build image/evm-test-runner/build \
- image/indexer/check image/evm-test-runner/check \
- test/postgres/run test/input-staging/run \
- test/indexer/acceptance/run campaign/indexer/acceptance/run \
- deployment/inputs/create deployment/inputs/remove \
- deployment/config/check deployment/status deployment/remove
+.PHONY: test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/postgres/run test/input-staging/run test/indexer/acceptance/run campaign/indexer/acceptance/run deployment/inputs/create deployment/inputs/remove deployment/config/check deployment/status deployment/remove help
 
-help:
-	@printf '%s\n' \
-	  'Conix Make API: <resource>[/<role-or-subject>]/<action> (no implicit acquisition)' \
-	  '  test/repository/run                         Host repository checks; no Docker' \
-	  '  repository/inputs/check                     Offline lock and build-context checks' \
-	  '  image/python-base/acquire                   Pull reviewed Python base' \
-	  '  image/postgres/acquire                      Pull reviewed PostgreSQL base' \
-	  '  image/dockerfile-frontend/acquire           Pull reviewed BuildKit frontend' \
-	  '  image/foundry/acquire                       Pull reviewed test-only Foundry' \
-	  '  wheelhouse/check                            DOCKER_CONTEXT=agentic WHEELHOUSE=/absolute/pool' \
-	  '  wheelhouse/acquire                          DOCKER_CONTEXT=agentic WHEELHOUSE=/absolute/pool' \
-	  '  image/indexer/build                         DOCKER_CONTEXT=agentic WHEELHOUSE=/absolute/pool' \
-	  '  image/test-runner/build                     DOCKER_CONTEXT=agentic WHEELHOUSE=/absolute/pool' \
-	  '  image/evm-test-runner/build                 DOCKER_CONTEXT=agentic WHEELHOUSE=/absolute/pool' \
-	  '  image/indexer/check                         DOCKER_CONTEXT=agentic IMAGE=sha256:<id>' \
-	  '  image/evm-test-runner/check                 DOCKER_CONTEXT=agentic IMAGE=sha256:<id>' \
-	  '  test/postgres/run                           DOCKER_CONTEXT=agentic RUNNER_IMAGE=sha256:<id>' \
-	  '  test/input-staging/run                      DOCKER_CONTEXT=agentic INDEXER_IMAGE=sha256:<id>' \
-	  '                                                CONFIG_FILE=/absolute/config.toml DSN_FILE=/absolute/secret' \
-	  '                                                FIXTURE_DESCRIPTOR=/absolute/private/fixture.json' \
-	  '  test/indexer/acceptance/run                 DOCKER_CONTEXT=agentic RUNNER_IMAGE=sha256:<id>' \
-	  '                                                FIXTURE_DESCRIPTOR=/absolute/private/fixture.json' \
-	  '  campaign/indexer/acceptance/run             DOCKER_CONTEXT=agentic RUNNER_IMAGE=sha256:<id>' \
-	  '                                                DAPP32_DIR=/absolute/dapp32' \
-	  '  deployment/inputs/create                    DOCKER_CONTEXT=agentic INDEXER_IMAGE=sha256:<id>' \
-	  '                                                CONFIG_FILE=/absolute/config.toml DSN_FILE=/absolute/secret' \
-	  '  deployment/inputs/remove                    DOCKER_CONTEXT=agentic INPUT_VOLUME=<owned-volume>' \
-	  '  deployment/config/check                     DOCKER_CONTEXT=agentic DEPLOYMENT=<name>' \
-	  '  deployment/status                           DOCKER_CONTEXT=agentic DEPLOYMENT=<name>' \
-	  '  deployment/remove                           DOCKER_CONTEXT=agentic DEPLOYMENT=<name>' \
-	  '                                                INDEXER_IMAGE=sha256:<id> INPUT_VOLUME=<volume>' \
-	  '                                                DATABASE_NETWORK=<name> RPC_NETWORK=<name>'
+# Each action's declaration is also the help authority. Recipes share the
+# literal-value dispatchers; no Make target aliases or duplicate help list.
+RUN_OPERATOR = @python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
+RUN_FIXTURE = @python3 -m tools.fixtures.pay_to_play --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
 
-test/repository/run:
+help: ## Show maintained commands without Docker or side effects
+	@printf '%s\n' 'Conix Make API: <resource>[/<subject>]/<action>' \
+	  'Docker operations require DOCKER_CONTEXT=<local context>; no implicit acquisition.' ''
+	@awk -F ':[^#]*## ' '/^[a-z][a-z0-9/-]*:.*## / { printf "  %-36s %s\n", $$1, $$2 }' Makefile
+
+test/repository/run: ## Run host-only repository checks; no Docker
 	@python3 -m unittest discover -s repository_checks -p 'test_*.py' -v
 
-repository/inputs/check:
+repository/inputs/check: ## Check pinned inputs and offline build declarations
 	@python3 -m unittest discover -s repository_checks -p 'test_input_policy.py' -v
 
-# Exactly one host operator owns Docker selection and each container lifecycle.
-image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire:
-	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
+image/python-base/acquire: ## Pull the pinned Python base; DOCKER_CONTEXT=<name>
+	$(RUN_OPERATOR)
 
-wheelhouse/check wheelhouse/acquire:
-	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
+image/postgres/acquire: ## Pull the pinned PostgreSQL base; DOCKER_CONTEXT=<name>
+	$(RUN_OPERATOR)
 
-image/indexer/build image/test-runner/build image/evm-test-runner/build:
-	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
+image/dockerfile-frontend/acquire: ## Pull the pinned BuildKit frontend; DOCKER_CONTEXT=<name>
+	$(RUN_OPERATOR)
 
-image/indexer/check image/evm-test-runner/check:
-	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
+image/foundry/acquire: ## Pull test-only Foundry image; DOCKER_CONTEXT=<name>
+	$(RUN_OPERATOR)
 
-test/postgres/run test/input-staging/run:
-	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
+wheelhouse/check: ## Check offline wheelhouse; DOCKER_CONTEXT=<name> WHEELHOUSE=<path>
+	$(RUN_OPERATOR)
 
-deployment/inputs/create deployment/inputs/remove:
-	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
+wheelhouse/acquire: ## Acquire missing pinned wheels; DOCKER_CONTEXT=<name> WHEELHOUSE=<path>
+	$(RUN_OPERATOR)
 
-deployment/config/check deployment/status deployment/remove:
-	@python3 -m tools.containers.operator --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
+image/indexer/build: ## Build offline ABI package image; DOCKER_CONTEXT=<name> WHEELHOUSE=<path>
+	$(RUN_OPERATOR)
 
-# The borrowed test never invokes dapp32's fixture lifecycle operations.
-test/indexer/acceptance/run campaign/indexer/acceptance/run:
-	@python3 -m tools.fixtures.pay_to_play --from-make --origin "$(origin DOCKER_CONTEXT)" "$@"
+image/test-runner/build: ## Build offline PostgreSQL test image; DOCKER_CONTEXT=<name> WHEELHOUSE=<path>
+	$(RUN_OPERATOR)
+
+image/evm-test-runner/build: ## Build offline EVM test image; DOCKER_CONTEXT=<name> WHEELHOUSE=<path>
+	$(RUN_OPERATOR)
+
+image/indexer/check: ## Check installed ABI package; DOCKER_CONTEXT=<name> IMAGE=<sha256:id>
+	$(RUN_OPERATOR)
+
+image/evm-test-runner/check: ## Check EVM test image; DOCKER_CONTEXT=<name> IMAGE=<sha256:id>
+	$(RUN_OPERATOR)
+
+test/postgres/run: ## Run disposable PostgreSQL suite; DOCKER_CONTEXT=<name> RUNNER_IMAGE=<id>
+	$(RUN_OPERATOR)
+
+test/input-staging/run: ## Prove confined input staging; INDEXER_IMAGE=<id> CONFIG_FILE=<path> DSN_FILE=<path>
+	$(RUN_OPERATOR)
+
+test/indexer/acceptance/run: ## Borrow dapp32 fixture; RUNNER_IMAGE=<id> FIXTURE_DESCRIPTOR=<private path>
+	$(RUN_FIXTURE)
+
+campaign/indexer/acceptance/run: ## Own dapp32 fixture; RUNNER_IMAGE=<id> DAPP32_DIR=<path>
+	$(RUN_FIXTURE)
+
+deployment/inputs/create: ## Stage private inputs; INDEXER_IMAGE=<id> CONFIG_FILE=<path> DSN_FILE=<path>
+	$(RUN_OPERATOR)
+
+deployment/inputs/remove: ## Remove selected input volume; INPUT_VOLUME=<owned volume>
+	$(RUN_OPERATOR)
+
+deployment/config/check: ## Check prospective Compose confinement; DEPLOYMENT=<name> INDEXER_IMAGE=<id> INPUT_VOLUME=<volume> DATABASE_NETWORK=<name> RPC_NETWORK=<name>
+	$(RUN_OPERATOR)
+
+deployment/status: ## Inspect selected existing deployment; DEPLOYMENT=<name>
+	$(RUN_OPERATOR)
+
+deployment/remove: ## Retire selected existing indexer containers; DEPLOYMENT=<name>
+	$(RUN_OPERATOR)
+

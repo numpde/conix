@@ -26,14 +26,32 @@ TARGETS = {
 class MakeContractTests(unittest.TestCase):
     """Treat published Make target names as a stable operator interface."""
 
-    def test_exact_exported_target_names(self):
-        text = (ROOT / "Makefile").read_text()
-        actual = set()
-        for line in text.splitlines():
-            found = re.fullmatch(r"([a-z][a-z0-9/-]*(?: [a-z][a-z0-9/-]*)*):", line)
-            if found:
-                actual.update(found[1].split())
-        self.assertEqual(actual, TARGETS)
+    def test_exact_exported_targets_and_maintained_help(self):
+        """Every public command has one declaration and one help entry."""
+        source = (ROOT / "Makefile").read_text()
+        declarations = [
+            match.group(1)
+            for line in source.splitlines()
+            if (match := re.fullmatch(r"([a-z][a-z0-9/-]*): ## .+", line))
+        ]
+        self.assertEqual(set(declarations), TARGETS)
+        self.assertEqual(len(declarations), len(TARGETS))
+
+        import subprocess
+        result = subprocess.run(
+            ["make", "--no-print-directory", "help"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        names_in_help = [
+            line.split()[0]
+            for line in result.stdout.splitlines()
+            if line.startswith("  ") and line.strip()
+        ]
+        self.assertEqual(names_in_help, ["help", *declarations])
 
     def test_literal_input_capture_and_no_legacy_selectors(self):
         source = (ROOT / "Makefile").read_text()
