@@ -5,6 +5,7 @@ The production writer uses exactly the selected read-only RPC methods and
 the same atomic journal validated by ordinary PostgreSQL tests.
 """
 
+import asyncio
 import os
 import unittest
 from unittest.mock import patch
@@ -54,6 +55,17 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("error", document)
                 return document["result"]
 
+            async def mined_receipt(tx_hash):
+                """Observe a mined transaction, not the submission acknowledgment."""
+                deadline = asyncio.get_running_loop().time() + 5
+                while True:
+                    observed = await call("eth_getTransactionReceipt", [tx_hash])
+                    if observed is not None:
+                        return observed
+                    if asyncio.get_running_loop().time() >= deadline:
+                        self.fail("Anvil did not return the submitted transaction receipt.")
+                    await asyncio.sleep(0.05)
+
             genesis = await call("eth_getBlockByNumber", ["0x0", False])
             self.assertEqual(await call("eth_chainId", []), "0x7a69")
 
@@ -81,7 +93,7 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                     "gas": "0x100000",
                 }],
             )
-            receipt = await call("eth_getTransactionReceipt", [transaction_hash])
+            receipt = await mined_receipt(transaction_hash)
             self.assertEqual(receipt["status"], "0x1")
             self.assertEqual(len(receipt["logs"]), 1)
 
@@ -221,7 +233,7 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                     "to": hex_bytes(CONTRACT),
                     "gas": "0x100000",
                 }])
-                second_receipt = await call("eth_getTransactionReceipt", [second_hash])
+                second_receipt = await mined_receipt(second_hash)
                 self.assertEqual(second_receipt["status"], "0x1")
                 second_block = await writer.advance_one()
                 self.assertEqual(second_block.last_block.number, mined_number + 2)
