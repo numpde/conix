@@ -30,6 +30,8 @@ FUNCTIONS = {
     "fund": ("uint256", "uint256"),
     "collect": ("address", "uint256", "uint256", "bytes32", "uint256", "bytes"),
     "voucherDigest": ("address", "uint256", "uint256", "bytes32"),
+    "channelCount": (),
+    "viewPosition": ("address", "uint256", "address"),
 }
 
 
