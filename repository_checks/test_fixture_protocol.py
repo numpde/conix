@@ -65,6 +65,13 @@ class FixtureContractTests(unittest.TestCase):
     def test_exact_dapp32_json_is_admitted(self):
         self.assertEqual(decode(encode(valid()), fixture_id=IDENTITY), valid())
 
+    def test_borrowed_fixture_is_parsed_once_and_self_identifies(self):
+        document = valid()
+        self.assertEqual(decode(encode(document), fixture_id=None), document)
+        document["fixtureId"] = "INVALID"
+        with self.assertRaises(FixtureError):
+            decode(encode(document), fixture_id=None)
+
     def test_wrong_source_address_network_schema_and_accounts_refused(self):
         for changed in (
             ("schema", "unsupported"), ("chainId", 1),

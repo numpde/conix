@@ -60,9 +60,11 @@ def _uint(value, maximum=2**63 - 1):
     return type(value) is int and 0 <= value <= maximum
 
 
-def decode(raw: bytes, *, fixture_id: str):
-    """Admit one complete dapp32 descriptor, including ABI and test accounts."""
-    if type(fixture_id) is not str or IDENTITY.fullmatch(fixture_id) is None:
+def decode(raw: bytes, *, fixture_id: str | None):
+    """Admit one strict descriptor, optionally checking a producer-selected ID."""
+    if fixture_id is not None and (
+        type(fixture_id) is not str or IDENTITY.fullmatch(fixture_id) is None
+    ):
         raise FixtureError("Fixture identity must use the dapp32 supported lowercase name format.")
 
     if type(raw) is not bytes or not 0 < len(raw) <= LIMIT or len(raw.splitlines()) != 1:
@@ -81,6 +83,13 @@ def decode(raw: bytes, *, fixture_id: str):
         "rpcUrl", "chainId", "contracts", "publicFixtureAccounts",
     }:
         raise FixtureError("Fixture descriptor does not match the exact v1 envelope.")
+    if fixture_id is None:
+        # A borrowed fixture selects its own exact ID. A newly created
+        # fixture must instead match the caller's independently chosen ID.
+        fixture_id = document["fixtureId"]
+        if type(fixture_id) is not str or IDENTITY.fullmatch(fixture_id) is None:
+            raise FixtureError("Borrowed fixture ID is not a supported identity.")
+
     project = "dapps-pay-to-play-fixture-" + fixture_id
     network = project + "_pay-to-play_local"
     if (

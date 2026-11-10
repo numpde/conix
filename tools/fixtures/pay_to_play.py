@@ -25,7 +25,7 @@ from tools.containers.operator import (
 )
 
 sys.path.insert(0, str(ROOT / "tests"))
-from fixture_protocol import (FixtureError, _bad_constant, _pairs, acceptance_preflight,
+from fixture_protocol import (FixtureError, acceptance_preflight,
                               public_acceptance_source, decode, parse_phase_failure)
 
 ID = re.compile(r"conix-[0-9a-f]{12}\Z")
@@ -303,19 +303,9 @@ def read_borrowed_descriptor(descriptor_file):
     if len(descriptor_bytes) > 1048576:
         raise CampaignError("Private fixture descriptor exceeds its byte limit.")
 
-    try:
-        descriptor_document = json.loads(
-            s=descriptor_bytes.decode("utf-8"),
-            object_pairs_hook=_pairs,
-            parse_constant=_bad_constant,
-        )
-    except (UnicodeError, ValueError, RecursionError):
-        raise CampaignError("Fixture descriptor must be unique-key UTF-8 JSON.") from None
-
-    if type(descriptor_document) is not dict:
-        raise CampaignError("Fixture descriptor must be a JSON object.")
-
-    return decode(descriptor_bytes, fixture_id=descriptor_document.get("fixtureId"))
+    # One strict parser owns JSON framing, duplicate keys, fixture identity
+    # and complete deployment/account admission. Do not parse JSON twice.
+    return decode(descriptor_bytes, fixture_id=None)
 
 
 def _compose(docker, compose_project):
