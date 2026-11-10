@@ -7,13 +7,16 @@ the same atomic journal validated by ordinary PostgreSQL tests.
 
 import os
 import unittest
+from unittest.mock import patch
 
 import httpx
 from psycopg import AsyncConnection
 
-from abi_golden_vectors import ERC20, word
+from abi_golden_vectors import ERC20, FROM, TO, TRANSFER_SIGNATURE, word
 from anvil_catalog import catalog_for_anvil
 from conix.core import open_writer
+from conix.reader import CursorInvalid, HistoricalCallUnavailable, open_reader
+from conix.rpc import RpcUnavailable
 
 
 CONTRACT = b"\x11" * 20
@@ -31,7 +34,7 @@ def hex_bytes(value: bytes) -> str:
 )
 class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
 
-    async def test_real_evm_transfer_is_stored_and_empty_block_can_be_repaired(self):
+    async def test_real_evm_event_is_scanned_read_paginated_and_repaired(self):
         url = os.environ["CONIX_TEST_ANVIL_URL"]
 
         async with httpx.AsyncClient(trust_env=False, timeout=5) as client:
@@ -54,11 +57,13 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
             genesis = await call("eth_getBlockByNumber", ["0x0", False])
             self.assertEqual(await call("eth_chainId", []), "0x7a69")
 
-            # The fixed runtime stores uint256(7) at memory 0, then LOG3
-            # with independent ERC-20 Transfer topic bytes. No signing
-            # key or test-only Anvil operation enters the scanner.
+            # Calldata-bearing view calls return uint256(42). Empty calldata
+            # emits the original independent Transfer(LOG3) wire vector.
+            # The fixture is test-only; the reader never submits a transaction.
             runtime = (
-                b"\x60\x07\x60\x00\x52"
+                b"\x36\x15\x60\x0f\x57"
+                + b"\x60\x2a\x60\x00\x52\x60\x20\x60\x00\xf3"
+                + b"\x5b\x60\x07\x60\x00\x52"
                 + b"\x7f" + ERC20.topics[2]
                 + b"\x7f" + ERC20.topics[1]
                 + b"\x7f" + ERC20.topics[0]
@@ -106,6 +111,54 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertIsNone(await writer.advance_one())
 
+                async with open_reader(
+                    catalog=source,
+                    database_dsn=os.environ["CONIX_TEST_ANVIL_READ_DSN"],
+                    rpc_url=url,
+                ) as reader:
+                    old_checkpoint = await reader.checkpoint()
+                    self.assertEqual(old_checkpoint.block, complete.last_block)
+                    selected = await reader.events(
+                        checkpoint=old_checkpoint,
+                        contract="token",
+                        event=TRANSFER_SIGNATURE,
+                        where={"to": TO},
+                        limit=1,
+                    )
+                    self.assertEqual(len(selected.events), 1)
+                    self.assertTrue(selected.complete)
+                    self.assertIsNone(selected.next_cursor)
+                    self.assertEqual(selected.events[0].values, (FROM, TO, 7))
+                    self.assertEqual(selected.events[0].data, word(7))
+                    self.assertEqual(selected.events[0].topics, ERC20.topics)
+
+                    no_match = await reader.events(
+                        checkpoint=old_checkpoint,
+                        contract="token",
+                        event=TRANSFER_SIGNATURE,
+                        where={"to": "0x" + "33" * 20},
+                    )
+                    self.assertEqual(no_match.events, ())
+                    self.assertTrue(no_match.complete)
+
+                    # A historical ABI call uses the selected block hash,
+                    # not the current tip or a latest-state fallback.
+                    self.assertEqual(await reader.call(
+                        checkpoint=old_checkpoint,
+                        contract="token",
+                        function="balanceOf(address)",
+                        arguments=(FROM,),
+                    ), (42,))
+
+                    ancestry = await reader.evidence(
+                        checkpoint=old_checkpoint,
+                        block_numbers=(old_checkpoint.block.number,),
+                        include_finalized=False,
+                    )
+                    self.assertEqual(ancestry.blocks, (old_checkpoint.block,))
+                    self.assertIsNone(ancestry.finalized)
+                    self.assertEqual(ancestry.finalized_status, "unknown")
+
                 # A second actual block contains no selected Transfer.
                 # It must still advance complete retained history.
                 await call("evm_mine", [])
@@ -151,17 +204,154 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                         list(range(source.chain.start_block, mined_number + 2)),
                     )
 
-                # Checked manual suffix repair is the same concrete journal
-                # operation used by the scanner. It invalidates old handles.
-                repaired = await writer.repair_to(ancestor=complete.last_block)
-                self.assertEqual(repaired.last_block, complete.last_block)
-                self.assertNotEqual(repaired.generation, complete.generation)
+                # Another real Transfer is mined after the empty block.
+                # Paginating the new prefix must not change the old page.
+                second_hash = await call("eth_sendTransaction", [{
+                    "from": accounts[0],
+                    "to": hex_bytes(CONTRACT),
+                    "gas": "0x100000",
+                }])
+                second_receipt = await call("eth_getTransactionReceipt", [second_hash])
+                self.assertEqual(second_receipt["status"], "0x1")
+                second_block = await writer.advance_one()
+                self.assertEqual(second_block.last_block.number, mined_number + 2)
 
-                # The now-missing canonical block can be acquired again.
-                restored = await writer.advance_one()
-                self.assertEqual(restored.last_block.number, mined_number + 1)
-                self.assertEqual(restored.generation, repaired.generation)
-                self.assertIsNone(await writer.advance_one())
+                async with open_reader(
+                    catalog=source,
+                    database_dsn=os.environ["CONIX_TEST_ANVIL_READ_DSN"],
+                    rpc_url=url,
+                ) as reader:
+                    newest = await reader.checkpoint()
+                    self.assertEqual(newest.block, second_block.last_block)
+                    self.assertEqual(newest.generation, old_checkpoint.generation)
+
+                    first_page = await reader.events(
+                        checkpoint=newest,
+                        contract="token",
+                        event=TRANSFER_SIGNATURE,
+                        where={"to": TO},
+                        limit=1,
+                    )
+                    self.assertFalse(first_page.complete)
+                    self.assertIsNotNone(first_page.next_cursor)
+
+                    second_page = await reader.events(
+                        checkpoint=newest,
+                        contract="token",
+                        event=TRANSFER_SIGNATURE,
+                        where={"to": TO},
+                        cursor=first_page.next_cursor,
+                        limit=1,
+                    )
+                    self.assertTrue(second_page.complete)
+                    self.assertIsNone(second_page.next_cursor)
+                    self.assertEqual(len(second_page.events), 1)
+                    self.assertEqual(
+                        [event.transaction_hash for event in (
+                            *first_page.events, *second_page.events,
+                        )],
+                        [bytes.fromhex(transaction_hash[2:]), bytes.fromhex(second_hash[2:])],
+                    )
+
+                    # A later append preserves the exact older complete prefix.
+                    earlier = await reader.events(
+                        checkpoint=old_checkpoint,
+                        contract="token",
+                        event=TRANSFER_SIGNATURE,
+                        where={"to": TO},
+                    )
+                    self.assertEqual(len(earlier.events), 1)
+
+                    with self.assertRaises(CursorInvalid):
+                        await reader.events(
+                            checkpoint=newest,
+                            contract="token",
+                            event=TRANSFER_SIGNATURE,
+                            where={"from": FROM},
+                            cursor=first_page.next_cursor,
+                            limit=1,
+                        )
+
+                    ancestry = await reader.evidence(
+                        checkpoint=newest,
+                        block_numbers=(
+                            old_checkpoint.block.number,
+                            empty.last_block.number,
+                            newest.block.number,
+                        ),
+                        include_finalized=False,
+                    )
+                    self.assertEqual(
+                        [block.number for block in ancestry.blocks],
+                        list(range(mined_number, mined_number + 3)),
+                    )
+
+                    # Simulate an unsupported pinned eth_call. The reader
+                    # must not retry against a number or latest block.
+                    actual_rpc = reader.rpc.call
+                    invoked = []
+
+                    async def unsupported(method, params, *, deadline):
+                        invoked.append((method, params))
+                        if method == "eth_call":
+                            raise RpcUnavailable("Provider refuses EIP-1898")
+                        return await actual_rpc(method, params, deadline=deadline)
+
+                    with patch.object(reader.rpc, "call", side_effect=unsupported):
+                        with self.assertRaises(HistoricalCallUnavailable):
+                            await reader.call(
+                                checkpoint=newest,
+                                contract="token",
+                                function="balanceOf(address)",
+                                arguments=(FROM,),
+                            )
+                    self.assertEqual([method for (method, _) in invoked], ["eth_getCode", "eth_call"])
+                    self.assertEqual(
+                        invoked[-1][1][-1],
+                        {"blockHash": hex_bytes(newest.block.hash), "requireCanonical": True},
+                    )
+
+                    # Concurrent repair after the SQL snapshot is visible to
+                    # the post-snapshot generation check, not silently ignored.
+                    with self.assertRaises(CursorInvalid):
+                        async with reader._snapshot(newest):
+                            repaired = await writer.repair_to(ancestor=complete.last_block)
+
+                    self.assertEqual(repaired.last_block, complete.last_block)
+                    self.assertNotEqual(repaired.generation, complete.generation)
+
+                    with self.assertRaises(CursorInvalid):
+                        await reader.events(
+                            checkpoint=old_checkpoint,
+                            contract="token",
+                            event=TRANSFER_SIGNATURE,
+                        )
+                    with self.assertRaises(CursorInvalid):
+                        await reader.events(
+                            checkpoint=newest,
+                            contract="token",
+                            event=TRANSFER_SIGNATURE,
+                            cursor=first_page.next_cursor,
+                        )
+
+                    # A->B->A does not resurrect any pre-repair cursor.
+                    restored_empty = await writer.advance_one()
+                    self.assertEqual(restored_empty.last_block.number, mined_number + 1)
+                    restored = await writer.advance_one()
+                    self.assertEqual(restored.last_block.number, mined_number + 2)
+                    self.assertEqual(restored.generation, repaired.generation)
+                    self.assertIsNone(await writer.advance_one())
+
+                    after_repair = await reader.checkpoint()
+                    self.assertEqual(after_repair.generation, repaired.generation)
+                    restored_page = await reader.events(
+                        checkpoint=after_repair,
+                        contract="token",
+                        event=TRANSFER_SIGNATURE,
+                        where={"to": TO},
+                    )
+                    self.assertEqual(len(restored_page.events), 2)
+                    self.assertTrue(restored_page.complete)
 
 
 if __name__ == "__main__":
