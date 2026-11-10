@@ -120,13 +120,13 @@ def command(argv, *, env, working_dir, timeout=60, capture=False, progress_to_st
         ) from error
 
     if completed_process.returncode:
-        # Only the network-enabled wheel worker may contribute bounded stderr;
-        # generic Docker/Compose output can contain private fixture data.
+        # Ordinary Docker output can contain private fixture data. Only a
+        # deliberately public worker diagnostic is eligible for display.
         if public_diagnostic:
             safe_diagnostic = (completed_process.stderr or "")[-1200:].replace("\r", " ").replace("\x00", " ").strip()
 
             raise OperationError(
-                f"Contained public wheel acquisition failed (exit {completed_process.returncode}): "
+                f"Contained public worker failed (exit {completed_process.returncode}): "
                 + (safe_diagnostic or "no worker diagnostic returned."),
                 exit_code=completed_process.returncode,
             )
@@ -146,8 +146,8 @@ def select_endpoint(name, origin, *, working_dir):
     """Select an explicit local Engine or prompt the operator at a terminal."""
     if os.geteuid() == 0:
         raise OperationError(
-            "Conix container operations refuse host root (UID 0). Use the selected "
-            "Docker Engine's unprivileged operator account, not sudo."
+            "Docker operations refuse host root (UID 0). Use the selected "
+            "Engine's unprivileged operator account, not sudo."
         )
 
     context_listing = command(
@@ -203,10 +203,14 @@ def select_endpoint(name, origin, *, working_dir):
             f"Local contexts: {', '.join(sorted(local_endpoints))}."
         ) from error
 
-    if not selected_number.isascii() or not selected_number.isdecimal() or str(int(selected_number)) != selected_number or not 1 <= int(selected_number) <= len(context_names):
+    if not selected_number.isascii() or not selected_number.isdecimal():
         raise OperationError("Invalid context choice. No Docker Engine was selected.")
 
-    return local_endpoints[context_names[int(selected_number) - 1]]
+    selected_index = int(selected_number)
+    if str(selected_index) != selected_number or not 1 <= selected_index <= len(context_names):
+        raise OperationError(f"{selected_number = !r} is not a listed Docker context choice.")
+
+    return local_endpoints[context_names[selected_index - 1]]
 
 
 class DockerClient:
@@ -234,7 +238,8 @@ class DockerClient:
         """Check the exact local image ID without publishing the image metadata."""
         actual_image_id = self.run(
             "image", "inspect", "--format", "{{.Id}}", reference,
-            timeout=10, capture=True,
+            timeout=10,
+            capture=True,
         ).strip()
 
         if not IMAGE_ID.fullmatch(actual_image_id):
@@ -245,10 +250,13 @@ class DockerClient:
     def require_rootless_engine(self):
         """The local socket alone does not establish rootless daemon identity."""
         try:
-            security_options = json.loads(self.run(
-                "info", "--format", "{{json .SecurityOptions}}",
-                timeout=10, capture=True,
-            ))
+            security_options = json.loads(
+                self.run(
+                    "info", "--format", "{{json .SecurityOptions}}",
+                    timeout=10,
+                    capture=True,
+                )
+            )
         except (ValueError, TypeError) as error:
             raise OperationError("Cannot establish selected Docker Engine rootless status from daemon security options.") from error
 
