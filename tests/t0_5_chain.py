@@ -47,37 +47,20 @@ async def wait_for_receipt(rpc, descriptor, tx_hash: str) -> dict:
     raise ScenarioFailure("A submitted test transaction has no mined receipt.")
 
 
-async def send(
-    rpc,
-    descriptor,
-    sender,
-    signature,
-    types,
-    values,
-    *,
-    value=0,
-    contract=None,
-    wait=True,
-):
-    """Submit on the exclusively owned Anvil using a disposable test identity.
+async def submit_test_transaction(rpc, descriptor, sender, transaction, *, wait=True):
+    """Submit once using a disposable Anvil identity; always retire it.
 
-    Impersonation is deliberately test-only. It never establishes signature
-    authority; the deployed PayToPlay verifies its vouchers independently.
-    Cleanup of Anvil impersonation is attempted even if submission fails.
+    Contract deployment and regular calls need identical impersonation
+    cleanup. A failed submission may already have had effects on the chain;
+    the caller must not silently retry.
     """
-    destination = contract or descriptor["contracts"]["PayToPlay"]["address"]
-
     await rpc(descriptor, "anvil_impersonateAccount", [sender])
     submission_error = None
 
     try:
-        tx_hash = await rpc(descriptor, "eth_sendTransaction", [{
-            "from": sender,
-            "to": destination,
-            "data": calldata(signature, types, values),
-            "value": hex(value),
-            "gas": hex(500000),
-        }])
+        tx_hash = await rpc(
+            descriptor, "eth_sendTransaction", [{**transaction, "from": sender}],
+        )
     except BaseException as error:
         submission_error = error
         raise
@@ -101,6 +84,30 @@ async def send(
     )
     return await wait_for_receipt(rpc, descriptor, tx_hash) if wait else tx_hash
 
+
+async def send(
+    rpc,
+    descriptor,
+    sender,
+    signature,
+    types,
+    values,
+    *,
+    value=0,
+    contract=None,
+    wait=True,
+):
+    """Submit one ABI-encoded contract call on the selected disposable Anvil."""
+    destination = contract or descriptor["contracts"]["PayToPlay"]["address"]
+    transaction = {
+        "to": destination,
+        "data": calldata(signature, types, values),
+        "value": hex(value),
+        "gas": hex(500000),
+    }
+    return await submit_test_transaction(
+        rpc, descriptor, sender, transaction, wait=wait,
+    )
 
 def assert_event_matches_receipt(event, log):
     """Compare full original wire evidence, not merely ABI-decoded values."""
