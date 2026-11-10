@@ -104,10 +104,15 @@ not a new PayToPlay-specific Conix code path.
 
 The generic acceptance runner uses the installed package, a real Anvil RPC,
 private stdin handoff, and a separate schema-owner/consumer lifecycle.
-Private account data never reaches schema initialization. This acceptance
-campaign remains intentionally RED pending the actual dapp32 signed
-collection, reader filtering and recovery scenario. The ordinary CI
-Anvil test proves the generic reader/writer, not that external workflow.
+Private account data never reaches schema initialization. The owned campaign now defines T0-5 test phases that deploy real compiled
+ERC-20/ERC-721 fixtures BEFORE owner schema initialization, index a mixed
+token/payment block, verify signed PayToPlay collections and filtered history,
+restart in new processes, then exercise an actual Anvil fork and manual repair.
+The borrowed-fixture mode retains the nondestructive baseline only.
+
+This opt-in cross-repository campaign must run successfully before T0-5 can be
+declared qualified. Ordinary CI Anvil tests establish generic reader/writer
+behavior, not this dapp32 end-to-end workflow.
 
 Security and next step
 ----------------------
@@ -117,9 +122,9 @@ independently. Existing retained deployments may be inspected or removed
 using ownership-constrained deployment/status and deployment/remove; no
 new generic worker may be started until it is implemented and qualified.
 
-Next is T0-5: qualify real ERC-20/ERC-721 and signed PayToPlay events,
-consumer-filtered history, multi-contract recovery and checkpoint queries
-against the externally owned dapp32 fixture. The signer and economic
+Next is to execute and independently review the new T0-5 owned campaign
+against dapp32, address any real interoperability defects, and qualify the
+recorded event history, filtering and repair behavior. The signer and economic
 policy remain external. A production worker CLI and private immutable ABI
 snapshot staging are separate prerequisites for deployment.
 Do not reintroduce Collection models, PayToPlay-specific decoders or
