@@ -51,7 +51,7 @@ class MakeContractTests(unittest.TestCase):
             for line in result.stdout.splitlines()
             if line.startswith("  ") and line.strip()
         ]
-        self.assertEqual(names_in_help, ["help", *declarations])
+        self.assertEqual(names_in_help, declarations)
 
     def test_literal_input_capture_and_no_legacy_selectors(self):
         source = (ROOT / "Makefile").read_text()
