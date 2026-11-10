@@ -200,6 +200,7 @@ async def prepare_positions(rpc, descriptor, *, voucher_key):
     accounts = descriptor["publicFixtureAccounts"]
     admin = accounts["admin"]["address"]
     customer = accounts["customer"]["address"]
+    other_customer = admin
     collector = accounts["relayer"]["address"]
     payee = accounts["payee"]["address"]
     (count,) = await payment_call(rpc, descriptor, "channelCount", ())
