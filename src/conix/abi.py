@@ -172,6 +172,8 @@ def _type(entry: dict, limits: AbiLimits, depth: int = 1) -> ABIValueType:
         declared_components = entry.get("components")
         if type(declared_components) is not list or not 0 < len(declared_components) <= 256:
             raise UnsupportedABI("Tuple requires a bounded, nonempty component list.")
+        if any(type(component) is not dict for component in declared_components):
+            raise UnsupportedABI("Tuple components must be ABI objects.")
 
         components = tuple(
             ABIArgument(

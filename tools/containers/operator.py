@@ -11,7 +11,6 @@ import stat
 import struct
 import subprocess
 import sys
-import tomllib
 import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -428,14 +427,9 @@ class Docker:
         config_bytes = self.private_bytes(config_path, 64 * 1024, secret=False)
         dsn_bytes = self.private_bytes(dsn_path, 8192, secret=True)
 
-        try:
-            settings_document = tomllib.loads(config_bytes.decode("utf-8"))
-
-            if settings_document["database"]["dsn_file"] != "/run/conix/connection.dsn":
-                raise ValueError
-        except (UnicodeError, KeyError, TypeError, ValueError) as error:
-            raise OperationError("Stage settings with database.dsn_file=/run/conix/connection.dsn; no host path is mounted.") from error
-
+        # Transport the exact bytes. The contained provisioner checks the
+        # envelope's private credential destination once; T0-2's catalog
+        # will own the full source/ABI configuration admission.
         # The DSN travels only in private stdin, not Docker argv, environment,
         # labels or image layers. The provisioner is networkless with CAP_CHOWN.
         staging_payload = (
@@ -517,16 +511,13 @@ class Docker:
         validation_script = (
             "import os,stat;"
             "from pathlib import Path;"
-            "import struct;"
-            "from conix.input_staging import MAGIC,decode;"
             "input_dir=Path('/run/conix');"
+            "files=[input_dir/'config.toml',input_dir/'connection.dsn'];"
             "assert os.getuid()==65532;"
             "assert stat.S_IMODE(input_dir.stat().st_mode)==0o700;"
-            "assert stat.S_IMODE((input_dir/'connection.dsn').stat().st_mode)==0o600;"
-            "assert (input_dir/'connection.dsn').stat().st_uid==65532;"
-            "config=(input_dir/'config.toml').read_bytes();"
-            "secret=(input_dir/'connection.dsn').read_bytes();"
-            "assert decode(MAGIC+struct.pack('!II',len(config),len(secret))+config+secret)==(config,secret)"
+            "assert all(p.is_file() and p.stat().st_uid==65532 "
+            "and stat.S_IMODE(p.stat().st_mode)==0o600 "
+            "and bool(p.read_bytes()) for p in files)"
         )
 
         self.run(

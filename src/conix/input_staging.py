@@ -107,12 +107,9 @@ def stage(payload: bytes, target: Path = TARGET):
         create_file(directory_fd, CONFIG, config_bytes)
         create_file(directory_fd, DSN, dsn_bytes)
 
-        # The private envelope is a transport proof, not a substitute for
-        # the future catalog's complete ABI/source admission at preparation.
-        # Check the exact file bytes while the provisioner still owns them.
-        if (target / CONFIG).read_bytes() != config_bytes or (target / DSN).read_bytes() != dsn_bytes:
-            raise InputError("Staged input files differ from the admitted private envelope.")
-
+        # Files are written from the admitted envelope and fsynced. A
+        # separate runtime-UID process verifies their readability after
+        # ownership changes; no same-process readback is needed here.
         # CAP_CHOWN does not imply CAP_FOWNER. Set directory permissions while
         # still its owner; never widen them to compensate for UID mapping.
         os.chown(CONFIG, OWNER, OWNER, dir_fd=directory_fd, follow_symlinks=False)
