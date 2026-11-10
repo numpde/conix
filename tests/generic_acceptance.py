@@ -159,7 +159,7 @@ class InstalledAcceptance(unittest.IsolatedAsyncioTestCase):
         async with open_writer(catalog=source, database_dsn=os.environ["CONIX_TEST_DSN"],
                                rpc_url=self.descriptor["rpcUrl"]) as writer:
             await writer.advance_one()
-        async with open_reader(catalog=source, database_dsn=os.environ["CONIX_TEST_DSN"],
+        async with open_reader(catalog=source, database_dsn=os.environ["CONIX_TEST_READ_DSN"],
                                rpc_url=self.descriptor["rpcUrl"]) as reader:
             checkpoint = await reader.checkpoint()
             self.assertGreaterEqual(
@@ -187,7 +187,7 @@ class InstalledAcceptance(unittest.IsolatedAsyncioTestCase):
         from conix.catalog import prepare_catalog
         from conix.reader import open_reader
         source = prepare_catalog(self.catalog)
-        async with open_reader(catalog=source, database_dsn=os.environ["CONIX_TEST_DSN"],
+        async with open_reader(catalog=source, database_dsn=os.environ["CONIX_TEST_READ_DSN"],
                                rpc_url=self.descriptor["rpcUrl"]) as reader:
             checkpoint = await reader.checkpoint()
             result = await reader.call(
