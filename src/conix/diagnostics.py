@@ -12,8 +12,8 @@ import linecache
 from types import FrameType
 
 
-def _argument_expression(caller: FrameType, function_name: str) -> str | None:
-    """Locate the precise call executing in the caller's source AST."""
+def _argument_expression(caller: FrameType) -> str | None:
+    """Use the executing instruction's exact AST call, even through aliases."""
     source = "".join(linecache.getlines(caller.f_code.co_filename, caller.f_globals))
     if not source:
         return None
@@ -32,13 +32,6 @@ def _argument_expression(caller: FrameType, function_name: str) -> str | None:
         if not isinstance(node, ast.Call) or not node.args:
             continue
 
-        invoked_name = (
-            node.func.id if isinstance(node.func, ast.Name)
-            else node.func.attr if isinstance(node.func, ast.Attribute)
-            else None
-        )
-        if invoked_name != function_name:
-            continue
         if (node.lineno, node.col_offset, node.end_lineno, node.end_col_offset) != location:
             continue
 
@@ -67,7 +60,7 @@ def note_argument(error: Exception) -> Exception:
             return error
 
         helper = current.f_back
-        expression = _argument_expression(helper.f_back, helper.f_code.co_name)
+        expression = _argument_expression(helper.f_back)
         if expression:
             error.add_note(f"argument expression: {expression}")
     except Exception:
