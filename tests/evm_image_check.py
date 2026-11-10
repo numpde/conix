@@ -77,6 +77,63 @@ class EvmImageChecks(unittest.TestCase):
 class InstalledFixtureWiring(unittest.IsolatedAsyncioTestCase):
     """Exercise the fixture's actual ABI caller, not only module importability."""
 
+    async def test_owner_and_keyless_consumer_compile_identical_three_contract_source(self):
+        from conix.catalog import prepare_catalog
+
+        genesis_hash = "0x" + "ab" * 32
+        rpc_url = "http://pay-to-play-anvil:8545"
+        payment_address = "0x" + "11" * 20
+        tokens = {
+            "token20": {"address": "0x" + "22" * 20},
+            "token721": {"address": "0x" + "33" * 20},
+        }
+        consumer_source = {
+            "chainId": 31337,
+            "rpcUrl": rpc_url,
+            "contracts": {
+                "PayToPlay": {
+                    "address": payment_address,
+                    "deploymentBlock": 2,
+                },
+            },
+        }
+        owner_source = {
+            "chainId": 31337,
+            "rpcUrl": rpc_url,
+            "payment": {
+                "address": payment_address,
+                "deploymentBlock": 2,
+            },
+        }
+
+        consumer_catalog = prepare_catalog(
+            generic_acceptance.catalog_path(consumer_source, genesis_hash, tokens),
+        )
+        owner_catalog = prepare_catalog(
+            generic_acceptance.catalog_path(owner_source, genesis_hash, tokens),
+        )
+
+        self.assertEqual(owner_catalog.source_id, consumer_catalog.source_id)
+        self.assertEqual(
+            {contract.alias for contract in owner_catalog.contracts},
+            {"payment", "token20", "token721"},
+        )
+        self.assertEqual(owner_catalog.chain.start_block, 2)
+        self.assertEqual(
+            {
+                contract.alias: (
+                    contract.descriptor.events[0].signature,
+                    contract.descriptor.events[0].indexed_count,
+                )
+                for contract in owner_catalog.contracts
+            },
+            {
+                "payment": (generic_acceptance.VOUCHER_SIGNATURE, 3),
+                "token20": (generic_acceptance.TRANSFER_SIGNATURE, 2),
+                "token721": (generic_acceptance.TRANSFER_SIGNATURE, 3),
+            },
+        )
+
     async def test_payment_view_uses_the_deployed_function_declaration(self):
         abi = json.loads(Path("/tests/fixtures/abi/pay_to_play.json").read_text())
         contract = "0x" + "12" * 20
