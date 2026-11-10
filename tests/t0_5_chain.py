@@ -54,10 +54,11 @@ async def submit_test_transaction(rpc, descriptor, sender, transaction, *, wait=
     cleanup. A failed submission may already have had effects on the chain;
     the caller must not silently retry.
     """
-    await rpc(descriptor, "anvil_impersonateAccount", [sender])
     submission_error = None
 
     try:
+        started = await rpc(descriptor, "anvil_impersonateAccount", [sender])
+        require(started is True, "Anvil did not confirm temporary test impersonation.")
         tx_hash = await rpc(
             descriptor, "eth_sendTransaction", [{**transaction, "from": sender}],
         )
