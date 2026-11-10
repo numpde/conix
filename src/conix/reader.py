@@ -105,6 +105,32 @@ class CanonicalEvidence:
     finalized_status: str
 
 
+def _require_checkpoint(checkpoint: object) -> Checkpoint:
+    """Admit an externally supplied handle before reading its fields.
+
+    The dataclass is immutable but callers may construct one with arbitrary
+    member types; only the small identity-bearing subset is needed here.
+    Its actual source/generation is checked against PostgreSQL separately.
+    """
+    if (
+        type(checkpoint) is not Checkpoint
+        or type(checkpoint.block) is not Block
+        or type(checkpoint.source_id) is not bytes
+        or len(checkpoint.source_id) != 32
+        or type(checkpoint.generation) is not UUID
+        or type(checkpoint.history_start) is not int
+        or type(checkpoint.revision) is not int
+        or type(checkpoint.block.number) is not int
+        or type(checkpoint.block.hash) is not bytes
+        or len(checkpoint.block.hash) != 32
+        or not 0 <= checkpoint.history_start <= checkpoint.block.number
+        or checkpoint.revision < 0
+    ):
+        raise CursorInvalid("Expected a valid immutable Conix checkpoint.")
+
+    return checkpoint
+
+
 @dataclass(frozen=True, slots=True)
 class _State:
     source_id: bytes
@@ -226,15 +252,7 @@ class Reader:
     @staticmethod
     def _validate_checkpoint(checkpoint: Checkpoint, state: _State) -> None:
         """An append preserves a prefix; any repair changes its generation."""
-        if (
-            type(checkpoint) is not Checkpoint
-            or type(checkpoint.block) is not Block
-            or type(checkpoint.source_id) is not bytes
-            or type(checkpoint.generation) is not UUID
-            or type(checkpoint.revision) is not int
-            or type(checkpoint.block.number) is not int
-        ):
-            raise CursorInvalid("Expected an immutable Conix checkpoint.")
+        _require_checkpoint(checkpoint)
 
         if (
             checkpoint.source_id != state.source_id
@@ -254,10 +272,8 @@ class Reader:
     @asynccontextmanager
     async def _snapshot(self, checkpoint: Checkpoint | None = None):
         """Keep page SQL on one repeatable-read view; recheck after leaving it."""
-        if checkpoint is not None and (
-            type(checkpoint) is not Checkpoint or type(checkpoint.block) is not Block
-        ):
-            raise CursorInvalid("Expected an immutable Conix checkpoint.")
+        if checkpoint is not None:
+            _require_checkpoint(checkpoint)
 
         try:
             async with self.connection.transaction():
@@ -344,8 +360,7 @@ class Reader:
         """Read a keyset page up through this checkpoint, not the moving tip."""
         if type(limit) is not int or not 1 <= limit <= self.catalog.limits.max_page_size:
             raise ResourceExceeded("Event page size is outside its configured bounds.")
-        if type(checkpoint) is not Checkpoint or type(checkpoint.block) is not Block:
-            raise CursorInvalid("Event pages require a selected checkpoint.")
+        _require_checkpoint(checkpoint)
 
         selected, descriptor = self._event(contract, event)
         filters = self._filters(descriptor, where)
@@ -463,8 +478,7 @@ class Reader:
         arguments: tuple,
     ) -> tuple:
         """Execute exactly one read-only function at a canonical block hash."""
-        if type(checkpoint) is not Checkpoint or type(checkpoint.block) is not Block:
-            raise CursorInvalid("Historical calls require a selected checkpoint.")
+        _require_checkpoint(checkpoint)
 
         try:
             selected = self.catalog.contract(contract)
@@ -526,8 +540,7 @@ class Reader:
         include_finalized: bool = True,
     ) -> CanonicalEvidence:
         """Match stored ancestors against canonical RPC headers; report finality only as provider evidence."""
-        if type(checkpoint) is not Checkpoint or type(checkpoint.block) is not Block:
-            raise CursorInvalid("Ancestry evidence requires a selected checkpoint.")
+        _require_checkpoint(checkpoint)
         if (
             type(block_numbers) is not tuple
             or len(block_numbers) > self.catalog.limits.max_evidence_blocks
