@@ -178,7 +178,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
 
     def test_terminal_permission_error_is_not_claimed_to_mean_no_terminal(self):
         with patch.object(
-            operator, "command", return_value="science\\tunix:///tmp/science.sock\\n"
+            operator, "command", return_value="science\tunix:///tmp/science.sock\n"
         ), patch("builtins.open", side_effect=PermissionError(errno.EACCES, "denied")):
             with self.assertRaises(operator.OperationError) as refused:
                 operator.select_endpoint("", "undefined")
