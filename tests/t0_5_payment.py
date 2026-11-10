@@ -372,11 +372,15 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
     initial_tokens = await emit_initial_transfers(rpc, descriptor, tokens)
 
     async with open_writer(
-        catalog=catalog, database_dsn=writer_dsn, rpc_url=descriptor["rpcUrl"],
+        catalog=catalog,
+        database_dsn=writer_dsn,
+        rpc_url=descriptor["rpcUrl"],
     ) as writer:
         await scan_to_tip(writer)
         async with open_reader(
-            catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
+            catalog=catalog,
+            database_dsn=reader_dsn,
+            rpc_url=descriptor["rpcUrl"],
         ) as reader:
             funded = await reader.checkpoint()
             require((await read_position(reader, funded, customer, 1))[7:9] == (100, 0),
@@ -389,7 +393,9 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
         first = mixed_tokens["payment"]
         await scan_to_tip(writer)
         async with open_reader(
-            catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
+            catalog=catalog,
+            database_dsn=reader_dsn,
+            rpc_url=descriptor["rpcUrl"],
         ) as reader:
             after_first = await reader.checkpoint()
             require((await read_position(reader, after_first, customer, 1))[7:9] == (70, 30),
@@ -405,7 +411,9 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
         )
         await scan_to_tip(writer)
         async with open_reader(
-            catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
+            catalog=catalog,
+            database_dsn=reader_dsn,
+            rpc_url=descriptor["rpcUrl"],
         ) as reader:
             after_second = await reader.checkpoint()
             require((await read_position(reader, after_second, customer, 1))[7:9] == (30, 70),
@@ -451,7 +459,9 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
         await scan_to_tip(writer)
 
         async with open_reader(
-            catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
+            catalog=catalog,
+            database_dsn=reader_dsn,
+            rpc_url=descriptor["rpcUrl"],
         ) as reader:
             current = await reader.checkpoint()
             require((await read_position(reader, current, customer, 1))[7:9] == (0, 70),
@@ -500,7 +510,9 @@ async def resume(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, state
             "Restarted process compiled a different selected event source.")
 
     async with open_writer(
-        catalog=catalog, database_dsn=writer_dsn, rpc_url=descriptor["rpcUrl"],
+        catalog=catalog,
+        database_dsn=writer_dsn,
+        rpc_url=descriptor["rpcUrl"],
     ) as writer:
         require(await writer.advance_one() is None,
                 "A fresh writer republished an already indexed block.")
@@ -510,7 +522,9 @@ async def resume(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, state
                 "Fresh writer did not continue from the persisted checkpoint.")
 
     async with open_reader(
-        catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
+        catalog=catalog,
+        database_dsn=reader_dsn,
+        rpc_url=descriptor["rpcUrl"],
     ) as reader:
         newest = await reader.checkpoint()
         require(newest.generation == before.generation,
@@ -544,7 +558,9 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
     invoice = bytes.fromhex("44" * 32)
 
     async with open_writer(
-        catalog=catalog, database_dsn=writer_dsn, rpc_url=descriptor["rpcUrl"],
+        catalog=catalog,
+        database_dsn=writer_dsn,
+        rpc_url=descriptor["rpcUrl"],
     ) as writer:
         ancestor = (await writer.inspect()).last_block
         require(ancestor is not None and ancestor.number > previous.block.number,
@@ -562,7 +578,9 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
         await scan_to_tip(writer)
 
         async with open_reader(
-            catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
+            catalog=catalog,
+            database_dsn=reader_dsn,
+            rpc_url=descriptor["rpcUrl"],
         ) as reader:
             old = await reader.checkpoint()
             page = await reader.events(
@@ -606,7 +624,9 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
                 "Reindexing did not publish the replacement canonical branch.")
 
         async with open_reader(
-            catalog=catalog, database_dsn=reader_dsn, rpc_url=descriptor["rpcUrl"],
+            catalog=catalog,
+            database_dsn=reader_dsn,
+            rpc_url=descriptor["rpcUrl"],
         ) as reader:
             current = await reader.checkpoint()
             try:
@@ -629,7 +649,7 @@ async def reorganize(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, s
             require(all(event.transaction_hash.hex() != branch_a["transactionHash"][2:].lower()
                         for event in page.events),
                     "Reorganized-out transaction survived Conix suffix repair.")
-            for alias, expected_count in (("token20", 3), ("token721", 4)):
+            for (alias, expected_count) in (("token20", 3), ("token721", 4)):
                 events = await reader.events(
                     checkpoint=current, contract=alias,
                     event="Transfer(address,address,uint256)", where={}, limit=10,
