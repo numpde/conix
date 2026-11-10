@@ -159,7 +159,7 @@ def decode(raw: bytes, *, fixture_id: str | None):
 # nonsecret assertion messages, but never an upstream exception's raw value.
 # The campaign prints this verified record only after it has attempted cleanup.
 _FAILURE_PREFIX = b"CONIX_PHASE_FAILURE "
-_PHASES = frozenset({"preflight", "initialize", "baseline", "exercise", "resume", "reorg"})
+_PHASES = frozenset({"preflight", "prepare", "initialize", "baseline", "exercise", "resume", "reorg"})
 _PUBLIC_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.,:;()/'-]{0,239}\Z")
 _CATEGORY = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}\Z")
 _PRIVATE_MARKERS = ("privatekey", "postgresql:", "password", "secret", "://")
@@ -345,3 +345,49 @@ def acceptance_payments(raw: bytes) -> dict:
         raise FixtureError("Payment acceptance receipt has invalid event facts.")
 
     return record
+
+
+
+def admit_tokens(record: dict | None) -> dict | None:
+    """Admit only the public token deployment identities, never account keys.
+
+    One public token manifest binds the owner phase, the writer, all readers
+    and the independently verified mined creation receipts to the same source.
+    """
+    if record is None:
+        return None
+
+    if type(record) is not dict or set(record) != {"schema", "token20", "token721"}:
+        raise FixtureError("Selected token fixture has an unexpected public envelope.")
+    if record["schema"] != "conix.acceptance.tokens.v1":
+        raise FixtureError("Selected token fixture has an unsupported schema.")
+
+    for name in ("token20", "token721"):
+        selected = record[name]
+        if (
+            type(selected) is not dict
+            or set(selected) != {"address", "deploymentBlock", "creationTransaction"}
+            or not _address(selected["address"])
+            or not _uint(selected["deploymentBlock"])
+            or not isinstance(selected["creationTransaction"], str)
+            or KEY.fullmatch(selected["creationTransaction"]) is None
+        ):
+            raise FixtureError("Selected token fixture lacks valid deployment coordinates.")
+
+    if record["token20"]["address"].lower() == record["token721"]["address"].lower():
+        raise FixtureError("Selected token fixtures reuse one emitting contract address.")
+
+    return record
+
+
+def acceptance_tokens(raw: bytes) -> dict:
+    """Read one successful deployment receipt from the disposable Anvil process."""
+    if type(raw) is not bytes or not 0 < len(raw) <= 4096 or len(raw.splitlines()) != 1:
+        raise FixtureError("Expected one bounded token deployment receipt.")
+
+    try:
+        record = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_bad_constant)
+    except (UnicodeError, ValueError, RecursionError):
+        raise FixtureError("Token deployment receipt is not strict JSON.") from None
+
+    return admit_tokens(record)
