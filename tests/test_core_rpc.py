@@ -37,6 +37,14 @@ def hex_bytes(value):
     return "0x" + value.hex()
 
 
+def json_response(payload):
+    """Supply unconsumed wire bytes to exercise the real streaming reader."""
+    return httpx.Response(
+        200,
+        stream=httpx.ByteStream(json.dumps(payload).encode("utf-8")),
+    )
+
+
 def rpc_block(number, hash_, parent_hash, transactions=()):
     return {
         "number": hex(number),
@@ -110,10 +118,11 @@ class Server:
         else:
             raise AssertionError(f"Unexpected scanner RPC method: {method}")
 
-        return httpx.Response(
-            200,
-            json={"jsonrpc": "2.0", "id": operation["id"], "result": result},
-        )
+        return json_response({
+            "jsonrpc": "2.0",
+            "id": operation["id"],
+            "result": result,
+        })
 
 
 class RecordingJournal:
@@ -263,8 +272,9 @@ class ScannerEvidenceContracts(unittest.IsolatedAsyncioTestCase):
                 operation = json.loads(request.content)
                 if operation["method"] == "eth_getLogs":
                     self.requests.append(operation)
-                    return httpx.Response(200, json={
-                        "jsonrpc": "2.0", "id": operation["id"],
+                    return json_response({
+                        "jsonrpc": "2.0",
+                        "id": operation["id"],
                         "error": {"code": -32000, "message": "secret upstream text"},
                     })
                 return super().__call__(request)
@@ -293,7 +303,7 @@ class ScannerEvidenceContracts(unittest.IsolatedAsyncioTestCase):
                 }).encode("utf-8")
                 return httpx.Response(
                     200,
-                    content=gzip.compress(valid_reply),
+                    stream=httpx.ByteStream(gzip.compress(valid_reply)),
                     headers={"Content-Encoding": "gzip"},
                 )
 
@@ -307,14 +317,16 @@ class ScannerEvidenceContracts(unittest.IsolatedAsyncioTestCase):
 
         class WrongId(Server):
             def __call__(self, request):
-                reply = super().__call__(request)
                 operation = json.loads(request.content)
                 if operation["method"] != "eth_getLogs":
-                    return reply
+                    return super().__call__(request)
 
-                incorrect = reply.json()
-                incorrect["id"] = operation["id"] + 1
-                return httpx.Response(200, json=incorrect)
+                self.requests.append(operation)
+                return json_response({
+                    "jsonrpc": "2.0",
+                    "id": operation["id"] + 1,
+                    "result": self.log_replies[hex_bytes(TOKEN)],
+                })
 
         self.server = WrongId()
         self.journal = RecordingJournal(self.source)
