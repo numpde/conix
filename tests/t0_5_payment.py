@@ -191,6 +191,37 @@ async def collect(rpc, descriptor, *, signer, customer, collector, channel, tota
     )
 
 
+async def prepare_positions(rpc, descriptor, *, voucher_key):
+    """Create two service channels and three funded positions on fresh Anvil.
+
+    The admin also acts as the second customer; the relayer alone collects.
+    The separate voucher key prevents conflating those three authorities.
+    """
+    accounts = descriptor["publicFixtureAccounts"]
+    admin = accounts["admin"]["address"]
+    customer = accounts["customer"]["address"]
+    collector = accounts["relayer"]["address"]
+    payee = accounts["payee"]["address"]
+    (count,) = await payment_call(rpc, descriptor, "channelCount", ())
+    require(count == 1, "Fresh PayToPlay fixture unexpectedly has service channels.")
+    for _ in range(2):
+        await send(
+            rpc, descriptor, admin, "createChannel(address,address,uint64)",
+            ("address", "address", "uint64"), (payee, collector, 60),
+        )
+    for (actor, channel) in ((customer, 1), (customer, 2), (other_customer, 1)):
+        await send(
+            rpc, descriptor, actor, "registerVoucherKey(uint256,address)",
+            ("uint256", "address"), (channel, voucher_key),
+        )
+    for (actor, channel, amount) in ((customer, 1, 100), (customer, 2, 20),
+                                    (other_customer, 1, 25)):
+        await send(
+            rpc, descriptor, actor, "fund(uint256,uint256)",
+            ("uint256", "uint256"), (channel, amount), value=amount,
+        )
+
+
 async def mine_mixed_block(rpc, descriptor, tokens, *, signer, customer, collector, invoice):
     """Publish three different selected contracts in the SAME mined block.
 
@@ -288,24 +319,7 @@ async def exercise(descriptor, catalog_file, rpc, *, writer_dsn, reader_dsn, tok
     invoice_c = bytes.fromhex("33" * 32)
     before_payee = int(await rpc(descriptor, "eth_getBalance", [payee, "latest"]), 16)
 
-    (count,) = await payment_call(rpc, descriptor, "channelCount", ())
-    require(count == 1, "Fresh PayToPlay fixture unexpectedly has service channels.")
-    for _ in (1, 2):
-        await send(
-            rpc, descriptor, admin, "createChannel(address,address,uint64)",
-            ("address", "address", "uint64"), (payee, collector, 60),
-        )
-    for actor, channel in ((customer, 1), (customer, 2), (other_customer, 1)):
-        await send(
-            rpc, descriptor, actor, "registerVoucherKey(uint256,address)",
-            ("uint256", "address"), (channel, key),
-        )
-    for actor, channel, amount in ((customer, 1, 100), (customer, 2, 20),
-                                    (other_customer, 1, 25)):
-        await send(
-            rpc, descriptor, actor, "fund(uint256,uint256)",
-            ("uint256", "uint256"), (channel, amount), value=amount,
-        )
+    await prepare_positions(rpc, descriptor, voucher_key=key)
 
     # Token constructor Transfer events already exist from preparation.
     # These transactions add distinct real emitted values before the mixed block.
