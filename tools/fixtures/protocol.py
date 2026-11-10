@@ -319,7 +319,7 @@ def acceptance_payments(raw: bytes) -> dict:
 def admit_payments(record: dict) -> dict:
     """One shared public checkpoint/receipt contract across processes."""
     if type(record) is not dict or set(record) != {
-        "schema", "checkpoint", "transactions", "customer", "channel", "collected",
+        "schema", "checkpoint", "transactions", "collected",
     } or record["schema"] != "conix.acceptance.payments.v1":
         raise FixtureError("Payment acceptance receipt has an invalid envelope.")
 
@@ -346,13 +346,13 @@ def admit_payments(record: dict) -> dict:
 
     if (
         type(record["transactions"]) is not list
-        or len(record["transactions"]) != 4
+        or not 1 <= len(record["transactions"]) <= 32
         or any(type(tx) is not str or KEY.fullmatch(tx) is None
                for tx in record["transactions"])
-        or len(set(record["transactions"])) != 4
-        or not _address(record["customer"])
-        or type(record["channel"]) is not int or record["channel"] != 1
-        or record["collected"] != [30, 40]
+        or len(set(record["transactions"])) != len(record["transactions"])
+        or type(record["collected"]) is not list
+        or not 1 <= len(record["collected"]) <= 32
+        or any(not _uint(value, maximum=(1 << 256) - 1) for value in record["collected"])
     ):
         raise FixtureError("Payment acceptance receipt has invalid event facts.")
 
