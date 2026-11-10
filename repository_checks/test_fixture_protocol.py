@@ -214,8 +214,6 @@ class PaymentPhaseReceiptContracts(unittest.TestCase):
                 },
             },
             "transactions": ["0x" + f"{i:02x}" * 32 for i in range(4)],
-            "customer": ADDRESS,
-            "channel": 1,
             "collected": [30, 40],
         }
         self.assertEqual(acceptance_payments(encode(record)), record)
@@ -226,7 +224,9 @@ class PaymentPhaseReceiptContracts(unittest.TestCase):
             {**record, "checkpoint": {**record["checkpoint"], "source": "invalid"}},
             {**record, "checkpoint": {**record["checkpoint"], "start": 10}},
             {**record, "checkpoint": {**record["checkpoint"], "generation": "none"}},
-            {**record, "collected": [30, 30]},
+            {**record, "collected": [30, -1]},
+            {**record, "collected": [True, 40]},
+            {**record, "collected": []},
             {**record, "channel": True},
         )
         for mutation in mutations:
