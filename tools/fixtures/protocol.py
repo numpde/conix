@@ -301,17 +301,36 @@ def admit_public_acceptance_source(value: dict) -> dict:
 
 
 _TEST_VIEW_NAMES = frozenset({"channelCount", "voucherDigest", "viewPosition"})
+_PUBLIC_ABI_NAME = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]{0,63}\Z")
+_PUBLIC_ABI_TYPE = re.compile(
+    r"(?:address|bool|string|bytes(?:[0-9]{1,2})?|u?int(?:[0-9]{1,3})?|tuple)"
+    r"(?:\[[0-9]*\])*\Z"
+)
+
 
 
 def _public_abi_argument(argument: dict) -> dict:
-    """Retain ABI types/names, not compiler annotations or unrelated metadata."""
-    projected = {
-        "name": argument.get("name", ""),
-        "type": argument["type"],
-    }
+    """Project bounded Solidity ABI names/types, never arbitrary producer data."""
+    if type(argument) is not dict:
+        raise FixtureError("Selected fixture view contains a malformed ABI argument.")
+
+    name = argument.get("name", "")
+    abi_type = argument.get("type")
+    if (
+        type(name) is not str
+        or (name and _PUBLIC_ABI_NAME.fullmatch(name) is None)
+        or type(abi_type) is not str
+        or _PUBLIC_ABI_TYPE.fullmatch(abi_type) is None
+    ):
+        raise FixtureError("Selected fixture view contains an invalid ABI name or type.")
+
+    projected = {"name": name, "type": abi_type}
     if "components" in argument:
+        components = argument["components"]
+        if type(components) is not list or not abi_type.startswith("tuple"):
+            raise FixtureError("Only tuple ABI values may declare components.")
         projected["components"] = [
-            _public_abi_argument(component) for component in argument["components"]
+            _public_abi_argument(component) for component in components
         ]
 
     return projected
