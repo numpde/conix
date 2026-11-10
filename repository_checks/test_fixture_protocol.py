@@ -109,6 +109,24 @@ class FixtureContractTests(unittest.TestCase):
             b"CONIX_PHASE_FAILURE not-json", phase="baseline"
         ))
 
+    def test_rpc_method_and_cleanup_uncertainty_survive_phase_record(self):
+        primary = ScenarioFailure(
+            "Anvil RPC eth_sendTransaction timed out; operation outcome unknown."
+        )
+        primary.add_note(
+            "Anvil impersonation retirement failed (ScenarioFailure); "
+            "the fixture state requires inspection."
+        )
+
+        record = phase_failure_record("exercise", primary)
+        visible = parse_phase_failure(record, phase="exercise")
+
+        self.assertIn("eth_sendTransaction timed out", visible)
+        self.assertIn("impersonation retirement failed", visible)
+
+        primary.add_note("privateKey=0x" + "aa" * 32)
+        self.assertNotIn(b"privateKey", phase_failure_record("exercise", primary))
+
     def test_untrusted_exception_messages_cannot_reach_public_failure(self):
         fake_key = "0x" + "ab" * 32
         for original in (
