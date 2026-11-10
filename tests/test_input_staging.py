@@ -28,9 +28,17 @@ class InputEnvelopeTests(unittest.TestCase):
             with self.subTest(length=len(malformed)), self.assertRaises(InputError):
                 decode(malformed)
 
-    def test_refuses_other_credential_location(self):
-        with self.assertRaises(InputError):
-            decode(self.payload(b'[database]\ndsn_file="/tmp/secret"\n'))
+    def test_transport_does_not_validate_catalog_meaning(self):
+        config = b'[database]\ndsn_file="/tmp/secret"\n'
+        self.assertEqual(
+            decode(self.payload(config)),
+            (config, b"postgresql://example.invalid/db"),
+        )
+        malformed_toml = b"not a TOML document"
+        self.assertEqual(
+            decode(self.payload(malformed_toml)),
+            (malformed_toml, b"postgresql://example.invalid/db"),
+        )
 
     def test_refuses_empty_or_nul_credential(self):
         for secret in (b"", b"postgresql://foo\0bar"):

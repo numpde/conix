@@ -131,6 +131,17 @@ class CatalogAdmission(unittest.TestCase):
         with self.assertRaises(ConfigurationError):
             prepare_catalog(path)
 
+    def test_catalog_owns_database_credential_location(self):
+        configured = self.write()
+        configured.write_text(
+            configured.read_text().replace(
+                'dsn_file = "/run/conix/connection.dsn"',
+                'dsn_file = "/tmp/secret"',
+            )
+        )
+        with self.assertRaises(ConfigurationError):
+            prepare_catalog(configured)
+
     def test_abi_traversal_duplicate_members_and_symlinks_are_refused(self):
         with self.assertRaises(ConfigurationError):
             prepare_catalog(self.write(abi_file="../token.json"))

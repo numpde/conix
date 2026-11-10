@@ -9,7 +9,6 @@ import os
 import stat
 import struct
 import sys
-import tomllib
 from pathlib import Path
 
 MAGIC = b"CONIX-INPUTS-V1\n"
@@ -26,7 +25,11 @@ class InputError(ValueError):
 
 
 def decode(payload: bytes) -> tuple[bytes, bytes]:
-    """Validate the length-prefixed envelope while preserving the original bytes."""
+    """Split bounded transport bytes without interpreting catalog settings.
+
+    The catalog is the only owner of TOML/ABI admission. This networkless
+    provisioner handles private file delivery and does not authorize a worker.
+    """
     if not payload.startswith(MAGIC) or len(payload) < len(MAGIC) + 8:
         raise InputError("Staged input envelope has an invalid version or length.")
 
@@ -42,18 +45,6 @@ def decode(payload: bytes) -> tuple[bytes, bytes]:
 
     config_bytes = payload[content_offset:content_offset + config_size]
     dsn_bytes = payload[content_offset + config_size:]
-
-    try:
-        config_document = tomllib.loads(config_bytes.decode("utf-8"))
-    except (UnicodeError, ValueError) as error:
-        raise InputError("Staged configuration is not valid UTF-8 TOML.") from error
-
-    if (
-        type(config_document) is not dict
-        or type(config_document.get("database")) is not dict
-        or config_document["database"].get("dsn_file") != str(TARGET / DSN)
-    ):
-        raise InputError("Staged config must select /run/conix/connection.dsn explicitly.")
 
     try:
         dsn_text = dsn_bytes.decode("utf-8").strip()
@@ -99,11 +90,6 @@ def stage(payload: bytes, target: Path = TARGET):
     directory_fd = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
 
     try:
-        directory_mode = os.fstat(directory_fd).st_mode
-
-        if not stat.S_ISDIR(directory_mode):
-            raise InputError("Mounted input destination is not a directory.")
-
         create_file(directory_fd, CONFIG, config_bytes)
         create_file(directory_fd, DSN, dsn_bytes)
 
