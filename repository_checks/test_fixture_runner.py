@@ -39,6 +39,9 @@ def graph(fixture_image, postgres_image, rpc):
             "read_only": True, "cap_drop": ["ALL"],
             "security_opt": ["no-new-privileges:true"],
             "networks": networks, "environment": environment or {},
+            "cpus": 0.5, "pids_limit": 64,
+            "mem_limit": "256m", "memswap_limit": "256m",
+            "tmpfs": ["/tmp:rw,nosuid,nodev,noexec,size=16m"],
         }
     return {
         "services": {
@@ -49,7 +52,8 @@ def graph(fixture_image, postgres_image, rpc):
             }),
             "consumer": item(fixture_image, "65532:65532", {
                 "database": None, "rpc": None,
-            }, {"CONIX_TEST_DSN": "test-only:runtime"}),
+            }, {"CONIX_TEST_DSN": "test-only:runtime",
+                "CONIX_TEST_READ_DSN": "test-only:reader"}),
         },
         "networks": {"database": {"internal": True},
                      "rpc": {"external": True, "name": rpc}},
@@ -148,10 +152,18 @@ class FixtureRunnerTests(unittest.TestCase):
             lambda d: d["services"]["consumer"]["environment"].update({
                 "CONIX_TEST_OWNER_DSN": "should-not-be-here",
             }),
+            lambda d: d["services"]["consumer"]["environment"].pop("CONIX_TEST_READ_DSN"),
+            lambda d: d["services"]["initialize"]["environment"].update({
+                "CONIX_TEST_READ_DSN": "must-not-reach-owner",
+            }),
             lambda d: d["services"]["initialize"]["networks"].update({"rpc": None}),
             lambda d: d["services"]["consumer"].update({"build": {"context": ".."}}),
             lambda d: d["networks"]["rpc"].update({"name": "foreign"}),
             lambda d: d["services"]["consumer"].update({"ports": ["5432:5432"]}),
+            lambda d: d["services"]["consumer"].pop("pids_limit"),
+            lambda d: d["services"]["consumer"].pop("mem_limit"),
+            lambda d: d["services"]["consumer"].pop("memswap_limit"),
+            lambda d: d["services"]["consumer"].update({"tmpfs": []}),
         ):
             candidate = json.loads(json.dumps(baseline))
             change(candidate)
@@ -300,6 +312,79 @@ class FixtureRunnerTests(unittest.TestCase):
             with patch.object(docker, "run", side_effect=AssertionError("Borrowed test contacted producer")):
                 self.assertEqual(run.cleanup(), [])
 
+    def test_only_owned_fixture_runs_mutating_t0_5_phases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            owned = runner.PayToPlayTest(
+                FakeDocker(), "sha256:" + "a" * 64, Path(directory),
+                descriptor_for("conix-abcdef123456"), owned_fixture=True,
+            )
+            owned.preflight_record = {
+                "schema": "conix.acceptance.preflight.v1",
+                "chainId": 31337, "genesisHash": "0x" + "ab" * 32,
+            }
+            public_payment_receipt = {"schema": "public-source-only"}
+            observed = []
+
+            def phase(service, name, *, prior_receipt, expect_receipt):
+                observed.append((service, name, prior_receipt, expect_receipt))
+                if name == "exercise":
+                    return public_payment_receipt
+                return None
+
+            with patch.object(runner, "verify_network"), patch.object(
+                owned, "prepare_sql"
+            ), patch.object(owned, "_phase", side_effect=phase):
+                owned.execute()
+
+            self.assertEqual([entry[1] for entry in observed],
+                             ["baseline", "exercise", "resume", "reorg"])
+            self.assertEqual(observed[0][2], owned.preflight_record)
+            self.assertEqual(observed[1][2], owned.preflight_record)
+            self.assertIs(observed[2][2], public_payment_receipt)
+            self.assertIs(observed[3][2], public_payment_receipt)
+            self.assertTrue(observed[1][3])
+            self.assertFalse(observed[2][3] or observed[3][3])
+
+
+    def test_token_deployment_precedes_schema_owner_initialization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            docker = FakeDocker()
+            docker.require_role = lambda *_: None
+            docker.require_image = lambda *_: None
+            fixture = runner.PayToPlayTest(
+                docker, "sha256:" + "a" * 64, Path(directory),
+                descriptor_for("conix-abcdef123456"), owned_fixture=True,
+            )
+            preflight = {"schema": "conix.acceptance.preflight.v1", "chainId": 31337,
+                         "genesisHash": "0x" + "ab" * 32}
+            tokens = {"schema": "conix.acceptance.tokens.v1"}
+            seen = []
+
+            def phase(_service, operation, *, prior_receipt, expect_receipt):
+                seen.append((operation, prior_receipt, expect_receipt))
+                if operation == "preflight":
+                    return preflight
+                if operation == "prepare":
+                    return tokens
+                if operation == "initialize":
+                    self.assertIs(fixture.tokens, tokens)
+                    self.assertIs(prior_receipt, preflight)
+
+            with patch.object(runner, "pinned_images", return_value={
+                "postgres": "test-postgres",
+            }), patch.object(runner, "admit"), patch.object(
+                fixture, "check_new_sql_project"
+            ), patch.object(fixture, "_phase", side_effect=phase), patch.object(
+                docker, "run", return_value="{}"
+            ):
+                fixture.prepare_sql()
+
+            self.assertEqual([operation for operation, _, _ in seen],
+                             ["bootstrap", "preflight", "prepare", "initialize"])
+            self.assertIs(seen[2][1], preflight)
+            self.assertTrue(seen[2][2])
+            self.assertFalse(seen[3][2])
+
     def test_unconfirmed_producer_creation_does_not_grant_cleanup_authority(self):
         with tempfile.TemporaryDirectory() as directory:
             campaign = runner.Campaign(
@@ -420,6 +505,37 @@ class FixtureRunnerTests(unittest.TestCase):
             self.assertEqual(len(records), 1)
             shutil.rmtree(records[0].removeprefix("Private phase receipts: "))
 
+    def test_unreapable_child_does_not_replace_primary_operation_failure(self):
+        """Process-retirement failure must not erase the first causal error."""
+        with tempfile.TemporaryDirectory() as directory:
+            class StuckChild:
+                pid = 73159
+                returncode = None
+
+                def communicate(self, **_kwargs):
+                    raise RuntimeError("original operation failed")
+
+                def wait(self, *, timeout):
+                    raise runner.subprocess.TimeoutExpired("test-child", timeout)
+
+            killed = []
+            with patch.object(
+                runner.subprocess, "Popen", return_value=StuckChild()
+            ), patch.object(
+                runner.os, "killpg", side_effect=lambda pid, signal: killed.append((pid, signal))
+            ):
+                with self.assertRaisesRegex(RuntimeError, "original operation failed") as raised:
+                    runner.owned_command(
+                        ["test-child"],
+                        output=Path(directory) / "stdout",
+                        error_file=Path(directory) / "stderr",
+                        env={},
+                        timeout=1,
+                    )
+
+            self.assertEqual(len(killed), 2)
+            self.assertIn("retirement", " ".join(raised.exception.__notes__).lower())
+
     def test_timed_out_owned_process_is_reaped_before_retirement(self):
         import time
         with tempfile.TemporaryDirectory() as directory:
@@ -492,6 +608,36 @@ class GenericAcceptanceOperatorContracts(unittest.TestCase):
             self.assertFalse(consumer.sql_started)
             self.assertEqual(consumer.cleanup(), [])
 
+
+    def test_every_consumer_phase_receives_keyless_public_fixture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = descriptor_for("conix-abcdef123456")
+            docker = SimpleNamespace(docker_command_prefix=("docker",), docker_environment={})
+            consumer = runner.PayToPlayTest(
+                docker, "sha256:" + "a" * 64, Path(directory),
+                descriptor, owned_fixture=True,
+            )
+            consumer.compose_environment = {}
+
+            for phase in ("preflight", "baseline", "exercise", "resume", "reorg"):
+                with self.subTest(phase=phase), patch.object(
+                    runner, "owned_command", return_value=b""
+                ) as invoked:
+                    consumer._phase(
+                        "consumer", phase, prior_receipt=None, expect_receipt=False,
+                    )
+
+                payload = invoked.call_args.kwargs["payload"].decode("utf-8")
+                source = json.loads(payload)["descriptor"]
+                self.assertEqual(source["schema"], "conix.acceptance.public-test-source.v1")
+                self.assertEqual(set(source["contracts"]), {"PayToPlay"})
+                self.assertEqual(
+                    source["publicFixtureAccounts"]["admin"],
+                    {"address": descriptor["publicFixtureAccounts"]["admin"]["address"]},
+                )
+                self.assertNotIn("privateKey", payload)
+                for account in descriptor["publicFixtureAccounts"].values():
+                    self.assertNotIn(account["privateKey"], payload)
 
     def test_generic_owner_receives_no_private_fixture_descriptor(self):
         with tempfile.TemporaryDirectory() as path:

@@ -6,10 +6,11 @@ Scope
 Conix's target is one generic EVM event indexer: a single-ABI-driven scanner,
 one complete-block PostgreSQL raw-log journal, and one checkpoint-bound reader
 supporting PayToPlay, ERC-20 and ERC-721 without contract-specific source code.
-T0-1 ABI, T0-2 offline catalog/owner-only journal, T0-3
-blockHash-pinned scanner and T0-4 checkpoint-bound reader are implemented.
-The experimental
-PayToPlay-only runtime was deleted without migration or adapters.
+T0-1 ABI, T0-2 offline catalog/owner-only journal, T0-3 blockHash-pinned
+scanner and T0-4 checkpoint-bound reader are implemented. T0-5 acceptance
+scenarios exist on the working branch, but its opt-in dapp32 campaign has not
+been qualified by ordinary CI. The experimental PayToPlay-only runtime was
+deleted without migration or adapters.
 
 notes/004_rpc_evidence_and_raw_log_indexer_plan.txt governs the new Tier-0
 implementation and qualification. notes/005_rpc_history_acquisition_and_optimization.txt
@@ -128,18 +129,19 @@ Sibling-fixture campaign
 ------------------------
 The explicit campaign/indexer/acceptance/run lane consumes the public dapp32 repository's
 supported fixture/up, fixture/info and fixture/down contract, never changes its
-source or starts a replacement Anvil implementation. The descriptor is a
-bounded private stdin handoff; its test keys cannot appear in output, Docker
-labels, environment variables, log messages or runtime image layers.
+source or starts a replacement Anvil implementation. The host admits the bounded private producer descriptor, but projects a
+keyless public source for all child phases. Producer test keys never enter
+child stdin, output, Docker labels, environments, logs or runtime images.
 The optional Foundry Cast binary belongs in the evm-test-runner image alone. Prefer
 the deployed contract's voucherDigest over a duplicate EIP-712 implementation.
 Only Conix-owned SQL and verified newly created producer fixtures may be
 retired automatically; preserve exact recovery records on uncertain outcomes.
 The borrowed and owned generic acceptance gates are distinct qualifications.
-Both remain intentionally RED pending actual signed PayToPlay collection,
-consumer-filtered history and recovery against the dapp32 fixture. The
-contained Anvil PostgreSQL tests qualify the generic T0-3 scanner/T0-4
-reader, not economic accounting or payment reconciliation.
+Borrowed mode is nondestructive baseline acceptance; the owned campaign runs
+real Solidity token transactions, signed PayToPlay collection, process restart
+and manual reorganization repair. The owned campaign remains UNQUALIFIED until
+executed against the actual dapp32 fixture. Contained PostgreSQL/Anvil tests
+qualify generic scanner/reader behavior, not financial reconciliation.
 
 Shared wheelhouse
 -----------------

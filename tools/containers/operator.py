@@ -132,6 +132,7 @@ class Docker(DockerClient):
             "--user", "65532:65532", "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges:true",
             "--pids-limit", "64", "--memory", "256m",
+            "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777",
         )
         self.run(*confinement_args, "--entrypoint", "cast", image, "--version", timeout=20, capture=True)
         # The fixture image runs an actual unittest module. No embedded

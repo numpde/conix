@@ -153,6 +153,10 @@ class SharedWheelhouseContracts(unittest.TestCase):
         } | {"tests/fixtures/catalog.toml"} | {
             path.relative_to(ROOT).as_posix()
             for path in (ROOT / "tests" / "fixtures" / "abi").glob("*.json")
+        } | {
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "tests" / "fixtures" / "evm").iterdir()
+            if path.suffix in (".sol", ".json")
         }
         selected_tests = {name for name in selected if name.startswith("tests/")}
         self.assertEqual(selected_tests, expected_tests)

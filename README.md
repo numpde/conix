@@ -103,11 +103,31 @@ project. The dapp32 deployment and contract are external test evidence,
 not a new PayToPlay-specific Conix code path.
 
 The generic acceptance runner uses the installed package, a real Anvil RPC,
-private stdin handoff, and a separate schema-owner/consumer lifecycle.
-Private account data never reaches schema initialization. This acceptance
-campaign remains intentionally RED pending the actual dapp32 signed
-collection, reader filtering and recovery scenario. The ordinary CI
-Anvil test proves the generic reader/writer, not that external workflow.
+and separate schema-owner/consumer lifecycles. The host admits dapp32's
+private fixture descriptor, then sends only public contract, ABI and account
+coordinates to test consumers. The schema owner receives an even narrower
+source projection. No child phase receives dapp32 wallet keys.
+
+The owned campaign deploys real compiled ERC-20/ERC-721 fixtures before schema
+initialization, indexes a mixed token/payment block, verifies signed PayToPlay
+collections and filtered history, restarts in a fresh process, and exercises
+an Anvil reorganization with manual repair. Borrowed-fixture mode runs only
+the nondestructive baseline.
+
+After explicit dependency acquisition and a verified rootless Docker context,
+build the EVM test runner from the already selected wheelhouse, then run:
+
+    evm_runner="$(make -s image/evm-test-runner/build DOCKER_CONTEXT=agentic WHEELHOUSE="$HOME/Downloads/wheelhouse")"
+    make image/evm-test-runner/check DOCKER_CONTEXT=agentic IMAGE="$evm_runner"
+    make campaign/indexer/acceptance/run DOCKER_CONTEXT=agentic RUNNER_IMAGE="$evm_runner" DAPP32_DIR="$HOME/repos/dapp32"
+
+Select the actual local Docker context and prepared dapp32 checkout. The
+campaign creates and retires an isolated producer fixture and a separate
+Conix SQL project; on uncertain cleanup, inspect the reported ownership IDs.
+
+The cross-repository campaign must pass before T0-5 is qualified. Ordinary
+CI Anvil tests establish generic reader/writer behavior, not this dapp32
+end-to-end workflow.
 
 Security and next step
 ----------------------
@@ -117,9 +137,9 @@ independently. Existing retained deployments may be inspected or removed
 using ownership-constrained deployment/status and deployment/remove; no
 new generic worker may be started until it is implemented and qualified.
 
-Next is T0-5: qualify real ERC-20/ERC-721 and signed PayToPlay events,
-consumer-filtered history, multi-contract recovery and checkpoint queries
-against the externally owned dapp32 fixture. The signer and economic
+Next is to execute and independently review the new T0-5 owned campaign
+against dapp32, address any real interoperability defects, and qualify the
+recorded event history, filtering and repair behavior. The signer and economic
 policy remain external. A production worker CLI and private immutable ABI
 snapshot staging are separate prerequisites for deployment.
 Do not reintroduce Collection models, PayToPlay-specific decoders or

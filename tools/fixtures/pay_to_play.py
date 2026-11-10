@@ -26,7 +26,10 @@ from tools.containers.operator import Docker, ROOT, pinned_images
 from tools.fixtures.protocol import (
     FixtureError,
     acceptance_preflight,
+    acceptance_payments,
+    acceptance_tokens,
     public_acceptance_source,
+    public_test_source,
     decode,
     parse_phase_failure,
 )
@@ -161,11 +164,17 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
 
                     _progress(f"{label}: running ({int(time.monotonic() - started_at)}s)")
         except BaseException as error:
-            # Reaping the CLI does not certify that Docker retired daemon work.
+            # Preserve the original failure even when the child ignores both
+            # signals. A stopped CLI still does not prove Docker daemon work
+            # was retired; the campaign independently verifies Compose cleanup.
+            child_retirement_unconfirmed = False
+
             try:
                 os.killpg(owned_process.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
+            except OSError:
+                child_retirement_unconfirmed = True
 
             try:
                 owned_process.wait(timeout=10)
@@ -174,11 +183,27 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
                     os.killpg(owned_process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+                except OSError:
+                    child_retirement_unconfirmed = True
 
-                owned_process.wait(timeout=5)
+                try:
+                    owned_process.wait(timeout=5)
+                except (OSError, subprocess.TimeoutExpired):
+                    child_retirement_unconfirmed = True
+            except OSError:
+                child_retirement_unconfirmed = True
+
+            if child_retirement_unconfirmed:
+                error.add_note(
+                    "Fixture child retirement is unconfirmed; inspect the "
+                    "selected operation before deleting retained evidence."
+                )
 
             if isinstance(error, subprocess.TimeoutExpired):
-                raise CampaignError(f"{label} timed out after {timeout}s; daemon effects are unconfirmed.") from error
+                retirement = "; child retirement unconfirmed" if child_retirement_unconfirmed else ""
+                raise CampaignError(
+                    f"{label} timed out after {timeout}s; daemon effects are unconfirmed{retirement}."
+                ) from error
 
             raise
 
@@ -248,6 +273,14 @@ def admit(rendered_graph, *, runner_image, postgres_image, rpc_network):
                 or service.get("network_mode") or service.get("devices")
                 or service.get("pid") or service.get("ipc") or service.get("uts")
                 or any(mount.get("type") == "bind" for mount in service.get("volumes", []))
+                # Required finite-job resource ceilings belong to the
+                # launched role, not merely to checked-in Compose prose.
+                or service.get("cpus") is None
+                or service.get("mem_limit") is None
+                or service.get("memswap_limit") is None
+                or type(service.get("pids_limit")) is not int
+                or not 1 <= service["pids_limit"] <= 128
+                or not service.get("tmpfs")
             ):
                 raise CampaignError("Fixture service has an unapproved image, privilege or host attachment.")
 
@@ -261,8 +294,12 @@ def admit(rendered_graph, *, runner_image, postgres_image, rpc_network):
         consumer_environment = rendered_services["consumer"].get("environment", {})
 
         if (
-            "CONIX_TEST_OWNER_DSN" not in owner_environment or "CONIX_TEST_DSN" in owner_environment
-            or "CONIX_TEST_DSN" not in consumer_environment or "CONIX_TEST_OWNER_DSN" in consumer_environment
+            "CONIX_TEST_OWNER_DSN" not in owner_environment
+            or "CONIX_TEST_DSN" in owner_environment
+            or "CONIX_TEST_READ_DSN" in owner_environment
+            or "CONIX_TEST_DSN" not in consumer_environment
+            or "CONIX_TEST_READ_DSN" not in consumer_environment
+            or "CONIX_TEST_OWNER_DSN" in consumer_environment
         ):
             raise CampaignError("One-shot owner credentials are not separated from the runtime.")
     except (TypeError, AttributeError, KeyError) as error:
@@ -319,16 +356,18 @@ def _compose(docker, compose_project):
     )
 
 
-def _json_request(descriptor, prior_phase_receipt):
-    """Pass private fixture keys through stdin, never argv or environment."""
-    return (json.dumps({"descriptor": descriptor, "state": prior_phase_receipt}, separators=(",", ":")) + "\n").encode()
+def _json_request(descriptor, prior_phase_receipt, *, tokens):
+    """Send only the selected public phase source and bounded prior receipts."""
+    return (json.dumps({"descriptor": descriptor, "state": prior_phase_receipt, "tokens": tokens}, separators=(",", ":")) + "\n").encode()
 
 
 class PayToPlayTest:
     """Borrow the producer's Anvil; own only the disposable SQL/consumer project."""
 
-    def __init__(self, docker, runner_image, scratch, descriptor):
+    def __init__(self, docker, runner_image, scratch, descriptor, *, owned_fixture=False):
         self.preflight_record = None
+        self.tokens = None
+        self.owned_fixture = owned_fixture
         self.docker = docker
         self.runner_image = runner_image
         self.scratch_dir = scratch
@@ -413,6 +452,13 @@ class PayToPlayTest:
         self.preflight_record = self._phase(
             "consumer", "preflight", prior_receipt=None, expect_receipt=True,
         )
+        if self.owned_fixture:
+            # All selected source addresses must be known BEFORE owner
+            # initializes the immutable event-history identity.
+            self.tokens = self._phase(
+                "consumer", "prepare",
+                prior_receipt=self.preflight_record, expect_receipt=True,
+            )
         self._phase(
             "initialize", "initialize",
             prior_receipt=self.preflight_record, expect_receipt=False,
@@ -428,14 +474,14 @@ class PayToPlayTest:
             "run", "--rm", "--no-deps", "--pull", "never", "-T",
             *runner_arguments,
         ]
-        # The owner phase receives no wallet credentials or arbitrary
-        # producer ABI contents. Its ABI is the reviewed test-image fixture.
+        # The owner gets source coordinates only; consumers get a public
+        # ABI and role addresses. Neither phase receives fixture wallet keys.
         source = (
             public_acceptance_source(self.fixture_descriptor)
             if phase == "initialize"
-            else self.fixture_descriptor
+            else public_test_source(self.fixture_descriptor)
         )
-        phase_payload = _json_request(source, prior_receipt) if phase != "bootstrap" else None
+        phase_payload = _json_request(source, prior_receipt, tokens=self.tokens) if phase != "bootstrap" else None
         self.consumer_retired = False
 
         try:
@@ -444,14 +490,14 @@ class PayToPlayTest:
                 output=self._file("conix-" + phase + ".out"),
                 error_file=self._file("conix-" + phase + ".err"),
                 env=self.compose_environment,
-                timeout=75,
+                timeout=180 if phase == "exercise" else 120 if phase in ("prepare", "reorg") else 75,
                 payload=phase_payload,
                 label=f"Conix phase/{phase}",
             )
             self.consumer_retired = True
         except CampaignError as error:
-            # A child may include wallet bytes in stderr; admit only its
-            # source-controlled, phase-bound failure record.
+            # Child stderr is untrusted, even though its stdin excludes
+            # producer wallet keys. Admit only its bounded phase-bound record.
             try:
                 phase_stderr_tail = self._file("conix-" + phase + ".err").read_bytes()[-16384:]
             except OSError:
@@ -468,10 +514,13 @@ class PayToPlayTest:
         if not expect_receipt:
             return None
 
-        if phase != "preflight":
-            raise CampaignError("Only public source preflight may return an acceptance receipt.")
-
-        return acceptance_preflight(phase_stdout, chain_id=self.fixture_descriptor["chainId"])
+        if phase == "preflight":
+            return acceptance_preflight(phase_stdout, chain_id=self.fixture_descriptor["chainId"])
+        if phase == "prepare" and self.owned_fixture:
+            return acceptance_tokens(phase_stdout)
+        if phase == "exercise" and self.owned_fixture:
+            return acceptance_payments(phase_stdout)
+        raise CampaignError("Unexpected receipt from a nonpublic acceptance phase.")
 
     def execute(self):
         """Run only the generic installed-package acceptance, no legacy path."""
@@ -481,6 +530,18 @@ class PayToPlayTest:
             "consumer", "baseline",
             prior_receipt=self.preflight_record, expect_receipt=False,
         )
+        if self.owned_fixture:
+            # Each phase starts a distinct short-lived container. A fresh
+            # process verifies durable recovery; only our own Anvil can fork.
+            observations = self._phase(
+                "consumer", "exercise",
+                prior_receipt=self.preflight_record, expect_receipt=True,
+            )
+            for phase in ("resume", "reorg"):
+                self._phase(
+                    "consumer", phase,
+                    prior_receipt=observations, expect_receipt=False,
+                )
 
     def cleanup(self):
         """Retire only the owned SQL/consumer project, regardless of outcome."""
@@ -567,6 +628,7 @@ class Campaign:
         self.acquire()
         self.consumer_test = PayToPlayTest(
             self.docker, self.runner_image, self.scratch_dir, self.fixture_descriptor,
+            owned_fixture=True,
         )
         self.consumer_test.execute()
 

@@ -33,6 +33,8 @@ def valid():
         "fund": ("uint256", "uint256"),
         "collect": ("address", "uint256", "uint256", "bytes32", "uint256", "bytes"),
         "voucherDigest": ("address", "uint256", "uint256", "bytes32"),
+        "channelCount": (),
+        "viewPosition": ("address", "uint256", "address"),
     }
     abi = [
         {"type": "event", "name": "VoucherCollected", "anonymous": False, "inputs": event},
@@ -87,6 +89,17 @@ class FixtureContractTests(unittest.TestCase):
                 with self.assertRaises(FixtureError):
                     decode(encode(document), fixture_id=IDENTITY)
 
+    def test_missing_selected_view_preconditions_are_refused_at_admission(self):
+        """A real acceptance fixture needs both views before any SQL resources."""
+        for missing in ("channelCount", "viewPosition"):
+            fixture = valid()
+            abi = fixture["contracts"]["PayToPlay"]["abi"]
+            fixture["contracts"]["PayToPlay"]["abi"] = [
+                entry for entry in abi if entry.get("name") != missing
+            ]
+            with self.subTest(missing=missing), self.assertRaises(FixtureError):
+                decode(encode(fixture), fixture_id=IDENTITY)
+
     def test_wrong_abi_and_malformed_payloads_refused(self):
         data = valid()
         data["contracts"]["PayToPlay"]["abi"][0]["inputs"][3]["indexed"] = True
@@ -108,6 +121,24 @@ class FixtureContractTests(unittest.TestCase):
         self.assertIsNone(parse_phase_failure(
             b"CONIX_PHASE_FAILURE not-json", phase="baseline"
         ))
+
+    def test_rpc_method_and_cleanup_uncertainty_survive_phase_record(self):
+        primary = ScenarioFailure(
+            "Anvil RPC eth_sendTransaction timed out; operation outcome unknown."
+        )
+        primary.add_note(
+            "Anvil impersonation retirement failed (ScenarioFailure); "
+            "the fixture state requires inspection."
+        )
+
+        record = phase_failure_record("exercise", primary)
+        visible = parse_phase_failure(record, phase="exercise")
+
+        self.assertIn("eth_sendTransaction timed out", visible)
+        self.assertIn("impersonation retirement failed", visible)
+
+        primary.add_note("privateKey=0x" + "aa" * 32)
+        self.assertNotIn(b"privateKey", phase_failure_record("exercise", primary))
 
     def test_untrusted_exception_messages_cannot_reach_public_failure(self):
         fake_key = "0x" + "ab" * 32
@@ -175,3 +206,184 @@ class AcceptancePublicSourceContracts(unittest.TestCase):
         ):
             with self.subTest(case=mutation), self.assertRaises(FixtureError):
                 admit_public_acceptance_source(mutation)
+
+
+
+class KeylessConsumerSourceContracts(unittest.TestCase):
+    """Only the host operator needs the producer's public test private keys."""
+
+    def test_projection_preserves_public_coordinates_without_wallet_material(self):
+        from tools.fixtures.protocol import (
+            admit_public_test_source, public_test_source,
+        )
+
+        private_descriptor = valid()
+        projected = public_test_source(private_descriptor)
+        self.assertEqual(
+            admit_public_test_source(projected, fixture_id=IDENTITY),
+            projected,
+        )
+
+        serialized = json.dumps(projected)
+        self.assertNotIn("privateKey", serialized)
+        for account in private_descriptor["publicFixtureAccounts"].values():
+            self.assertNotIn(account["privateKey"], serialized)
+        public_functions = projected["contracts"]["PayToPlay"]["abi"]
+        self.assertTrue(
+            all(row["type"] == "function" for row in public_functions),
+        )
+        self.assertEqual(
+            {row["name"] for row in public_functions},
+            {"voucherDigest", "channelCount", "viewPosition"},
+        )
+        self.assertEqual(
+            projected["publicFixtureAccounts"]["customer"]["address"],
+            private_descriptor["publicFixtureAccounts"]["customer"]["address"],
+        )
+
+    def test_unused_abi_metadata_cannot_carry_fixture_keys_to_children(self):
+        from tools.fixtures.protocol import public_test_source
+
+        descriptor = valid()
+        fixture_key = descriptor["publicFixtureAccounts"]["customer"]["privateKey"]
+        abi = descriptor["contracts"]["PayToPlay"]["abi"]
+
+        # The producer's ABI contains arbitrary unrelated fields in this
+        # adversarial case. They must not travel to the installed test child.
+        abi[0]["metadata"] = {"operatorNote": fixture_key}
+        voucher = next(row for row in abi if row.get("name") == "voucherDigest")
+        voucher["privateKey"] = fixture_key
+        voucher["inputs"][0]["unrelatedMetadata"] = fixture_key
+
+        projected = public_test_source(descriptor)
+        self.assertNotIn(fixture_key, json.dumps(projected))
+        views = projected["contracts"]["PayToPlay"]["abi"]
+        self.assertEqual(
+            {view["name"] for view in views},
+            {"channelCount", "voucherDigest", "viewPosition"},
+        )
+        self.assertEqual(
+            next(view for view in views if view["name"] == "voucherDigest"),
+            {
+                "type": "function",
+                "name": "voucherDigest",
+                "inputs": [
+                    {"name": "", "type": kind}
+                    for kind in ("address", "uint256", "uint256", "bytes32")
+                ],
+                "outputs": [],
+            },
+        )
+
+    def test_selected_abi_type_and_name_cannot_smuggle_wallet_key_bytes(self):
+        from tools.fixtures.protocol import public_test_source
+
+        for (field, value_kind) in (("name", "name"), ("type", "type")):
+            descriptor = valid()
+            public_key = descriptor["publicFixtureAccounts"]["customer"]["privateKey"]
+            selected = next(
+                entry for entry in descriptor["contracts"]["PayToPlay"]["abi"]
+                if entry.get("name") == "viewPosition"
+            )
+            selected["inputs"][0][field] = public_key
+
+            with self.subTest(field=value_kind), self.assertRaises(FixtureError):
+                public_test_source(descriptor)
+
+    def test_malformed_or_private_consumer_source_is_refused(self):
+        from tools.fixtures.protocol import (
+            admit_public_test_source, public_test_source,
+        )
+
+        projected = public_test_source(valid())
+        invalid = (
+            {**projected, "fixtureId": "foreign"},
+            {**projected, "chainId": True},
+            {**projected, "contracts": []},
+            {**projected, "contracts": {"PayToPlay": {"address": "0xdead"}}},
+            {**projected, "publicFixtureAccounts": valid()["publicFixtureAccounts"]},
+            {**projected, "privateKey": "0x" + "55" * 32},
+        )
+        for candidate in invalid:
+            with self.subTest(fields=set(candidate)), self.assertRaises(FixtureError):
+                admit_public_test_source(candidate, fixture_id=IDENTITY)
+
+
+class PaymentPhaseReceiptContracts(unittest.TestCase):
+    """Only source and chain facts may pass from a test process to the next."""
+
+    def test_exact_public_receipt_is_admitted(self):
+        from tools.fixtures.protocol import acceptance_payments
+
+        record = {
+            "schema": "conix.acceptance.payments.v1",
+            "checkpoint": {
+                "source": "ab" * 32,
+                "generation": "00000000-0000-0000-0000-000000000001",
+                "start": 2,
+                "revision": 7,
+                "block": {
+                    "number": 9, "hash": "cd" * 32,
+                    "parent": "ef" * 32, "timestamp": 100,
+                },
+            },
+            "transactions": ["0x" + f"{i:02x}" * 32 for i in range(4)],
+            "collected": [30, 40],
+        }
+        self.assertEqual(acceptance_payments(encode(record)), record)
+
+        mutations = (
+            {**record, "privateKey": "0x" + "66" * 32},
+            {**record, "transactions": [record["transactions"][0]] * 4},
+            {**record, "checkpoint": {**record["checkpoint"], "source": "invalid"}},
+            {**record, "checkpoint": {**record["checkpoint"], "start": 10}},
+            {**record, "checkpoint": {**record["checkpoint"], "generation": "none"}},
+            {**record, "collected": [30, -1]},
+            {**record, "collected": [True, 40]},
+            {**record, "collected": []},
+            {**record, "channel": True},
+        )
+        for mutation in mutations:
+            with self.subTest(fields=set(mutation)), self.assertRaises(FixtureError):
+                acceptance_payments(encode(mutation))
+
+        with self.assertRaises(FixtureError):
+            acceptance_payments(b'{"schema":0,"schema":1}\n')
+
+
+
+class TokenPhaseReceiptContracts(unittest.TestCase):
+    """Deployment coordinates, never wallet data, cross the schema-owner boundary."""
+
+    def test_two_distinct_deployed_contracts_are_required(self):
+        from tools.fixtures.protocol import acceptance_tokens, admit_tokens
+
+        record = {
+            "schema": "conix.acceptance.tokens.v1",
+            "token20": {
+                "address": "0x" + "11" * 20,
+                "deploymentBlock": 3,
+                "creationTransaction": "0x" + "12" * 32,
+            },
+            "token721": {
+                "address": "0x" + "22" * 20,
+                "deploymentBlock": 4,
+                "creationTransaction": "0x" + "23" * 32,
+            },
+        }
+        self.assertEqual(acceptance_tokens(encode(record)), record)
+        self.assertEqual(admit_tokens(record), record)
+        self.assertIsNone(admit_tokens(None))
+
+        mutants = (
+            {**record, "privateKey": "0x" + "aa" * 32},
+            {**record, "token721": record["token20"]},
+            {**record, "token20": {**record["token20"], "deploymentBlock": True}},
+            {**record, "token20": {**record["token20"], "creationTransaction": "wrong"}},
+            {**record, "token721": {**record["token721"], "address": "0xdead"}},
+        )
+        for candidate in mutants:
+            with self.subTest(mutation=candidate), self.assertRaises(FixtureError):
+                acceptance_tokens(encode(candidate))
+        with self.assertRaises(FixtureError):
+            acceptance_tokens(b'{"schema":0,"schema":1}\n')
