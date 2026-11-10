@@ -5,11 +5,15 @@ Public targets use <resource>[/<role-or-subject>]/<action>, with exact operator
 inputs, no Make-expression interpolation, no implicit image/wheel acquisition,
 and one explicitly chosen local Docker Engine per command.
 
-Current T0-1 state: the indexer-labelled runtime image packages the ABI codec
-ONLY. Owner schema initialization and indexer deployment/apply are not
-available, nor are the retired PayToPlay-specific test/campaign targets.
-Keep the retired prototype outside installed wheels and all accepted test
-paths. Do not imply that a contained ABI smoke test proves an indexer exists.
+Current T0-4 state: the indexer-labelled runtime image installs the generic
+ABI codec, catalog, PostgreSQL journal, blockHash scanner and checkpoint reader.
+Owner-only schema initialization exists as an explicit Python API. A production
+worker deployment/apply command is not yet available. The old PayToPlay-specific
+scanner and test targets remain retired; a contained image smoke test does not
+prove that a production worker has been deployed.
+
+T0-5 real-contract acceptance is an opt-in owned dapp32 campaign. Its test
+program exists, but ordinary CI does not run or qualify that external scenario.
 
 Available operations
 --------------------
