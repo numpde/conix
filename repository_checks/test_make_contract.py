@@ -15,12 +15,11 @@ TARGETS = {
     "wheelhouse/check", "wheelhouse/acquire",
     "image/indexer/build", "image/test-runner/build", "image/evm-test-runner/build",
     "image/indexer/check", "image/evm-test-runner/check",
-    "test/postgres/run", "test/input-staging/run", "test/pay-to-play/run",
-    "campaign/pay-to-play/run",
+    "test/postgres/run", "test/input-staging/run",
     "test/indexer/acceptance/run", "campaign/indexer/acceptance/run",
     "deployment/inputs/create", "deployment/inputs/remove",
-    "database/schema/initialize", "deployment/config/check",
-    "deployment/apply", "deployment/status", "deployment/remove",
+"deployment/config/check",
+"deployment/status", "deployment/remove",
 }
 
 
@@ -42,7 +41,7 @@ class MakeContractTests(unittest.TestCase):
             "DOCKER_CONTEXT", "WHEELHOUSE", "IMAGE", "RUNNER_IMAGE",
             "INDEXER_IMAGE", "FIXTURE_DESCRIPTOR", "DAPP32_DIR",
             "DEPLOYMENT", "INPUT_VOLUME", "CONFIG_FILE", "DSN_FILE",
-            "OWNER_DSN_FILE", "DATABASE_NETWORK", "RPC_NETWORK",
+            "DATABASE_NETWORK", "RPC_NETWORK",
         ):
             with self.subTest(name=name):
                 self.assertIn("CONIX_MAKE_" + name + " := $(value " + name + ")", source)

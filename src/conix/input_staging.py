@@ -107,16 +107,11 @@ def stage(payload: bytes, target: Path = TARGET):
         create_file(directory_fd, CONFIG, config_bytes)
         create_file(directory_fd, DSN, dsn_bytes)
 
-        # Validate before changing ownership: this temporary UID 0 process
-        # has CAP_CHOWN but cannot bypass DAC after the handoff.
-        from conix.configuration import load_settings, read_dsn
-
-        staged_settings = load_settings(target / CONFIG)
-
-        if staged_settings.database_dsn_file != target / DSN:
-            raise InputError("Staged settings point outside the private credential file.")
-
-        read_dsn(target / DSN)
+        # The private envelope is a transport proof, not a substitute for
+        # the future catalog's complete ABI/source admission at preparation.
+        # Check the exact file bytes while the provisioner still owns them.
+        if (target / CONFIG).read_bytes() != config_bytes or (target / DSN).read_bytes() != dsn_bytes:
+            raise InputError("Staged input files differ from the admitted private envelope.")
 
         # CAP_CHOWN does not imply CAP_FOWNER. Set directory permissions while
         # still its owner; never widen them to compensate for UID mapping.

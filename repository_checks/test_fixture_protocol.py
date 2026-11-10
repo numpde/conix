@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests"))
 from fixture_protocol import (FixtureError, ScenarioFailure, decode, parse_phase_failure,
-                              phase_failure_record, receipt)
+                              phase_failure_record)
 
 IDENTITY = "conix-fixture01"
 CONTRACT = "0x" + "12" * 20
@@ -89,15 +89,15 @@ class FixtureContractTests(unittest.TestCase):
                 decode(value, fixture_id=IDENTITY)
 
     def test_safe_scenario_cause_is_carried_with_exact_phase(self):
-        original = ScenarioFailure("Indexed collection differs from the real receipt")
-        record = phase_failure_record("collected", original)
+        original = ScenarioFailure("Generic acceptance differs from the real evidence")
+        record = phase_failure_record("baseline", original)
         self.assertIn(
-            "ScenarioFailure: Indexed collection differs from the real receipt",
-            parse_phase_failure(record, phase="collected"),
+            "ScenarioFailure: Generic acceptance differs from the real evidence",
+            parse_phase_failure(record, phase="baseline"),
         )
-        self.assertIsNone(parse_phase_failure(record, phase="restart"))
+        self.assertIsNone(parse_phase_failure(record, phase="initialize"))
         self.assertIsNone(parse_phase_failure(
-            b"CONIX_PHASE_FAILURE not-json", phase="collected"
+            b"CONIX_PHASE_FAILURE not-json", phase="baseline"
         ))
 
     def test_untrusted_exception_messages_cannot_reach_public_failure(self):
@@ -107,27 +107,19 @@ class FixtureContractTests(unittest.TestCase):
             ScenarioFailure("privateKey=" + fake_key),
         ):
             with self.subTest(category=type(original).__name__):
-                record = phase_failure_record("collected", original)
+                record = phase_failure_record("baseline", original)
                 self.assertNotIn(fake_key.encode(), record)
                 self.assertNotIn(b"password", record)
-                explanation = parse_phase_failure(record, phase="collected")
+                explanation = parse_phase_failure(record, phase="baseline")
                 self.assertIsNotNone(explanation)
                 self.assertIn(type(original).__name__, explanation)
         # A child cannot bypass diagnostics admission by forging its stderr.
         forged = (
-            b'CONIX_PHASE_FAILURE {"phase":"collected","category":"ScenarioFailure",'
+            b'CONIX_PHASE_FAILURE {"phase":"baseline","category":"ScenarioFailure",'
             b'"reason":"privateKey=0x' + b"ab" * 32 + b'"}'
         )
-        self.assertIsNone(parse_phase_failure(forged, phase="collected"))
+        self.assertIsNone(parse_phase_failure(forged, phase="baseline"))
 
-    def test_phase_receipt_may_not_include_fixture_secrets(self):
-        source = {"phase": "baseline", "generation": "a" * 36,
-                  "height": 2, "block_hash": HASH, "collection_count": 0,
-                  "snapshot": "0x1"}
-        self.assertEqual(receipt(encode(source)), source)
-        source["privateKey"] = "0x" + "01" * 32
-        with self.assertRaises(FixtureError):
-            receipt(encode(source))
 
 
 if __name__ == "__main__":

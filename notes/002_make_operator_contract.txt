@@ -1,108 +1,74 @@
-Conix Make operator interface — 9 November 2026
-================================================
+Conix Make operator interface — 10 November 2026
+=================================================
 
-A public target is <resource>[/<role-or-subject>]/<action>.
-Resource, not code location, owns the path. Concrete identities are parameters,
-never Make target suffixes. A target is an operator API contract, not an
-invitation to prepare whatever happens to be missing. No silent aliases.
+Public targets use <resource>[/<role-or-subject>]/<action>, with exact operator
+inputs, no Make-expression interpolation, no implicit image/wheel acquisition,
+and one explicitly chosen local Docker Engine per command.
 
-Actions
--------
-acquire    Explicit remote artifact retrieval; reviewed pins only. May use
-           network, only for named artifacts; a warm cache is reused.
-build      Construct a local image from admitted prepared inputs; no pulls,
-           package indexes or dependency downloads. Returns immutable image ID.
-check      Verify an existing resource, no substantive mutation or repair.
-run        Execute a named suite/workflow and state its lifecycle effects.
-create     Create a retained resource, report its identity; never adopt.
-apply      Reconcile a selected deployment (may replace its running worker).
-status     Inspect the selected deployment; no mutation.
-remove     Retire the exact owned resource. Retained external database, RPC
-           networks, fixtures and staged inputs remain external.
-initialize Idempotently establish approved database structures and identity.
+Current T0-1 state: the indexer-labelled runtime image packages the ABI codec
+ONLY. Owner schema initialization and indexer deployment/apply are not
+available, nor are the retired PayToPlay-specific test/campaign targets.
+Keep the retired prototype outside installed wheels and all accepted test
+paths. Do not imply that a contained ABI smoke test proves an indexer exists.
 
-Resource roles
---------------
-indexer           Production Conix application and explicit administration CLI.
-test-runner       Installed package and disposable PostgreSQL test runner.
-evm-test-runner   Real-contract test runner (test-only Foundry Cast); not Anvil.
-python-base       Pinned Python base image.
-postgres          Pinned PostgreSQL image.
-dockerfile-frontend Pinned BuildKit Dockerfile frontend.
-foundry           Pinned test-only external Foundry image.
-
-Target contracts
-----------------
-test/repository/run                 Host-only repository tests, no Docker.
-repository/inputs/check             Read-only lock/build-context admission.
+Available operations
+--------------------
+test/repository/run                Offline host tests, no Docker or secrets.
+repository/inputs/check            Offline lock and build-context admission.
 image/{python-base,postgres,dockerfile-frontend,foundry}/acquire
-                                    Explicit reviewed image acquisition.
-wheelhouse/{check,acquire}          Shared cache: warm offline or explicit cold.
+                                   Explicitly pull reviewed pinned images.
+wheelhouse/{check,acquire}         Existing shared pool inspection or
+                                   explicitly authorized missing acquisition.
 image/{indexer,test-runner,evm-test-runner}/build
-                                    Stream checked wheels; offline image build.
+                                   Build offline from exact streamed inputs
+                                   and locked wheels; return immutable image ID.
 image/{indexer,evm-test-runner}/check
-                                    Verify existing role-labelled image and
-                                    networkless executable smoke behavior.
-test/postgres/run                   Fresh private PG; run installed package;
-                                    clean owned SQL resources on termination.
-test/input-staging/run              Create, verify and retire fresh private
-                                    input volume; no network.
-database/schema/initialize          Restricted owner-only schema lifecycle;
-                                    no retained owner credential.
-deployment/inputs/create            Stage and retain only selected input volume.
-deployment/inputs/remove            Retire one ownership-checked input volume.
-deployment/config/check             Validate constrained Compose graph, no
-                                    deployment mutation (does not render text).
-deployment/apply                    May stop/recreate the named indexer;
-                                    independently prepared inputs required.
-deployment/status                   Read state even if image/inputs are gone.
-deployment/remove                   Stop and remove only Conix Compose project;
-                                    retain external source/data and input volume.
-test/pay-to-play/run                Consume one explicit, private verified
-                                    dapp32 fixture JSON. Mutates Anvil state
-                                    through test transactions and reorgs; does
-                                    not create, adopt or destroy that fixture.
-                                    Only Conix's disposable SQL is owned.
-campaign/pay-to-play/run            Obtain dapp32 fixture using its supported
-                                    up/info API, execute exactly the same test,
-                                    retire Conix SQL, then call dapp32 down
-                                    only for a verified fixture we created.
-test/indexer/acceptance/run         Borrow an owned/verified dapp32 fixture
-                                    and run the opt-in generic-core installed
-                                    package gate. Own/retire only Conix SQL.
-campaign/indexer/acceptance/run     Create, verify and own dapp32 Anvil fixture;
-                                    run the SAME opt-in generic gate using
-                                    fresh PostgreSQL; retire SQL before fixture.
-                                    Deliberately RED until the generic core
-                                    exists; not part of ordinary prototype CI.
-The generic gate acquires genesis from the RPC-connected runtime consumer
-and passes only a bounded public source receipt to the DB-only schema owner.
-Never pass private accounts in argv, labels, logs or owner-only secrets to
-a runtime container.
+                                   Confined networkless installed-code smoke;
+                                   NOT a running indexer qualification.
+test/postgres/run                  Fresh disposable PostgreSQL: installed ABI
+                                   tests plus owner/runtime/reader privilege
+                                   boundaries; no journal schema installed.
+test/input-staging/run             Private TOML/DSN envelope staging,
+                                   non-root read proof and owned cleanup.
+deployment/inputs/create           Retain one ownership-labelled private
+                                   input volume; no catalog admission claim.
+deployment/inputs/remove           Remove only an explicitly selected
+                                   ownership-verified private input volume.
+deployment/config/check            Read-only inspection of a constrained
+                                   *prospective* Compose graph; no worker.
+deployment/status                  Inspect a previously owned Conix project.
+deployment/remove                  Retire the exact Conix Compose project;
+                                   never remove externally owned DB, networks
+                                   or input volumes.
+test/indexer/acceptance/run        Borrow an externally prepared dapp32
+                                   PayToPlay fixture under strict source and
+                                   network verification; own only Conix SQL.
+campaign/indexer/acceptance/run    Own a freshly created dapp32 producer,
+                                   run the same generic RED acceptance,
+                                   retire consumer before producer.
 
 Selectors
 ---------
-DOCKER_CONTEXT             Explicit local Docker context, pinned across calls.
-WHEELHOUSE                 Existing shared host-local wheel pool.
-IMAGE                      Immutable image ID for single-image check.
-RUNNER_IMAGE               Immutable test image for composite test/campaign.
-INDEXER_IMAGE              Immutable app image for deployment/schema/inputs.
-FIXTURE_DESCRIPTOR          Absolute owner-only (0600) descriptor JSON file.
-DAPP32_DIR                  Explicit absolute checkout for owned campaign.
-DEPLOYMENT                  Selected Conix instance name.
-INPUT_VOLUME                Selected ownership-labelled Conix inputs.
-CONFIG_FILE, DSN_FILE       Explicit operator-owned input files.
-OWNER_DSN_FILE              Separate owner-only credential path.
-DATABASE_NETWORK, RPC_NETWORK  Explicit pre-existing network names.
+DOCKER_CONTEXT             Explicit local Docker context (no ambient fallback).
+WHEELHOUSE                 Explicit existing host-local pinned wheel pool.
+IMAGE                      Exact immutable image ID for one-image check.
+RUNNER_IMAGE               Exact immutable test-runner image ID.
+INDEXER_IMAGE              Exact immutable ABI package image ID.
+FIXTURE_DESCRIPTOR          Existing private owner-owned mode-0600 descriptor.
+DAPP32_DIR                  Explicit absolute dapp32 checkout (owned campaign).
+CONFIG_FILE, DSN_FILE       Operator-owned staged inputs, never Docker env.
+INPUT_VOLUME               Exact ownership-labelled staged resource ID.
+DEPLOYMENT                  Exact selected Conix deployment name.
+DATABASE_NETWORK, RPC_NETWORK  Explicit separate pre-existing networks.
 
-The dapp32 fixture descriptor is a source of verified deployment facts, not
-cleanup authority. An external test must never call sibling up/info/down.
-Creation is authoritative only when the owning producer confirms it.
-Production indexer and real-contract test-runner image roles must not mix.
-A test requiring two images or new secrets must declare their independent roles,
-not inherit credentials or increase worker privileges silently.
+The dapp32 descriptor establishes test deployment facts, not cleanup rights.
+Only the producer's verified up/info/down contract grants owned-fixture cleanup.
+Test keys cross private stdin to the consumer only; the owner sees a bounded,
+public source record. The test-specific Foundry Cast binary is confined to
+the evm-test-runner image, not installed with the ordinary package.
 
-Post-cutover the former targets and CONIX_* public variables cease to be
-accepted. Keep Make command-line text literal via $(value) capture. New
-variants are introduced only for truly different resource or lifecycle
-contracts; do not create tier0/tier1/tier2 target forests.
+Hard boundary: the next generic catalog must stage immutable, bounded ABI
+bytes as well as the checked TOML/DSN. Current transport-only staging is not
+catalog admission. Worker startup and owner DDL require distinct T0-2/T0-3
+implementations with fresh tests. No disabled alias or silent fallback to
+legacy code is allowed.

@@ -620,33 +620,13 @@ class Docker:
         if not IMAGE_ID.fullmatch(image or ""):
             raise OperationError("Deployment requires immutable INDEXER_IMAGE=sha256:<id>.")
 
-        # Apply needs live dependencies; status and removal must still work
-        # after resources have disappeared from the selected Engine.
-        if operation == "apply":
-            self.require_rootless_engine()
-            self.require_role(image, "indexer")
+        # No generic worker is installed. Permit only non-starting
+        # inspection and recovery; never launch the old PayToPlay observer.
+        if operation not in ("config/check", "status", "remove"):
+            raise OperationError("Generic indexer deployment is not installed.")
 
         if not re.fullmatch(r"conix-inputs-[a-f0-9]{24}", volume or ""):
-            raise OperationError("Runtime requires a staged conix-inputs-<token> volume.")
-
-        if operation == "apply":
-            input_volume_records = json.loads(self.run("volume", "inspect", volume, timeout=10, capture=True))
-
-            if (
-                len(input_volume_records) != 1
-                or input_volume_records[0].get("Labels", {}).get("io.conix.input-token")
-                != volume.removeprefix("conix-inputs-")
-            ):
-                raise OperationError("Selected input volume does not match its stage label.")
-
-            for network_name in (database, rpc):
-                observed_network_name = self.run(
-                    "network", "inspect", "--format", "{{.Name}}", network_name,
-                    timeout=10, capture=True,
-                ).strip()
-
-                if observed_network_name != network_name:
-                    raise OperationError(f"Selected network {network_name!r} was not found on this Engine.")
+            raise OperationError("Select the exact retained Conix input volume.")
 
         compose_project = "conix-" + name
         compose_argv = [
@@ -711,30 +691,6 @@ class Docker:
             self.run(*compose_argv, "down", "--remove-orphans", env=compose_environment, timeout=60)
             print(f"Removed conix deployment project {compose_project}; external inputs and networks were retained.")
             return
-
-        if operation != "apply":
-            raise OperationError("Deployment operation must be apply, remove, status or config/check.")
-
-        self.verify_inputs(image, volume)
-        self.run(*compose_argv, "stop", "--timeout", "90", "indexer", env=compose_environment, timeout=105)
-
-        try:
-            self.run(
-                *compose_argv, "up", "--detach", "--no-build", "--pull", "never",
-                "--wait", "--wait-timeout", "30", "indexer",
-                env=compose_environment, timeout=60,
-            )
-        except OperationError as error:
-            raise OperationError(
-                f"Conix project {compose_project} did not confirm startup: {error}. "
-                "Inspect the selected Engine and use deployment/status or "
-                "deployment/remove with the same exact settings; inputs were retained."
-            ) from error
-
-        print(
-            f"Applied conix project {compose_project}; a running container is not evidence "
-            "of chain freshness or payment readiness."
-        )
 
     def test(self, image, images):
         """Run an isolated PostgreSQL test project and retire only its resources."""
@@ -856,7 +812,7 @@ def main():
         "test/postgres/run", "test/input-staging/run",
         "deployment/inputs/create", "deployment/inputs/remove",
         "database/schema/initialize",
-        "deployment/config/check", "deployment/apply", "deployment/status", "deployment/remove",
+        "deployment/config/check", "deployment/status", "deployment/remove",
     ))
     parser.add_argument("--wheelhouse")
     parser.add_argument("--image")

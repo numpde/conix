@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "conix"
 version = "0.1.0"
-description = "Single-source durable PayToPlay collection observer"
+description = "Strict ABI foundation for a generic EVM raw-log indexer"
 requires-python = ">=3.12"
 dependencies = [
     "httpx==0.28.1",
@@ -15,9 +15,6 @@ dependencies = [
     "eth-hash[pycryptodome]==0.8.0",
     "eth-typing==6.0.0",
 ]
-
-[project.scripts]
-conix = "conix.commands:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

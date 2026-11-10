@@ -65,8 +65,7 @@ elif "compose" in args and "config" in args:
             "tests": {"image": os.environ["CONIX_TEST_RUNNER_IMAGE"],
                       "read_only": True, "user": "65532:65532"},
             "postgres": {"read_only": True, "user": "999:999", "image": os.environ["CONIX_POSTGRES_IMAGE"]},
-            "bootstrap": {"read_only": True, "user": "999:999", "image": os.environ["CONIX_POSTGRES_IMAGE"]},
-            "initialize": {"read_only": True, "user": "65532:65532", "image": os.environ["CONIX_TEST_RUNNER_IMAGE"]}},
+            "bootstrap": {"read_only": True, "user": "999:999", "image": os.environ["CONIX_POSTGRES_IMAGE"]}},
             "networks": {"tests": {"internal": not bool(os.getenv("CONIX_FAKE_BAD_NETWORK"))}}}))
 elif "run" in args and "compose" not in args and args[args.index("run") + 1:]:
     # Runtime deployment checks execute only a non-root, read-only, one-shot
@@ -215,9 +214,6 @@ class LocalDockerOperatorTests(unittest.TestCase):
         pg, sql_calls = self.run_fake(role="indexer")
         self.assertNotEqual(pg.returncode, 0)
         self.assertFalse(any("up" in x["args"] or "down" in x["args"] for x in sql_calls))
-        deployment, calls = self.run_runtime_fake(role="evm-test-runner")
-        self.assertNotEqual(deployment.returncode, 0)
-        self.assertFalse(any("up" in x["args"] or "stop" in x["args"] for x in calls))
 
     def test_failed_test_still_tears_down(self):
         completed, calls = self.run_fake(fail_up=True)
@@ -232,7 +228,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertFalse(any("down" in item["args"] for item in calls))
         self.assertIn("network", completed.stderr)
 
-    def run_runtime_fake(self, *, bad_bind=False, operation="apply", missing_resources=False,
+    def run_runtime_fake(self, *, bad_bind=False, operation="config/check", missing_resources=False,
                          role="indexer",
                          bad_cap=False, bad_privileges=False, bad_runtime_network=False,
                          rootful=False, fail_up=False):
@@ -273,18 +269,17 @@ class LocalDockerOperatorTests(unittest.TestCase):
             ], env=env, capture_output=True, text=True, timeout=15)
             return result, [json.loads(line) for line in log.read_text().splitlines()]
 
-    def test_runtime_reuses_engine_and_never_builds_or_pulls(self):
+    def test_runtime_config_checks_containment_without_starting_obsolete_worker(self):
         run, calls = self.run_runtime_fake()
         self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertTrue(any("stop" in item["args"] for item in calls))
-        self.assertTrue(any("up" in item["args"] for item in calls))
-        self.assertFalse(any("build" in item["args"] or "pull" in item["args"] for item in calls))
-        projects = [item["args"][item["args"].index("-p") + 1]
-                    for item in calls if "compose" in item["args"]]
-        self.assertEqual(set(projects), {"conix-pilot"})
-        for item in calls:
-            if "context" not in item["args"]:
-                self.assertIn("unix:///tmp/science-docker.sock", item["args"])
+        self.assertTrue(any("config" in record["args"] for record in calls))
+        self.assertFalse(any(
+            "up" in record["args"] or "stop" in record["args"]
+            for record in calls
+        ))
+        for record in calls:
+            if "context" not in record["args"]:
+                self.assertIn("unix:///tmp/science-docker.sock", record["args"])
 
     def test_runtime_stop_does_not_need_removed_external_resources(self):
         result, calls = self.run_runtime_fake(operation="remove", missing_resources=True)
@@ -294,122 +289,18 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertFalse(any("image" in item["args"] and "inspect" in item["args"] for item in calls))
         self.assertFalse(any("volume" in item["args"] and "inspect" in item["args"] for item in calls))
 
-    def test_runtime_start_rejects_rootful_engine_without_side_effects(self):
-        result, calls = self.run_runtime_fake(rootful=True)
+    def test_retired_deployment_apply_action_cannot_start_a_container(self):
+        result, calls = self.run_runtime_fake(operation="apply")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("rootless", result.stderr)
-        self.assertTrue(any("info" in entry["args"] for entry in calls))
-        self.assertFalse(any("up" in entry["args"] or "stop" in entry["args"] for entry in calls))
+        self.assertFalse(any(
+            "up" in item["args"] or "stop" in item["args"] for item in calls
+        ))
 
-    def test_owner_init_uses_only_temporary_private_input_and_database_network(self):
-        with tempfile.TemporaryDirectory() as directory:
-            docker = operator.Docker("unix:///tmp/science-docker.sock", Path(directory))
-            volume = "conix-inputs-" + "c" * 24
-            calls = []
-
-            def call(*args, **kwargs):
-                calls.append(args)
-                if args[:2] == ("network", "inspect"):
-                    return "db-conix\n"
-
-                return None
-
-            with patch.object(docker, "require_rootless_engine"), patch.object(
-                docker, "require_role"
-            ), patch.object(docker, "stage_inputs", return_value=volume) as stage, patch.object(
-                docker, "remove_inputs"
-            ) as cleanup, patch.object(docker, "run", side_effect=call):
-                docker.initialize_schema(
-                    "sha256:" + "a" * 64,
-                    "/home/operator/config.toml",
-                    "/home/operator/owner.dsn",
-                    "db-conix",
-                )
-                stage.assert_called_once_with(
-                    "sha256:" + "a" * 64,
-                    "/home/operator/config.toml",
-                    "/home/operator/owner.dsn",
-                    announce=False,
-                )
-                cleanup.assert_called_once_with(volume)
-            command = next(args for args in calls if args and args[0] == "run")
-            self.assertIn("--read-only", command)
-            self.assertIn("--cap-drop", command)
-            self.assertIn("no-new-privileges:true", command)
-            self.assertEqual(command[command.index("--network") + 1], "db-conix")
-            self.assertEqual(command[command.index("--user") + 1], "65532:65532")
-            self.assertIn("init", command)
-            self.assertIn("/run/conix-owner/connection.dsn", command)
-            self.assertNotIn("/home/operator/owner.dsn", command)
-            self.assertFalse(any("pull" in args or "build" in args for args in calls))
-
-    def test_owner_init_failure_still_retires_temporary_secret_volume(self):
-        with tempfile.TemporaryDirectory() as directory:
-            docker = operator.Docker("unix:///tmp/science-docker.sock", Path(directory))
-            volume = "conix-inputs-" + "c" * 24
-
-            def call(*args, **kwargs):
-                if args[:2] == ("network", "inspect"):
-                    return "db-conix\n"
-
-                if args and args[0] == "run":
-                    raise operator.OperationError("Owner init outcome unknown.")
-
-                return None
-
-            with patch.object(docker, "require_rootless_engine"), patch.object(
-                docker, "require_role"
-            ), patch.object(docker, "stage_inputs", return_value=volume), patch.object(
-                docker, "remove_inputs"
-            ) as cleanup, patch.object(docker, "run", side_effect=call):
-                with self.assertRaises(operator.OperationError) as failure:
-                    docker.initialize_schema(
-                        "sha256:" + "a" * 64,
-                        "/home/operator/config.toml",
-                        "/home/operator/owner.dsn",
-                        "db-conix",
-                    )
-                self.assertIn("Owner init outcome unknown", str(failure.exception))
-                cleanup.assert_called_once_with(volume)
-
-    def test_runtime_start_failure_reports_original_exit_status(self):
-        outcome, calls = self.run_runtime_fake(fail_up=True)
-        self.assertNotEqual(outcome.returncode, 0)
-        self.assertIn("startup", outcome.stderr)
-        self.assertIn("exit 3", outcome.stderr)
-        self.assertTrue(any("up" in entry["args"] for entry in calls))
-
-    def test_owner_init_and_cleanup_failures_are_both_visible(self):
-        with tempfile.TemporaryDirectory() as directory:
-            docker = operator.Docker("unix:///tmp/science-docker.sock", Path(directory))
-            volume = "conix-inputs-" + "c" * 24
-
-            def call(*args, **kwargs):
-                if args[:2] == ("network", "inspect"):
-                    return "db-conix\n"
-
-                if args and args[0] == "run":
-                    raise operator.OperationError("Owner init rejected source identity.")
-
-                return None
-
-            with patch.object(docker, "require_rootless_engine"), patch.object(
-                docker, "require_role"
-            ), patch.object(docker, "stage_inputs", return_value=volume), patch.object(
-                docker, "remove_inputs", side_effect=operator.OperationError("Volume removal failed.")
-            ), patch.object(docker, "run", side_effect=call):
-                with self.assertRaises(operator.OperationError) as raised:
-                    docker.initialize_schema(
-                        "sha256:" + "a" * 64, "/home/operator/config.toml",
-                        "/home/operator/owner.dsn", "db-conix",
-                    )
-            self.assertIn("cleanup is unconfirmed", str(raised.exception))
-            self.assertIn("Owner init rejected source identity", str(raised.exception))
-
-    def test_runtime_start_still_refuses_missing_image(self):
-        result, calls = self.run_runtime_fake(missing_resources=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(any("up" in item["args"] for item in calls))
+    def test_runtime_status_does_not_require_absent_image_or_inputs(self):
+        result, calls = self.run_runtime_fake(operation="status", missing_resources=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any("image" in x["args"] and "inspect" in x["args"] for x in calls))
+        self.assertFalse(any("volume" in x["args"] and "inspect" in x["args"] for x in calls))
 
     def test_runtime_bind_mount_rejected_before_start(self):
         run, calls = self.run_runtime_fake(bad_bind=True)

@@ -41,8 +41,11 @@ services:
           NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
         CREATE ROLE conix_runtime WITH LOGIN PASSWORD 'conix-fixture-runtime'
           NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-        GRANT CONNECT ON DATABASE conix_test TO conix_owner, conix_runtime;
+        CREATE ROLE conix_reader WITH LOGIN PASSWORD 'conix-fixture-reader'
+          NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+        GRANT CONNECT ON DATABASE conix_test TO conix_owner, conix_runtime, conix_reader;
         CREATE SCHEMA conix AUTHORIZATION conix_owner;
+        GRANT USAGE ON SCHEMA conix TO conix_runtime, conix_reader;
         CREATE SCHEMA ledger AUTHORIZATION postgres;
         CREATE TABLE ledger.operator_private (secret text);
         SQL
@@ -64,7 +67,7 @@ services:
   initialize:
     image: ${CONIX_EVM_TEST_RUNNER_IMAGE:?select prebuilt EVM test-runner image}
     pull_policy: never
-    entrypoint: [python, -I, /tests/pay_to_play_integration.py]
+    entrypoint: [python, -I, /tests/generic_acceptance.py]
     stdin_open: true
     tty: false
     environment:
@@ -86,7 +89,7 @@ services:
   consumer:
     image: ${CONIX_EVM_TEST_RUNNER_IMAGE:?select prebuilt EVM test-runner image}
     pull_policy: never
-    entrypoint: [python, -I, /tests/pay_to_play_integration.py]
+    entrypoint: [python, -I, /tests/generic_acceptance.py]
     stdin_open: true
     tty: false
     environment:

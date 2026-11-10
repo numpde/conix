@@ -1,19 +1,29 @@
-# All fields are required. Replace every example value; do not commit credentials.
-[source]
+# Illustrative generic source; cannot be deployed until T0-2/T0-3.
+version = 1
+
+[chain]
 chain_id = 31337
-contract_address = "0x0000000000000000000000000000000000000000"
+genesis_hash = "0x0000000000000000000000000000000000000000000000000000000000000000"
 start_block = 1
 rpc_url = "http://anvil:8545"
+
+[contracts.payment]
+address = "0x0000000000000000000000000000000000000000"
+abi_file = "/run/conix/abi/PayToPlay.json"
+events = ["VoucherCollected(address,uint256,address,uint256,uint256,bytes32)"]
 
 [database]
 dsn_file = "/run/conix/connection.dsn"
 runtime_role = "conix_runtime"
 
 [limits]
-poll_seconds = 2.0
-rpc_timeout_seconds = 10.0
-operation_timeout_seconds = 30.0
-max_response_bytes = 4194304
+rpc_timeout_seconds = 5
+operation_timeout_seconds = 30
+max_response_bytes = 1048576
 max_connections = 4
-max_page_size = 256
-max_evidence_blocks = 4096
+max_page_size = 100
+max_evidence_blocks = 64
+max_logs_per_block = 10000
+max_abi_bytes = 1048576
+max_abi_nesting = 8
+max_abi_elements = 4096

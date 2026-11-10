@@ -48,6 +48,7 @@ services:
           NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
         GRANT CONNECT ON DATABASE conix_test TO conix_owner, conix_runtime;
         CREATE SCHEMA conix AUTHORIZATION conix_owner;
+        GRANT USAGE ON SCHEMA conix TO conix_runtime, conix_reader;
         CREATE SCHEMA ledger AUTHORIZATION postgres;
         CREATE TABLE ledger.operator_private (secret text);
         SQL

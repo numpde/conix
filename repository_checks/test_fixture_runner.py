@@ -278,27 +278,27 @@ class FixtureRunnerTests(unittest.TestCase):
             with self.assertRaises(runner.CampaignError):
                 runner.read_borrowed_descriptor("relative.json")
 
-    def test_borrowed_executable_never_calls_dapp32_lifecycle(self):
+    def test_borrowed_generic_acceptance_never_calls_producer_lifecycle(self):
         with tempfile.TemporaryDirectory() as directory:
             docker = FakeDocker()
             descriptor = descriptor_for("borrowed-1")
-            run = runner.PayToPlayTest(docker, "sha256:" + "a" * 64,
-                                       Path(directory), descriptor)
-            count = {"baseline": 0, "collected": 2, "restart": 2, "reorg": 0}
-            phases = []
-            def phase(_service, name, *, prior_receipt, expect_receipt):
-                phases.append((name, prior_receipt["phase"] if prior_receipt else None))
-                return {"phase": name, "collection_count": count[name]}
+            run = runner.PayToPlayTest(
+                docker, "sha256:" + "a" * 64, Path(directory), descriptor,
+            )
+            run.preflight_record = {
+                "schema": "conix.acceptance.preflight.v1",
+                "chainId": 31337, "genesisHash": "0x" + "ab" * 32,
+            }
             with patch.object(runner, "verify_network") as validate, patch.object(
                 run, "prepare_sql"
-            ), patch.object(run, "_phase", side_effect=phase):
+            ), patch.object(run, "_phase") as phase:
                 run.execute()
             validate.assert_called_once_with(docker, descriptor)
-            self.assertEqual(phases, [
-                ("baseline", None), ("collected", "baseline"),
-                ("restart", "collected"), ("reorg", "restart"),
-            ])
-            with patch.object(docker, "run", side_effect=AssertionError("Should not contact producer")):
+            phase.assert_called_once_with(
+                "consumer", "baseline", prior_receipt=run.preflight_record,
+                expect_receipt=False,
+            )
+            with patch.object(docker, "run", side_effect=AssertionError("Borrowed test contacted producer")):
                 self.assertEqual(run.cleanup(), [])
 
     def test_unconfirmed_producer_creation_does_not_grant_cleanup_authority(self):
@@ -322,7 +322,7 @@ class FixtureRunnerTests(unittest.TestCase):
             image = "sha256:" + "a" * 64
             arguments = [
                 "pay_to_play", "--origin", "command line",
-                "--context", "agentic", "test/pay-to-play/run",
+                "--context", "agentic", "test/indexer/acceptance/run",
                 "--runner-image", image, "--fixture-descriptor", str(path),
             ]
             with patch.object(sys, "argv", arguments), patch.object(
@@ -355,15 +355,15 @@ class FixtureRunnerTests(unittest.TestCase):
 
             def failed(_argv, *, error_file, **_kwargs):
                 error_file.write_bytes(phase_failure_record(
-                    "collected", ScenarioFailure("Indexed collection differs from real receipt")
+                    "baseline", ScenarioFailure("Generic acceptance differs from real evidence")
                 ) + b"\n")
-                raise runner.CampaignError("Conix phase/collected exited with status 1.")
+                raise runner.CampaignError("Conix phase/baseline exited with status 1.")
 
             with patch.object(runner, "owned_command", side_effect=failed):
                 with self.assertRaises(runner.CampaignError) as raised:
-                    fixture._phase("consumer", "collected", prior_receipt=None, expect_receipt=True)
-            self.assertIn("phase/collected", str(raised.exception))
-            self.assertIn("Indexed collection differs", str(raised.exception))
+                    fixture._phase("consumer", "baseline", prior_receipt=None, expect_receipt=False)
+            self.assertIn("phase/baseline", str(raised.exception))
+            self.assertIn("Generic acceptance differs", str(raised.exception))
             self.assertFalse(fixture.consumer_retired)
 
     def test_failed_subprocess_keeps_private_output_out_of_terminal(self):
@@ -395,7 +395,7 @@ class FixtureRunnerTests(unittest.TestCase):
             image = "sha256:" + "a" * 64
             args = [
                 "pay_to_play", "--origin", "command line",
-                "--context", "agentic", "test/pay-to-play/run",
+                "--context", "agentic", "test/indexer/acceptance/run",
                 "--runner-image", image, "--fixture-descriptor", str(descriptor),
             ]
             terminal = io.StringIO()
@@ -403,7 +403,7 @@ class FixtureRunnerTests(unittest.TestCase):
                 runner, "select_endpoint", return_value="unix:///tmp/selected.sock"
             ), patch.object(runner, "Docker") as docker, patch.object(
                 runner.PayToPlayTest, "execute",
-                side_effect=runner.CampaignError("Primary collection assertion failed.")
+                side_effect=runner.CampaignError("Primary acceptance assertion failed.")
             ), patch.object(
                 runner.PayToPlayTest, "cleanup",
                 side_effect=RuntimeError("cleanup function broke")
@@ -412,7 +412,7 @@ class FixtureRunnerTests(unittest.TestCase):
                 with self.assertRaises(SystemExit) as raised:
                     runner.main()
             result = str(raised.exception)
-            self.assertIn("Primary collection assertion failed", result)
+            self.assertIn("Primary acceptance assertion failed", result)
             self.assertIn("cleanup", result.lower())
             output = terminal.getvalue()
             self.assertIn("Cleanup unconfirmed", output)
@@ -467,7 +467,7 @@ class GenericAcceptanceOperatorContracts(unittest.TestCase):
             descriptor = descriptor_for("conix-abcdef123456")
             docker = SimpleNamespace(docker_command_prefix=("docker",), docker_environment={})
             consumer = runner.PayToPlayTest(
-                docker, "sha256:" + "a" * 64, Path(path), descriptor, acceptance=True,
+                docker, "sha256:" + "a" * 64, Path(path), descriptor ,
             )
             consumer.compose_environment = {}
             state = {
@@ -481,7 +481,6 @@ class GenericAcceptanceOperatorContracts(unittest.TestCase):
             self.assertEqual(argv[argv.index("--entrypoint") + 1:], [
                 "python", "consumer", "-I", "/tests/generic_acceptance.py", "baseline",
             ])
-            self.assertNotIn("pay_to_play_integration.py", argv)
             self.assertNotIn("privateKey", str(argv))
             self.assertTrue(consumer.consumer_retired)
 
@@ -489,7 +488,7 @@ class GenericAcceptanceOperatorContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as path:
             consumer = runner.PayToPlayTest(
                 FakeDocker(), "sha256:" + "a" * 64, Path(path),
-                descriptor_for("conix-abcdef123456"), acceptance=True,
+                descriptor_for("conix-abcdef123456") ,
             )
             self.assertFalse(consumer.sql_started)
             self.assertEqual(consumer.cleanup(), [])
@@ -500,7 +499,7 @@ class GenericAcceptanceOperatorContracts(unittest.TestCase):
             descriptor = descriptor_for("conix-abcdef123456")
             docker = SimpleNamespace(docker_command_prefix=("docker",), docker_environment={})
             consumer = runner.PayToPlayTest(
-                docker, "sha256:" + "a" * 64, Path(path), descriptor, acceptance=True,
+                docker, "sha256:" + "a" * 64, Path(path), descriptor ,
             )
             consumer.compose_environment = {}
             genesis = {

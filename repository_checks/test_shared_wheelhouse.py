@@ -121,8 +121,8 @@ class SharedWheelhouseContracts(unittest.TestCase):
             path.relative_to(ROOT).as_posix()
             for path in (ROOT / "tests").rglob("*.py")
         )
-        self.assertIn("tests/test_abi_type_safety.py", test_modules)
-        omitted = "tests/test_abi_type_safety.py"
+        self.assertIn("tests/test_generic_abi.py", test_modules)
+        omitted = "tests/test_generic_abi.py"
         reported_paths = (*source_modules, *(path for path in test_modules if path != omitted))
         reported_bytes = ("\0".join(reported_paths) + "\0").encode("utf-8")
 
@@ -141,7 +141,7 @@ class SharedWheelhouseContracts(unittest.TestCase):
         self.assertIn("requirements/runtime.lock", selected)
         self.assertIn("requirements/build.lock", selected)
         self.assertIn("src/conix/journal.py", selected)
-        self.assertIn("tests/pay_to_play_integration.py", selected)
+        self.assertIn("tests/generic_acceptance.py", selected)
         self.assertIn("tests/fixtures/abi/pay_to_play.json", selected)
         self.assertIn("tests/fixtures/abi/support_matrix.json", selected)
         expected_tests = {

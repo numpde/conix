@@ -32,7 +32,7 @@ RUN --network=none \
     && python -m pip check
 USER 65532:65532
 WORKDIR /tmp
-ENTRYPOINT ["conix"]
+# The generic scanner CLI is not implemented. No legacy worker entry point.
 
 FROM indexer AS test-runner
 LABEL io.conix.image-role=test-runner
@@ -48,4 +48,4 @@ LABEL io.conix.image-role=evm-test-runner
 COPY --from=fixture_signer /usr/local/bin/cast /usr/local/bin/cast
 COPY tests /tests
 RUN --network=none cast --version
-ENTRYPOINT ["python", "-I", "/tests/pay_to_play_integration.py"]
+ENTRYPOINT ["python", "-I", "/tests/generic_acceptance.py"]

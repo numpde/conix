@@ -6,8 +6,8 @@ Scope
 Conix's target is one generic EVM event indexer: a single-ABI-driven scanner,
 one complete-block PostgreSQL raw-log journal, and one checkpoint-bound reader
 supporting PayToPlay, ERC-20 and ERC-721 without contract-specific source code.
-The current implementation is an EXPERIMENTAL PayToPlay-only prototype,
-disposable without migration or compatibility layers.
+T0-1 is implemented using reusable ABI primitives; the experimental
+PayToPlay-only runtime has been deleted, without migration or adapters.
 
 notes/004_rpc_evidence_and_raw_log_indexer_plan.txt governs the new Tier-0
 implementation and qualification. notes/002_make_operator_contract.txt governs
@@ -19,8 +19,8 @@ are historical references, not competing product contracts.
 Tier 0 owns rebuildable selected event history, exact checkpoints, guarded
 canonicality evidence and read-only block-pinned contract calls. Accounting,
 signing, invoice acceptance, payment policy and wallet keys belong elsewhere.
-Do not freeze, preserve or adapt the existing PayToPlay-specific scanner and
-reader merely to maintain prototype test compatibility.
+Do not restore the removed PayToPlay-specific scanner, journal, reader,
+legacy Collection schema or CLI to make old tests green.
 
 Implementation discipline
 -------------------------
@@ -92,11 +92,11 @@ Container and dependency authority
 - Do not expand the Docker build context or installer inputs implicitly.
 - Private DSN bytes must never appear in image layers, argv, service logs or
   repository files. Staging is an explicit one-time confined operation.
-- Schema installation and upgrades use a separate non-superuser owner login and
-  the explicit one-shot database/schema/initialize path. Runtime sessions and observers use
-  only conix_runtime DML. No owner credentials in the ordinary worker's volume.
-- Never add DDL to the concrete Journal/Writer. Evolve schema ownership and
-  migration authorization outside the protected Tier-0 scanner and read guard.
+- T0-2 must provide a separately authorized owner-only schema initializer.
+  It is not available now. Runtime and read roles must remain distinct from
+  the owner, with no owner credentials in worker/reader volumes.
+- The future concrete generic journal/writer must not perform DDL. Keep
+  owner-only schema establishment separate from the scanner/read guard.
 - Disposable resources have exact owners and must be retired on success/failure.
   Report uncertain cleanup rather than claiming it succeeded.
 - Do not infer runtime egress isolation, UID mapping or genuine chain finality
@@ -114,7 +114,7 @@ or container tests are green.
 
 Sibling-fixture campaign
 ------------------------
-The explicit campaign/pay-to-play/run lane consumes the public dapp32 repository's
+The explicit campaign/indexer/acceptance/run lane consumes the public dapp32 repository's
 supported fixture/up, fixture/info and fixture/down contract, never changes its
 source or starts a replacement Anvil implementation. The descriptor is a
 bounded private stdin handoff; its test keys cannot appear in output, Docker
@@ -123,8 +123,9 @@ The optional Foundry Cast binary belongs in the evm-test-runner image alone. Pre
 the deployed contract's voucherDigest over a duplicate EIP-712 implementation.
 Only Conix-owned SQL and verified newly created producer fixtures may be
 retired automatically; preserve exact recovery records on uncertain outcomes.
-The borrowed test, owned fixture campaign and pay-to-play accounting acceptance gate are
-distinct qualifications and must be reported separately.
+The borrowed and owned generic acceptance gates are distinct qualifications.
+Both are intentionally RED until the actual journal/scanner/reader exist;
+they do not qualify economic accounting or payment reconciliation.
 
 Shared wheelhouse
 -----------------
@@ -161,22 +162,20 @@ notes/002_make_operator_contract.txt is the public Make interface. Targets
 name a stable resource, role or subject, and precise action, not Python
 locations, implementation tiers or test mechanisms. Do not introduce aliases
 for retired names. Distinguish read-only check, explicit acquire, offline
-build, test run, owner initialize, retained resource create, deployment apply,
-status and remove. Config/check validates the concrete Compose graph but does
+build, test run, retained resource create, status and remove. Owner schema
+initialization and deployment apply are absent until implemented generically. Config/check validates the concrete Compose graph but does
 not produce a rendered document. Deployment/remove deletes only its Conix
 Compose project, never external networks, PostgreSQL data or staged inputs.
 
-The standalone test/pay-to-play/run accepts a private owned mode-0600 JSON
-fixture descriptor and may alter the selected Anvil state through transactions,
-snapshots and reorganization. It has NO permission to invoke dapp32 up/info/down
-or retire producer resources. Campaign/pay-to-play/run creates and inspects its
-own producer fixture, runs exactly the same test and calls dapp32 down only
-after owned consumer retirement. These actions must remain separate in code,
-tests, Make, help text and recoverability diagnostics.
+The borrowed test/indexer/acceptance/run accepts a mode-0600 private JSON
+fixture descriptor and has NO producer lifecycle rights.
+campaign/indexer/acceptance/run creates, verifies and owns one producer
+fixture, then retires its own consumers before calling the producer's
+fixture/down. Do not reintroduce the old PayToPlay-only test command.
 
 IMAGE names the single image checked for its expected role; RUNNER_IMAGE names
-a composite test runner; INDEXER_IMAGE names the application image used by
-schema, inputs and deployment. Both selectors are immutable sha256 IDs and
+a composite test runner; INDEXER_IMAGE names the ABI-only package image used
+by private-input transport checks, NOT a runnable indexer worker. Both selectors are immutable sha256 IDs and
 the image role is validated before any durable activity. WHEELHOUSE and
 DOCKER_CONTEXT stay explicit operator choices; source, test and build tooling
 must never change the selected engine implicitly. New test targets require

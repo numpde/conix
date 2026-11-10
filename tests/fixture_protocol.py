@@ -146,38 +146,11 @@ def decode(raw: bytes, *, fixture_id: str):
     return document
 
 
-def receipt(raw: bytes):
-    """Read only a nonsecret, exact phase-result JSON object."""
-    if type(raw) is not bytes or not 0 < len(raw) <= 16 * 1024 or len(raw.splitlines()) != 1:
-        raise FixtureError("Phase receipt is not a bounded single JSON line.")
-
-    try:
-        result = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs)
-    except (ValueError, UnicodeError) as error:
-        raise FixtureError("Phase receipt is invalid JSON.") from None
-
-    if type(result) is not dict or set(result) != {
-        "phase", "generation", "height", "block_hash", "collection_count", "snapshot",
-    }:
-        raise FixtureError("Phase receipt fields are missing or unexpected.")
-
-    if (result["phase"] not in ("baseline", "collected", "restart", "reorg")
-        or type(result["generation"]) is not str
-        or not re.fullmatch(r"[0-9a-f-]{36}", result["generation"])
-        or not _uint(result["height"])
-        or type(result["block_hash"]) is not str or KEY.fullmatch(result["block_hash"]) is None
-        or not _uint(result["collection_count"])
-        or type(result["snapshot"]) is not str or len(result["snapshot"]) > 80):
-        raise FixtureError("Phase receipt contains invalid public checkpoint fields.")
-
-    return result
-
-
 # A deliberately narrow wire diagnostic: tests can reveal their own fixed,
 # nonsecret assertion messages, but never an upstream exception's raw value.
 # The campaign prints this verified record only after it has attempted cleanup.
 _FAILURE_PREFIX = b"CONIX_PHASE_FAILURE "
-_PHASES = frozenset({"preflight", "initialize", "baseline", "collected", "restart", "reorg"})
+_PHASES = frozenset({"preflight", "initialize", "baseline"})
 _PUBLIC_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.,:;()/'-]{0,239}\Z")
 _CATEGORY = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}\Z")
 _PRIVATE_MARKERS = ("privatekey", "postgresql:", "password", "secret", "://")
