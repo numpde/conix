@@ -159,7 +159,7 @@ class InstalledFixtureWiring(unittest.IsolatedAsyncioTestCase):
                     "from": creator,
                 }])
                 return expected_hash
-            return True
+            return None  # Anvil impersonation and retirement succeed with JSON null.
 
         transaction_hash = await t0_5_chain.submit_test_transaction(
             observed_rpc,
