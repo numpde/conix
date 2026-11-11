@@ -432,11 +432,11 @@ class LocalDockerOperatorTests(unittest.TestCase):
         """A null service in rendered JSON is a refusal, not a traceback."""
         runtime = operator.Docker("unix:///tmp/selected.sock", ROOT)
         services = {
-            "tests": None,
+            "tests": {},
             "postgres": {},
             "bootstrap": {},
             "initializer": {},
-            "anvil": {},
+            "anvil": None,
         }
         selected_graph = json.dumps({
             "services": services,
