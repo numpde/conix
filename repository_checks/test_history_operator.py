@@ -125,6 +125,92 @@ class HistoryOperatorContracts(unittest.TestCase):
             {"database": {"NetworkID": rpc_id}, "rpc": {"NetworkID": database_id}}, selected,
         ))
 
+    def test_persistent_container_uses_the_same_owned_confinement(self):
+        """The only changed grants are interactive stdin and a fixed module."""
+        docker = Mock()
+        docker.run.return_value = "c" * 64
+        result = history._create(
+            docker, "sha256:" + "a" * 64, "conix-inputs-" + "b" * 24,
+            ("d" * 64, "e" * 64), "conix-advance-" + "f" * 24, "f" * 24,
+            interactive=True,
+        )
+        self.assertEqual(result, "c" * 64)
+        argv = docker.run.call_args.args
+        self.assertIn("--interactive", argv)
+        self.assertEqual(argv[-4:], tuple(history.SESSION_COMMAND))
+        for required in ("--read-only", "--cap-drop", "--security-opt", "--pids-limit",
+                         "--memory", "--memory-swap", "--cpus", "--mount", "--network"):
+            self.assertIn(required, argv)
+        self.assertNotIn("--privileged", argv)
+
+    def test_command_client_exchanges_two_bounded_frames(self):
+        """Pipes carry no secrets and a second command waits for the first reply."""
+        script = (
+            "import json,sys\n"
+            "for line in sys.stdin:\n"
+            "  request=json.loads(line)\n"
+            "  if request['action']=='advance':\n"
+            "    print(json.dumps({'version':1,'outcome':'at_tip','source_id':'a'*64}),flush=True)\n"
+            "  elif request['action']=='stop':\n"
+            "    print(json.dumps({'version':1,'outcome':'stopped'}),flush=True)\n"
+            "    break\n"
+        )
+        docker = Mock()
+        docker.docker_command_prefix = [sys.executable, "-u", "-c", script]
+        docker.working_dir = Path(__file__).resolve().parent.parent
+        docker.docker_environment = os.environ.copy()
+
+        session = history.CommandSession(docker, "c" * 64, lambda: False)
+        try:
+            self.assertEqual(session.advance(), {"outcome": "at_tip", "source_id": "a" * 64})
+            self.assertEqual(session.advance(), {"outcome": "at_tip", "source_id": "a" * 64})
+            session.stop()
+            self.assertTrue(session.stopped)
+        finally:
+            session.retire_client()
+
+    def test_command_client_refuses_unconfirmed_or_unexpected_results(self):
+        """An unexpected response cannot be treated as an empty chain tip."""
+        script = "import sys;sys.stdin.readline();print('{}',flush=True)\n"
+        docker = Mock()
+        docker.docker_command_prefix = [sys.executable, "-u", "-c", script]
+        docker.working_dir = Path(__file__).resolve().parent.parent
+        docker.docker_environment = os.environ.copy()
+        session = history.CommandSession(docker, "c" * 64, lambda: False)
+        try:
+            with self.assertRaises(OperationError):
+                session.advance()
+        finally:
+            session.retire_client()
+
+    def test_persistent_session_retires_owned_container_after_caller_failure(self):
+        """The session never converts a caller failure into successful cleanup."""
+        docker = Mock(endpoint="unix:///tmp/selected.sock")
+        started = Mock()
+        retired = Mock()
+        with (
+            patch.multiple(
+                history, _admit_volume=Mock(),
+                _admit_network=Mock(side_effect=("d" * 64, "e" * 64)),
+                _create=Mock(return_value="c" * 64), _record=Mock(),
+                _owned=Mock(return_value=True), _admit_container=Mock(),
+                _retire=retired,
+            ),
+            patch.object(history, "CommandSession") as session_type,
+        ):
+            session_type.return_value.retire_client = started
+            cause = ValueError("consumer failed")
+            with self.assertRaises(ValueError) as caught:
+                with history.open_history_commands(
+                    docker, image="sha256:" + "a" * 64,
+                    volume="inputs", database="database", rpc="rpc",
+                ):
+                    raise cause
+        self.assertIs(caught.exception, cause)
+        started.assert_called_once()
+        session_type.return_value.stop.assert_not_called()
+        retired.assert_called_once()
+
     def test_operator_failures_preserve_worker_outcome_on_stderr_only(self):
         docker = Mock(endpoint="unix:///tmp/unused.sock")
         docker.run.return_value = "0\n"

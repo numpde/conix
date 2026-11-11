@@ -18,6 +18,7 @@ ENGINE_ID = re.compile(r"[a-f0-9]{64}\Z")
 VOLUME_NAME = re.compile(r"conix-inputs-([a-f0-9]{24})\Z")
 RUN_LABEL = "io.conix.history-run"
 COMMAND = ["-I", "-m", "conix.worker", "advance"]
+SESSION_COMMAND = ["-I", "-m", "conix.command_worker", "serve"]
 OUTPUT_LIMIT = 4096
 
 
@@ -64,7 +65,7 @@ def _owned(record, container_id, name, image, token):
         return False
 
 
-def _admit_container(record, volume, networks):
+def _admit_container(record, volume, networks, *, interactive=False):
     try:
         config = record["Config"]
         host = record["HostConfig"]
@@ -73,7 +74,11 @@ def _admit_container(record, volume, networks):
         confined = (
             record["State"]["Status"] == "created"
             and config["User"] == "65532:65532"
-            and config["Entrypoint"] == ["python"] and config["Cmd"] == COMMAND
+            and config["Entrypoint"] == ["python"]
+            and config["Cmd"] == (SESSION_COMMAND if interactive else COMMAND)
+            and (not interactive or (
+                config.get("OpenStdin") is True and config.get("Tty") is False
+            ))
             and config["StopSignal"] == "SIGINT" and host["Init"] is True
             and host["ReadonlyRootfs"] is True and host["Privileged"] is False
             and host["CapDrop"] == ["ALL"] and not host["CapAdd"]
@@ -409,7 +414,10 @@ def _advance_history(docker, *, image, volume, database, rpc, cancelled):
     _notice("[conix] History advance: completed and retired")
 
 
-def _create(docker, image, volume, networks, name, token):
+def _create(docker, image, volume, networks, name, token, *, interactive=False):
+    """Create the same confined worker with optional command-only stdin."""
+    if type(interactive) is not bool:
+        raise OperationError("Persistent worker mode must be an exact boolean.")
     (database_id, rpc_id) = networks
     try:
         return docker.run(
@@ -421,7 +429,191 @@ def _create(docker, image, volume, networks, name, token):
             "--mount", f"type=volume,source={volume},target=/run/conix,readonly,volume-nocopy",
             "--log-driver", "local", "--log-opt", "max-size=32k", "--log-opt", "max-file=1",
             "--log-opt", "compress=false",
-            "--entrypoint", "python", image, *COMMAND, capture=True, timeout=30,
+            *(("--interactive",) if interactive else ()),
+            "--entrypoint", "python", image,
+            *(SESSION_COMMAND if interactive else COMMAND), capture=True, timeout=30,
         ).strip()
     except OperationError as error:
         raise OperationError(f"Cannot confirm creation of {name} on {docker.endpoint}. {error}") from error
+
+
+class CommandSession:
+    """One running, owned Tier-0 command worker with serialized requests."""
+
+    def __init__(self, docker, container_id, cancelled):
+        self.cancelled = cancelled
+        self.stopped = False
+        self.process = subprocess.Popen(
+            docker.docker_command_prefix
+            + ["container", "start", "--attach", "--interactive", container_id],
+            cwd=docker.working_dir, env=docker.docker_environment,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+
+    def _reply(self, action):
+        """Only a complete bounded response can confirm a command outcome."""
+        if self.stopped or self.cancelled():
+            raise OperationError("History command session is no longer active.")
+
+        request = (json.dumps({"version": 1, "action": action}) + "\n").encode("ascii")
+        try:
+            self.process.stdin.write(request)
+            self.process.stdin.flush()
+        except (OSError, ValueError) as error:
+            raise OperationError("Cannot deliver the history command. Inspect durable progress.") from error
+
+        deadline = time.monotonic() + 330
+        stdout = bytearray()
+        stderr = bytearray()
+        with selectors.DefaultSelector() as selector:
+            selector.register(self.process.stdout, selectors.EVENT_READ, stdout)
+            selector.register(self.process.stderr, selectors.EVENT_READ, stderr)
+            while b"\n" not in stdout:
+                if self.cancelled():
+                    raise OperationError("History command was interrupted. Inspect durable progress.")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise OperationError("History command did not complete before its deadline.")
+
+                ready = selector.select(min(1, remaining))
+                if not ready and self.process.poll() is not None:
+                    raise OperationError("History command worker exited without a complete receipt.")
+                for (key, _) in ready:
+                    data = os.read(key.fd, OUTPUT_LIMIT + 1)
+                    if not data:
+                        selector.unregister(key.fileobj)
+                        if key.fileobj is self.process.stdout and b"\n" not in stdout:
+                            raise OperationError("History command worker closed without a receipt.")
+                        continue
+                    key.data.extend(data)
+                    if len(key.data) > OUTPUT_LIMIT:
+                        raise OperationError("History command output exceeded its bound.")
+
+                if not selector.get_map() and b"\n" not in stdout:
+                    raise OperationError("History command worker terminated without a receipt.")
+
+        if stderr or stdout.count(b"\n") != 1 or not stdout.endswith(b"\n"):
+            raise OperationError("History command worker returned unexpected output.")
+
+        try:
+            document = json.loads(stdout, object_pairs_hook=_unique_fields)
+        except (ValueError, UnicodeError) as error:
+            raise OperationError("History command receipt is not valid JSON.") from error
+        if type(document) is not dict or document.get("version") != 1 or type(document["version"]) is not int:
+            raise OperationError("History command receipt has an unsupported version.")
+        return document
+
+    def advance(self):
+        """Request one authoritative advance and validate its exact core receipt."""
+        response = self._reply("advance")
+        if response.get("outcome") not in ("at_tip", "advanced"):
+            raise OperationError("History command worker did not confirm an advance.")
+        return _receipt(json.dumps({key: value for key, value in response.items() if key != "version"}))
+
+    def stop(self):
+        """Request a cooperative exit; never confuse it with an advance result."""
+        if self.stopped:
+            return
+        response = self._reply("stop")
+        if response != {"version": 1, "outcome": "stopped"}:
+            raise OperationError("History command worker did not confirm its stop request.")
+        self.stopped = True
+
+    def retire_client(self):
+        """Retire the Docker attach client before checking container ownership."""
+        primary = None
+        try:
+            self.process.stdin.close()
+            try:
+                status = self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=5)
+                status = None
+            if self.stopped and status != 0:
+                raise OperationError("History command attach client did not exit cleanly.")
+        except (OSError, subprocess.TimeoutExpired, OperationError) as error:
+            primary = OperationError("Cannot confirm retirement of the command attach client.")
+            primary.__cause__ = error
+        finally:
+            self.process.stdout.close()
+            self.process.stderr.close()
+        if primary is not None:
+            raise primary
+
+
+@contextmanager
+def open_history_commands(docker, *, image, volume, database, rpc):
+    """Use the existing Tier-0 container authority for one persistent worker.
+
+    The caller chooses when to advance; only the installed command process
+    can decode and publish. This operation does not retry, repair or infer a
+    canonical chain from unconfirmed replies.
+    """
+    with _cancellation_requests() as cancelled:
+        docker.require_rootless_engine()
+        docker.require_role(image, "indexer")
+        _admit_volume(docker, volume)
+        database_id = _admit_network(docker, database)
+        rpc_id = _admit_network(docker, rpc)
+        if database_id == rpc_id:
+            raise OperationError("History session requires distinct database and RPC networks.")
+
+        token = secrets.token_hex(12)
+        name = "conix-advance-" + token
+        known_id = None
+        session = None
+        failure = None
+        try:
+            if cancelled():
+                raise OperationError("History session was cancelled before creation.")
+            container_id = _create(
+                docker, image, volume, (database_id, rpc_id), name, token, interactive=True,
+            )
+            if not ENGINE_ID.fullmatch(container_id):
+                raise OperationError("Cannot confirm the command worker identity.")
+            known_id = container_id
+            record = _record(docker, "container", container_id)
+            if not _owned(record, container_id, name, image, token):
+                raise OperationError("Command worker ownership could not be confirmed.")
+            _admit_container(
+                record, volume, ((database, database_id), (rpc, rpc_id)), interactive=True,
+            )
+            _admit_volume(docker, volume)
+            if cancelled():
+                raise OperationError("History session was cancelled before startup.")
+
+            session = CommandSession(docker, container_id, cancelled)
+            yield session
+        except BaseException as error:
+            failure = error
+            raise
+        finally:
+            cleanup_error = None
+            if session is not None:
+                if failure is None and not cancelled():
+                    try:
+                        session.stop()
+                    except (OSError, OperationError) as error:
+                        cleanup_error = error
+                try:
+                    session.retire_client()
+                except (OSError, OperationError) as error:
+                    if cleanup_error is None:
+                        cleanup_error = error
+                    else:
+                        _notice("Command attach client retirement remains unconfirmed.")
+            try:
+                _retire(docker, token, name, image, known_id)
+            except OperationError as error:
+                if cleanup_error is None:
+                    cleanup_error = error
+                else:
+                    _notice("Command worker container retirement remains unconfirmed.")
+            if cancelled() and failure is None and cleanup_error is None:
+                cleanup_error = OperationError("History command session was cancelled.")
+            if cleanup_error is not None:
+                if failure is None:
+                    raise cleanup_error
+                _notice(f"History command cleanup remains unconfirmed ({type(cleanup_error).__name__}).")

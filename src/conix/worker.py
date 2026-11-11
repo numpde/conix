@@ -22,6 +22,17 @@ async def advance(catalog, database_dsn):
             return await writer.advance_one()
 
 
+def progress_receipt(catalog, progress):
+    """Return the existing single-advance receipt without changing its wire schema."""
+    receipt = {"outcome": "at_tip", "source_id": catalog.source_id.hex()}
+    if progress is not None:
+        receipt.update(
+            outcome="advanced", block_number=progress.last_block.number,
+            block_hash="0x" + progress.last_block.hash.hex(), revision=progress.revision,
+        )
+    return receipt
+
+
 def main():
     if sys.argv[1:] != ["advance"]:
         raise SystemExit("Use python -I -m conix.worker advance with staged inputs.")
@@ -50,14 +61,8 @@ def main():
             f"at {Path(frame.filename).name}:{frame.lineno}."
         ) from None
 
-    receipt = {"outcome": "at_tip", "source_id": catalog.source_id.hex()}
-    if progress is not None:
-        receipt.update(
-            outcome="advanced", block_number=progress.last_block.number,
-            block_hash="0x" + progress.last_block.hash.hex(), revision=progress.revision,
-        )
     try:
-        print(json.dumps(receipt), flush=True)
+        print(json.dumps(progress_receipt(catalog, progress)), flush=True)
     except OSError as error:
         raise SystemExit(f"Index advance completed but receipt output failed ({type(error).__name__}).") from None
 
