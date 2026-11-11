@@ -4,6 +4,7 @@ __pycache__/
 build/
 dist/
 .venv/
+.idea/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
