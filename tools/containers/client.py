@@ -118,7 +118,7 @@ def _public_worker_explanation(stderr):
     return None
 
 
-def command(argv, *, env, working_dir, timeout=60, capture=False, progress_to_stderr=False, public_diagnostic=False):
+def command(argv, *, env, working_dir, timeout=60, capture=False, public_diagnostic=False):
     """Run a bounded Docker command; only explicitly admitted diagnostics are public."""
     captures_output = capture or public_diagnostic
 
@@ -131,7 +131,6 @@ def command(argv, *, env, working_dir, timeout=60, capture=False, progress_to_st
             check=False,
             text=captures_output,
             capture_output=captures_output,
-            stdout=None if captures_output else (sys.stderr if progress_to_stderr else None),
         )
     except subprocess.TimeoutExpired as error:
         # The Docker CLI timed out; its daemon may still be performing work.
@@ -251,14 +250,13 @@ class DockerClient:
         self.docker_command_prefix = ["docker", "--config", str(config_dir), "--host", endpoint]
         self.docker_environment = environment(config_dir)
 
-    def run(self, *args, timeout=60, capture=False, env=None, progress_to_stderr=False, public_diagnostic=False):
+    def run(self, *args, timeout=60, capture=False, env=None, public_diagnostic=False):
         return command(
             self.docker_command_prefix + list(args),
             env=self.docker_environment if env is None else env,
             working_dir=self.working_dir,
             timeout=timeout,
             capture=capture,
-            progress_to_stderr=progress_to_stderr,
             public_diagnostic=public_diagnostic,
         )
 
