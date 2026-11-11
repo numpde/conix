@@ -76,6 +76,8 @@ elif "compose" in args and "config" in args:
         if os.getenv("CONIX_FAKE_BAD_RUNTIME_BIND"):
             item["volumes"].append({"type": "bind", "source": "/tmp", "target": "/tmp"})
         external = not bool(os.getenv("CONIX_FAKE_ALLOW_NETWORK_CREATION"))
+        if os.getenv("CONIX_FAKE_MALFORMED_RUNTIME"):
+            item = None
         print(json.dumps({"services": {"indexer": item}, "networks": {
             "database": {"name": os.environ["CONIX_DATABASE_NETWORK"], "external": external},
             "rpc": {"name": os.environ["CONIX_RPC_NETWORK"], "external": external}}}))
@@ -444,7 +446,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
                          bad_cap=False, bad_privileges=False, bad_runtime_network=False,
                          legacy_command=False, missing_limit=None,
                          allow_network_creation=False, allow_volume_copy=False,
-                         rootful=False, fail_up=False):
+                         malformed_runtime=False, rootful=False, fail_up=False):
         """Prove deployment confinement before start and recovery after failure."""
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)
@@ -466,6 +468,8 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 env["CONIX_FAKE_ALLOW_NETWORK_CREATION"] = "1"
             if allow_volume_copy:
                 env["CONIX_FAKE_ALLOW_VOLUME_COPY"] = "1"
+            if malformed_runtime:
+                env["CONIX_FAKE_MALFORMED_RUNTIME"] = "1"
             if bad_bind:
                 env["CONIX_FAKE_BAD_RUNTIME_BIND"] = "1"
             if bad_cap:
@@ -615,6 +619,14 @@ class LocalDockerOperatorTests(unittest.TestCase):
                     "up" in record["args"] or "stop" in record["args"]
                     for record in calls
                 ))
+
+    def test_malformed_rendered_runtime_fails_with_a_bounded_diagnostic(self):
+        """Invalid Docker JSON is rejected as input, not a raw traceback."""
+        result, calls = self.run_runtime_fake(malformed_runtime=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Cannot validate", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(any("up" in call["args"] for call in calls))
 
     def test_runtime_bind_mount_rejected_before_start(self):
         run, calls = self.run_runtime_fake(bad_bind=True)
