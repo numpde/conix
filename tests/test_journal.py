@@ -14,6 +14,7 @@ import psycopg
 from psycopg import AsyncConnection
 
 from abi_golden_vectors import ERC20
+from pg_commit_reply import without_commit_reply
 from conix.catalog import prepare_catalog
 from conix.journal import (
     Block,
@@ -295,7 +296,7 @@ class JournalContracts(unittest.IsolatedAsyncioTestCase):
             await asyncio.to_thread(child.join, 10)
             self.assertEqual(child.exitcode, -signal.SIGKILL)
 
-        writer = await self.reopen_after_process_loss()
+        writer = await self.reopen_after_disconnect()
         try:
             self.assertEqual(await writer.inspect(), before)
             self.assertEqual(await self.candidate_rows(block), [])
@@ -313,8 +314,8 @@ class JournalContracts(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(child.is_alive(), "Writer child retirement was not confirmed.")
         child.close()
 
-    async def reopen_after_process_loss(self):
-        # PostgreSQL may observe the closed socket after the child is reaped.
+    async def reopen_after_disconnect(self):
+        # PostgreSQL can observe a closed socket after local retirement.
         async with asyncio.timeout(10):
             while True:
                 try:
@@ -343,39 +344,45 @@ class JournalContracts(unittest.IsolatedAsyncioTestCase):
         )
 
     async def check_unconfirmed_publication(self, before, block, event):
-        """Lose confirmation on either side of a real PostgreSQL COMMIT."""
+        """Compare an unsent commit with a real lost completion response."""
         runtime_dsn = os.environ["CONIX_TEST_DSN"]
-        for committed in (False, True):
-            with self.subTest(committed=committed):
-                async with open_journal(catalog=self.catalog, database_dsn=runtime_dsn) as writer:
-                    execute = writer.connection.execute
+        async with open_journal(catalog=self.catalog, database_dsn=runtime_dsn) as writer:
+            execute = writer.connection.execute
 
-                    async def lose_confirmation(statement, *args):
-                        if statement != "COMMIT":
-                            return await execute(statement, *args)
-                        if committed:
-                            await execute(statement, *args)
-                        raise psycopg.OperationalError("injected loss of COMMIT confirmation")
+            async def lose_before_send(statement, *args):
+                if statement == "COMMIT":
+                    raise psycopg.OperationalError("injected loss before COMMIT was sent")
+                return await execute(statement, *args)
 
-                    with patch.object(writer.connection, "execute", lose_confirmation):
-                        with self.assertRaises(CommitOutcomeUnknown) as failure:
-                            await writer.publish_block(block=block, events=(event,))
-                    self.assertIsInstance(failure.exception.__cause__, psycopg.OperationalError)
-                    self.assertTrue(writer.retired)
-                    self.assertTrue(writer.connection.closed)
+            with patch.object(writer.connection, "execute", lose_before_send):
+                await self.expect_unknown_commit(writer, block, event)
 
-                async with open_journal(catalog=self.catalog, database_dsn=runtime_dsn) as reopened:
-                    expected_progress = before
-                    if committed:
-                        expected_progress = replace(before, last_block=block, revision=before.revision + 1)
-                    self.assertEqual(await reopened.inspect(), expected_progress)
-                    if committed:
-                        with self.assertRaises(HistoryConflict):
-                            await reopened.publish_block(block=block, events=(event,))
-                        self.assertEqual(await reopened.inspect(), expected_progress)
+        async with open_journal(catalog=self.catalog, database_dsn=runtime_dsn) as reopened:
+            self.assertEqual(await reopened.inspect(), before)
+        self.assertEqual(await self.candidate_rows(block), [])
 
-                expected = [self.expected_row(block, event)] if committed else []
-                self.assertEqual(await self.candidate_rows(block), expected)
+        async with asyncio.timeout(10), without_commit_reply(runtime_dsn) as (relay_dsn, dropped):
+            async with open_journal(catalog=self.catalog, database_dsn=relay_dsn) as writer:
+                await self.expect_unknown_commit(writer, block, event)
+            await dropped
+
+        reopened = await self.reopen_after_disconnect()
+        try:
+            expected = replace(before, last_block=block, revision=before.revision + 1)
+            self.assertEqual(await reopened.inspect(), expected)
+            with self.assertRaises(HistoryConflict):
+                await reopened.publish_block(block=block, events=(event,))
+            self.assertEqual(await reopened.inspect(), expected)
+            self.assertEqual(await self.candidate_rows(block), [self.expected_row(block, event)])
+        finally:
+            await reopened.close()
+
+    async def expect_unknown_commit(self, writer, block, event):
+        with self.assertRaises(CommitOutcomeUnknown) as failure:
+            await writer.publish_block(block=block, events=(event,))
+        self.assertIsInstance(failure.exception.__cause__, psycopg.OperationalError)
+        self.assertTrue(writer.retired)
+        self.assertTrue(writer.connection.closed)
 
 
 if __name__ == "__main__":

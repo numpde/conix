@@ -872,16 +872,16 @@ and input transport. The dapp32 campaign runs separately.
                        The shared deadline stops the canonicality recheck
                        after otherwise valid logs.
   SQL and recovery     Real PostgreSQL writer exclusion, rollback, role
-                       separation, restart and repair. Injected confirmation
-                       loss before and after COMMIT exercises both durable
-                       outcomes. An independent reader completes while a
+                       separation, restart and repair. An injected unsent
+                       COMMIT and a withheld real PostgreSQL COMMIT response
+                       exercise both durable outcomes. An independent reader completes while a
                        page snapshot is open; repair invalidates that page.
                        Restarted advance rejects a persisted blocked source
                        at the current tip until checked repair clears it.
                        Before COMMIT, task cancellation preserves the
                        writer session and process loss permits fresh
-                       publication. Wire interruption during COMMIT and
-                       operator cancellation still need proof.
+                       publication. The wire fault used one loopback relay
+                       to disposable PostgreSQL without TLS or GSS.
   PostgreSQL baseline  Journal, scanner, filtered-page, relation size and
                        database cgroup measurements below. Real-provider
                        latency and alternative history distributions are
