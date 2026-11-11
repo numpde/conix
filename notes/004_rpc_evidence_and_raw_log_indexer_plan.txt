@@ -2,8 +2,9 @@ Conix — pristine generic Tier 0: design, evidence, and execution plan
 =====================================================================
 
 Date: 2026-11-09
-Status: TARGET GENERIC TIER 0, NOT YET IMPLEMENTED IN FULL; T0-1 ABI,
-T0-2 catalog/SQL journal, T0-3 blockHash scanner and T0-4 reader exist.
+Status: GENERIC TIER 0 QUALIFIED AND FROZEN (2026-11-11).
+Section 8.8 records the executable baseline, verified scope and limitations.
+Sections 1–8 retain the original requirements and implementation decisions.
 This note owns product scope, correctness, public API,
 source identity, journal and release gates. Note 005 is the SINGLE authority
 for historical RPC acquisition methods, admitted evidence and Tier-2 method
@@ -1174,7 +1175,7 @@ The one-shot proof checks valid and malformed catalogs before activation.
 Last line
 ---------
 
-This is a new Tier-0 PROGRAM, not a migration plan. Implement one
-ABI-driven core and fresh raw-event history, then freeze its concrete
-validated operations. Only AFTER that do Tier 1 and Tier 2 delegate
-to it. Do not retain today's narrow implementation for its own sake.
+The generic Tier-0 program is implemented and frozen within the evidence
+and limits recorded in section 8.8. Higher tiers must delegate to its
+concrete validated operations, not resurrect the experimental prototype
+or bypass journal, scanner, reader or repair checks.
