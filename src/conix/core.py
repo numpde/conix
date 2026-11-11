@@ -25,7 +25,7 @@ import httpx
 from conix.abi import MalformedABIData, ResourceExceeded, decode_event
 from conix.catalog import Catalog, _rpc_url
 from conix.diagnostics import note_argument
-from conix.journal import Block, Journal, Progress, RawEvent, open_journal
+from conix.journal import Block, HistoryConflict, Journal, Progress, RawEvent, open_journal
 from conix.rpc import RPC, RpcProtocolError, RpcUnavailable
 
 
@@ -212,6 +212,9 @@ class Writer:
         NOTHING, including a seemingly empty block. The journal alone
         performs the ensuing atomic SQL publication.
         """
+        if self.journal.basis.blocked_reason is not None:
+            raise HistoryConflict("Cannot advance blocked history until explicit repair succeeds.")
+
         deadline = time.monotonic() + self.catalog.limits.operation_timeout_seconds
         previous = self.journal.basis.last_block
 

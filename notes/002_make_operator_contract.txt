@@ -12,8 +12,8 @@ worker deployment/apply command is not yet available. The old PayToPlay-specific
 scanner and test targets remain retired; a contained image smoke test does not
 prove that a production worker has been deployed.
 
-T0-5 real-contract acceptance is an opt-in owned dapp32 campaign. Its test
-program exists, but ordinary CI does not run or qualify that external scenario.
+T0-5 real-contract acceptance is an opt-in owned dapp32 campaign outside
+ordinary CI. Note 004, section 8.8, records its qualification evidence.
 
 Available operations
 --------------------
@@ -33,10 +33,11 @@ test/postgres/run                  Disposable PostgreSQL plus isolated
                                    Anvil: two owner-initialized sources,
                                    real raw-log scanner/journal tests and
                                    restricted runtime/reader privileges.
-test/input-staging/run             Private TOML/DSN envelope staging,
-                                   non-root read proof and owned cleanup.
+test/input-staging/run             Private TOML/ABI/DSN envelope staging,
+                                   installed catalog admission under the
+                                   runtime UID and owned cleanup.
 deployment/inputs/create           Retain one ownership-labelled private
-                                   input volume; no catalog admission claim.
+                                   input volume after catalog admission.
 deployment/inputs/remove           Remove only an explicitly selected
                                    ownership-verified private input volume.
 deployment/config/check            Read-only inspection of a constrained
@@ -49,8 +50,12 @@ test/indexer/acceptance/run        Borrow an externally prepared dapp32
                                    PayToPlay fixture under strict source and
                                    network verification; own only Conix SQL.
 campaign/indexer/acceptance/run    Own a freshly created dapp32 producer,
-                                   run the same generic RED acceptance,
+                                   run full generic acceptance including
+                                   restart and reorganization repair, and
                                    retire consumer before producer.
+history/advance                    Run one foreground block advance on the
+                                   selected rootless Engine. Retire only the
+                                   command's worker container.
 
 Selectors
 ---------
@@ -61,10 +66,14 @@ RUNNER_IMAGE               Exact immutable test-runner image ID.
 INDEXER_IMAGE              Exact immutable installed core library image ID.
 FIXTURE_DESCRIPTOR          Existing private owner-owned mode-0600 descriptor.
 DAPP32_DIR                  Explicit absolute dapp32 checkout (owned campaign).
-CONFIG_FILE, DSN_FILE       Operator-owned staged inputs, never Docker env.
+CONFIG_FILE, DSN_FILE       Absolute paths to operator-owned staged inputs.
+                           Each staged abi_file is abi/<name>.json beside
+                           CONFIG_FILE. Keep the DSN source mode 0600. A
+                           final LF or CRLF terminates the credential line.
 INPUT_VOLUME               Exact ownership-labelled staged resource ID.
 DEPLOYMENT                  Exact selected Conix deployment name.
 DATABASE_NETWORK, RPC_NETWORK  Explicit separate pre-existing networks.
+                           For history/advance select internal local bridges.
 
 The dapp32 descriptor establishes test deployment facts, not cleanup rights.
 Only the producer's verified up/info/down contract grants owned-fixture cleanup.
@@ -73,7 +82,16 @@ the public PayToPlay ABI and role addresses, while the owner receives a
 narrower source record. No child receives producer wallet keys. The test-only
 Foundry Cast binary stays in the EVM runner image, not the product wheel.
 
-Catalog admission is offline and immutable. Deployment transport still
-stages TOML/DSN only: add the prepared ABI bytes before enabling a worker.
-Transport is not a second catalog validator. The owner-only initializer
-exists as a Python API but has no Make action yet. No legacy fallback.
+The host copies the exact declared ABI files alongside the configuration
+and DSN into one private volume. The installed catalog validates the staged
+inputs offline with the volume mounted read-only as UID/GID 65532. This
+prepares the inputs for operator use. The owner-only initializer exists as
+a Python API and has no Make action yet.
+
+history/advance uses INDEXER_IMAGE, INPUT_VOLUME, DATABASE_NETWORK and
+RPC_NETWORK. The image and runtime credential must match the selected
+owner-initialized source. A successful stdout receipt identifies the
+source and either the published block or the at-tip outcome. Cleanup
+uncertainty exits with failure and reports a known worker outcome on stderr.
+When publication is unconfirmed, inspect durable progress before running
+another advance. The two networks, input volume and database are borrowed.

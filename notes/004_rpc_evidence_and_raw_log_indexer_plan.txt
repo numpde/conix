@@ -815,10 +815,52 @@ exceptions. Preserve original error cause/phase privately; cleanup outcomes
 are reported separately and the primary failure remains LAST. A simple
 ordinary RPC failure must not be silently retried under a stronger claim.
 
-8.8. Executable acceptance and current gaps
+8.8. Tier-0 acceptance evidence and release gates
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Test data from commit C:
+T0-6 qualification closed on 2026-11-11 for executable baseline 06b8959
+on fw, Linux amd64, rootless Docker context agentic and its selected Unix
+endpoint. The generic core is frozen for subsequent concrete delegation.
+Genuine correctness fixes still belong in their existing core owners.
+
+The final local checks passed:
+  - 98 repository tests; the separate input-policy command passed its
+    three cases;
+  - 80 installed PostgreSQL/Anvil tests, with the two owner-only cases
+    separately executed by the initializer;
+  - offline indexer and EVM image admission and 23 hash-locked wheel artifacts;
+  - the full owned dapp32 campaign and a separate borrowed baseline, using
+    dapp32 294cfe2a. The borrowed baseline preserved the observed producer
+    head and attachments. Both producers and Conix resources were retired;
+  - selected-Engine foreground, staged-input and signal checks below.
+
+A subsequent full local run on 2026-11-11 also passed every command in
+.github/workflows/tier0.yml, using agentic in place of the CI default
+context. It acquired the pinned images and wheels into a fresh empty
+host-local pool, then checked and built offline. Source compilation,
+private-input staging and prospective deployment configuration passed.
+The owned and borrowed dapp32 checks also passed against these fresh builds:
+  indexer  sha256:c7143c56608223e9db3c152170e9e56d1e6057dfd6f77bb14a3a24f237402674
+  tests    sha256:741a008ee350011c5f87ded89932db241645cc08a8d98031addaf81047db72e5
+  EVM      sha256:5237bf7fef9872388c5478d7a0511cbf9f0f485ce41f1ce39edf45282539ac19
+This local run does not establish the separate GitHub Actions result.
+
+Qualified artifact identities:
+  indexer  sha256:985ce3e1885b60bf063eca00dcc8a263977589da2a0152f93327906f28416f9a
+  tests    sha256:45bf8768078f5a80e871445352c83ad1af2e4ea6d18ea471861ee8b82fff281f
+  EVM      sha256:ea6e578674c26756199a572920cb8b00216a16954607ebab327c25df936a0390
+
+The supported ABI matrix remains tests/fixtures/abi/support_matrix.json.
+The wire and compound cases qualify the bounded admitted types through
+the installed codec. Real EVM histories and SQL tests qualify their
+scanner, reader and durable-state boundaries. The selected provider is
+trusted for complete responses. Live public-chain finality, power-loss
+durability, unattended recovery, retained deployment activation and
+alternative Engine configurations are outside this qualification.
+The existing index set is retained; the topic1 comparison described below
+is an optimization question with no Tier-0 throughput requirement.
+
+ABI fixture sources:
   tests/fixtures/abi/{erc20,erc721,pay_to_play,compound}.json
   tests/fixtures/abi/support_matrix.json
   tests/abi_golden_vectors.py, tests/abi_contract_vectors.py
@@ -830,7 +872,7 @@ Solidity. The literal event/call encodings were assembled independently of
 Conix and checked by a separately maintained eth_abi codec. A fixture test
 passing proves only the fixture oracle, NOT generic Conix support.
 
-Test harness from commit D:
+Executable acceptance entrypoints:
   test/indexer/acceptance/run         (borrowed validated dapp32 fixture)
   campaign/indexer/acceptance/run     (owned dapp32 fixture lifecycle)
   tests/generic_acceptance.py        (installed-image phases)
@@ -839,24 +881,163 @@ The opt-in gate obtains public genesis via a genuine RPC-connected Anvil
 consumer. The owner phase receives only a separately admitted public
 chain/contract-coordinate envelope and checked genesis, NOT the private
 producer descriptor or accounts. Both phases use one reviewed installed ABI
-fixture. It initializes via a separate owner-only identity and invokes named
-installed-code checks under a restricted runtime identity. Catalog,
-owner-only schema, scanner and reader now exist, but this dapp32
-acceptance remains RED pending signed collection and filtered history.
-The old PayToPlay observer was deleted without a compatibility fallback.
+fixture. A separate owner-only identity initializes the schema and restricted
+identities run the installed-code checks.
 
-Still REQUIRED beyond today's acceptance skeleton before T0-6 release:
-  - scale-oriented PostgreSQL query plans, sparse pages and concurrent repair campaigns;
-  - full compound ABI property/canonical-error matrix, seeded regressions;
-  - actual ERC-20 AND ERC-721 on-chain emissions;
-  - signed PayToPlay collection + customer/channel filtered history;
-  - restart, unknown COMMIT, real multi-contract reorg and manual repair;
-  - SQL filtered-query plans, sparse pages and bounded-work measurements;
-  - rootless Engine proof, isolated egress, cancellation and teardown.
+The owned T0-5 campaign passed on fw with rootless Docker context agentic at Conix
+2fb529f (merged as 697a83b) and dapp32 294cfe2a. The installed campaign
+deployed ERC-20 and ERC-721 and checked both against pinned runtime bytes.
+It indexed from the PayToPlay deployment and verified a mixed token/payment
+block, funding, signed partial and incremental collection, due withdrawal,
+customer/channel-filtered history and block-pinned positions. It also checked
+fresh-process restart and explicit reorganization repair. PostgreSQL and producer fixture
+teardown were confirmed. A separate networkless run of solc-js
+0.8.35+commit.47b9dedd reproduced both tokens' creation and runtime bytes.
+The borrowed fixture and public-chain behavior were outside that T0-5 run.
+Consumer accounting and monetary policy remain the consumer's responsibility.
 
-Do not mark generic T0-0 or later stages qualified simply because the old
-PayToPlay tests are green. The installed-source inventory MUST include every
-tracked ABI fixture, rather than dropping JSON from the curated Docker context.
+The following matrix records qualification evidence and scope against section 5.
+Ordinary CI exercises the contained PostgreSQL/Anvil suite, runner admission
+and input transport. The dapp32 campaign runs separately.
+
+  Gate                 Qualification evidence and scope
+  ABI                  Independent wire vectors, seeded compound cases,
+                       and representative public codec paths for every
+                       admitted family. Events and returns reject invalid
+                       UTF-8, nonzero dynamic padding, and aliased tails.
+                       Seeded fixed arrays of dynamic tuples exercise
+                       word boundaries in events, calls and returns. An
+                       explicit control covers both int16 bounds. Invalid
+                       text and fixed-array shape fail at call admission.
+  RPC and reader       Hostile responses, pinned calls, keyset pages, and
+                       stale-generation rejection have executable cases.
+                       The scanner refuses wrong chain or genesis, descending
+                       selected logs and truncated JSON before publication.
+                       Timeout and cancellation close a partial log stream.
+                       The shared deadline stops the canonicality recheck
+                       after otherwise valid logs.
+                       Anvil log topics prove signed, boolean and fixed
+                       bytes equality through the installed reader. The
+                       Transfer and PayToPlay histories cover address and
+                       unsigned channel filters.
+  SQL and recovery     Real PostgreSQL writer exclusion, rollback, role
+                       separation, restart and repair. An injected unsent
+                       COMMIT and a withheld real PostgreSQL COMMIT response
+                       exercise both durable outcomes. An independent reader
+                       completes while a page snapshot is open, then repair
+                       invalidates that page.
+                       A contended repair rejects a changed revision, keeps
+                       the old suffix and excludes another journal writer.
+                       Restarted advance rejects a persisted blocked source
+                       at the current tip until checked repair clears it.
+                       Before COMMIT, task cancellation preserves the
+                       writer session and process loss permits fresh
+                       publication. The wire fault used one loopback relay
+                       to disposable PostgreSQL without TLS or GSS.
+  PostgreSQL baseline  Journal, scanner, filtered-page, relation size and
+                       database cgroup measurements below. Real-provider
+                       latency and alternative history distributions are
+                       outside the measured baseline.
+  Operator boundary    The owned rootless campaign and private TOML/ABI/DSN
+                       staging have separate evidence. The installed verifier
+                       admitted staged inputs as UID 65532 and refused a
+                       malformed ABI on fw agentic. Both proof volumes were
+                       retired. The installed foreground worker published
+                       a real Anvil log, observed tip, resumed with an empty
+                       block, and refused a reader credential on fw agentic.
+                       history/advance repeated those checks on separate
+                       internal networks. A live worker reached both peers
+                       and could not reach PostgreSQL via its unselected
+                       network address. It had no usable IPv4 or IPv6 default
+                       route and its input mount refused writing. Ctrl-C and
+                       SIGTERM retired the worker at stalled RPC startup,
+                       and a fresh command observed unchanged progress.
+                       Process-local signal tests cover cancellation after
+                       creation and during retirement. Other Engines and
+                       hard host process loss remain outside that proof.
+  Packaging and core   Curated image inputs include tracked ABI fixtures.
+                       The installed worker.advance witness uses patched
+                       RPC to forward raw evidence through real admission
+                       and publication. Invalid evidence leaves no block or
+                       checkpoint change. The separate foreground command
+                       checks above use real Anvil. Repeated reads execute
+                       Reader.events, and
+                       only checked repair reaches Journal.repair_to.
+                       Note 000, section 8, lists the protected operations.
+
+PostgreSQL baseline (2026-11-11)
+................................
+
+One controlled run on fw (amd64), rootless Docker context agentic, installed
+test runner sha256:c6e750d107ceb75ca60ded53bec75a9516d9fcb6e04aeda0693a8b82d74ccdf0
+at the code and test inputs of 9185947, and pinned PostgreSQL 16.6.
+The database had one CPU and a 512 MiB memory limit. The test process had
+half a CPU. The restricted writer used Journal.publish_block() against the
+owner-initialized schema. Each 64-block cycle had 16 empty blocks, 47 with
+eight events and one with 64. The synthetic VoucherCollected rows had
+gapped log indices and one rare customer/channel match per cycle, plus
+events sharing just the customer, channel or payee. The public reader
+returned exactly 128 matches across all 43 sparse pages at the larger size.
+
+  Retained blocks   Events  Publish interval  Table+index bytes  Python peak RSS
+              128      880    0.480 s (1–128)         1,015,808      62,900 KiB
+            8,192   56,320  25.195 s (129–8192)      57,589,760      63,156 KiB
+
+Median publication at the larger scale was 0.983 ms for empty blocks,
+2.640 ms for eight events and 14.037 ms for 64 events. Relation bytes
+include blocks, events, progress and indexes. They exclude WAL. Event
+indexes occupied 36,241,408 bytes at the larger scale. The peak RSS is
+the Python process high-water mark, including test code.
+
+EXPLAIN (ANALYZE, BUFFERS) used the actual Reader.events() SELECT and
+parameters under the read-only role. The explain used a plain SELECT.
+The reader timings include its real cursor, snapshot, decode and recheck.
+At 8,192 blocks PostgreSQL reported two autoanalyzes and zero event
+modifications since the last one. The 128-block plans were provisional
+because autoanalyze had not run by the deadline.
+
+At 8,192 blocks the customer/channel query used events_by_topic2 and
+removed three rows by filter on the first page. The second and last pages
+used the same index. The absent customer on the rare channel removed 256
+rows and hit 140 shared buffers, with zero reads. Customer-only used
+events_by_contract and removed 439 rows on the first page. The payee
+query used events_by_topic3. The measured plans had zero shared reads.
+The run gave no basis for an index change. The scanner run below adds
+absent customer-only measurements; representative selectivity and index
+write/storage comparisons remain open before deciding.
+
+The journal published synthetic rows directly. Scanner RPC acquisition
+and ABI validation were outside the publication timing. These warm
+measurements describe one local workload and impose no throughput target.
+The disposable database, network and services were retired.
+
+Scanner baseline on the same 8,192-block distribution
+.....................................................
+
+A second disposable fw agentic run used installed test runner
+sha256:9adf6031ee12e3f4e1776f43b927f0fa57fa036ad9bb091c807b9805d813289d
+and PostgreSQL 16.6 with the same resource caps. Writer.advance_one()
+read deterministic JSON-RPC responses through the real RPC parser and
+ran the actual block checks, ABI validation and PostgreSQL publication.
+The scanned blocks came from an in-process transport. The fixture used
+Anvil to establish the source for the reader.
+
+The first 128 blocks took 1.325 s. Blocks 129 through 8,192 took 78.160 s,
+with median block times of 2.061 ms (empty), 6.580 ms (eight events) and
+68.476 ms (64 events). The larger run retained the same 56,320 events and
+57,589,760 table and index bytes as the journal-only run. The Python
+process reached 63,704 KiB RSS. The PostgreSQL container's memory cgroup
+reported 294,776,832 current and 321,507,328 peak bytes against a
+536,870,912-byte cap. These cgroup counters include charged page cache.
+
+With current event statistics, an absent customer-only query used
+events_by_contract, filtered all 56,320 rows and hit 3,155 shared buffers.
+Execution took 17.787 ms in EXPLAIN and 21.433 ms through Reader.events().
+The absent customer on the rare channel used events_by_topic2 and
+filtered 256 rows. Both were warm, with zero shared reads. The customer-only
+scan is a candidate for a topic1 index comparison. The measured baseline
+keeps the existing indexes because write and space costs of a candidate
+index and alternate selectivities were outside these runs.
 
 
 9. Existing libraries — deliberate reuse decision (2026-11-10)
@@ -979,18 +1160,16 @@ real Transfer events and checks raw bytes, empty-block advancement, indexed
 topic-filtered keyset pages, EIP-1898 pinned calls, canonical ancestry,
 generation invalidation, suffix repair and reindexing.
 
-The owner initializer remains a Python administrative API, not a Make
-action. No production worker CLI exists. The image smoke check only
-establishes imports/ABI behavior; the contained Anvil+PostgreSQL suite
-qualifies T0-3 and T0-4 against tested event/view combinations.
-The opt-in dapp32 real-chain acceptance remains RED pending the signed
-voucher collection and matching filtered history, not a green
-payment-workflow claim.
+The owner initializer remains a Python administrative API. The explicit
+installed conix.worker advance command composes one writer session and
+one block operation. The host deployment apply action remains unavailable.
+The image smoke check establishes imports and ABI behavior. The contained
+Anvil+PostgreSQL suite qualifies the tested T0-3 and T0-4 combinations.
+Section 8.8 records the separate owned dapp32 campaign and open release gates.
 
-Deployment input transport still stages TOML and DSN only. Before
-activating a real worker, it must also supply the immutable ABI snapshot
-files admitted by the catalog; do not duplicate catalog validation in
-the transport layer or resurrect the old collections schema.
+Deployment input transport includes the declared ABI files. The installed
+catalog validates the staged volume as the worker UID on a read-only mount.
+The one-shot proof checks valid and malformed catalogs before activation.
 
 Last line
 ---------

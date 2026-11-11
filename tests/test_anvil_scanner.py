@@ -6,18 +6,22 @@ the same atomic journal validated by ordinary PostgreSQL tests.
 """
 
 import asyncio
+from dataclasses import replace
 import os
 import unittest
 from unittest.mock import patch
 
 import httpx
-from psycopg import AsyncConnection
+from psycopg import AsyncConnection, AsyncServerCursor
 
-from abi_golden_vectors import ERC20, FROM, TO, TRANSFER_SIGNATURE, word
-from anvil_catalog import catalog_for_anvil
-from conix.core import BranchConflict, open_writer
-from conix.reader import CursorInvalid, HistoricalCallUnavailable, HistoryUnavailable, open_reader
-from conix.rpc import RpcUnavailable
+from abi_golden_vectors import ERC20, FROM, TO, TRANSFER_SIGNATURE, padded, signature_topic, signed_word, word
+from anvil_catalog import SCALARS_ADDRESS, SCALARS_EVENT, catalog_for_anvil
+from conix import core
+from conix.core import BranchConflict, Writer, open_writer
+from conix.journal import HistoryConflict, Journal
+from conix.reader import CursorInvalid, HistoricalCallUnavailable, HistoryUnavailable, Reader, open_reader
+from conix.rpc import RPC, RpcProtocolError, RpcUnavailable
+from conix.worker import advance
 
 
 CONTRACT = b"\x11" * 20
@@ -439,11 +443,9 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                         {"blockHash": hex_bytes(newest.block.hash), "requireCanonical": True},
                     )
 
-                    # Concurrent repair after the SQL snapshot is visible to
-                    # the post-snapshot generation check, not silently ignored.
-                    with self.assertRaises(CursorInvalid):
-                        async with reader._snapshot(newest):
-                            repaired = await writer.repair_to(ancestor=complete.last_block)
+                    repaired = await self.repair_during_event_page(
+                        reader, writer, newest, complete.last_block, first_page,
+                    )
 
                     self.assertEqual(repaired.last_block, complete.last_block)
                     self.assertNotEqual(repaired.generation, complete.generation)
@@ -480,6 +482,158 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                     )
                     self.assertEqual(len(restored_page.events), 2)
                     self.assertTrue(restored_page.complete)
+
+            runtime_dsn = os.environ["CONIX_TEST_ANVIL_DSN"]
+            async with await AsyncConnection.connect(runtime_dsn, connect_timeout=5) as connection:
+                await connection.execute(
+                    "UPDATE conix.source_progress SET blocked_reason = %s WHERE singleton = 1",
+                    ("fixture requires explicit repair",),
+                )
+
+            async with open_writer(catalog=source, database_dsn=runtime_dsn, rpc_url=url) as restarted:
+                blocked = await restarted.journal.inspect()
+                self.assertEqual(blocked.last_block, restored.last_block)
+                self.assertIsNotNone(blocked.blocked_reason)
+                with self.assertRaises(HistoryConflict):
+                    await restarted.advance_one()
+                self.assertEqual(await restarted.journal.inspect(), blocked)
+
+                repaired = await restarted.repair_to(ancestor=blocked.last_block)
+                self.assertIsNone(repaired.blocked_reason)
+                self.assertNotEqual(repaired.generation, blocked.generation)
+                self.assertEqual(repaired.last_block, blocked.last_block)
+                self.assertIsNone(await restarted.advance_one())
+
+            await self.check_indexed_scalar_pages(
+                source, url, call, mined_receipt, accounts[0],
+            )
+
+    async def check_indexed_scalar_pages(self, source, url, call, mined_receipt, sender):
+        """Read exact signed, boolean and fixed-bytes topics from an actual EVM log."""
+        tag = b"\x00\xfe\x12\xff"
+        topics = (signature_topic(SCALARS_EVENT), signed_word(-128), word(1), padded(tag))
+        runtime = b"".join(b"\x7f" + topic for topic in reversed(topics)) + b"\x60\x00\x60\x00\xa4\x00"
+        await call("anvil_setCode", [SCALARS_ADDRESS, hex_bytes(runtime)])
+        transaction = await call("eth_sendTransaction", [{
+            "from": sender, "to": SCALARS_ADDRESS, "gas": "0x100000",
+        }])
+        receipt = await mined_receipt(transaction)
+        self.assertEqual(receipt["status"], "0x1")
+        (log,) = receipt["logs"]
+        self.assertEqual(log["topics"], [hex_bytes(topic) for topic in topics])
+
+        async with open_reader(
+            catalog=source, database_dsn=os.environ["CONIX_TEST_ANVIL_READ_DSN"], rpc_url=url,
+        ) as reader:
+            published = await self.check_delegated_advance(source, reader, call, receipt)
+            self.assertEqual(published.last_block.hash, bytes.fromhex(receipt["blockHash"][2:]))
+            checkpoint = await reader.checkpoint()
+            for (field, selected, absent) in (("signed", -128, -127), ("flag", True, False), ("tag", tag, b"\x00" * 4)):
+                with self.subTest(field=field):
+                    page = await reader.events(checkpoint=checkpoint, contract="scalars", event=SCALARS_EVENT,
+                                               where={field: selected})
+                    self.assertTrue(page.complete)
+                    (event,) = page.events
+                    self.assertEqual(event.values, (-128, True, tag))
+                    self.assertIs(event.values[1], True)
+                    self.assertEqual(event.topics, topics)
+                    self.assertEqual(event.transaction_hash, bytes.fromhex(log["transactionHash"][2:]))
+                    self.assertEqual(event.transaction_index, int(log["transactionIndex"], 16))
+                    self.assertEqual(event.log_index, int(log["logIndex"], 16))
+                    self.assertEqual(event.address.lower(), log["address"].lower())
+                    self.assertEqual(event.data, bytes.fromhex(log["data"][2:]))
+                    empty = await reader.events(checkpoint=checkpoint, contract="scalars", event=SCALARS_EVENT,
+                                                where={field: absent})
+                    self.assertTrue(empty.complete)
+                    self.assertEqual(empty.events, ())
+
+    async def check_delegated_advance(self, source, reader, call, receipt):
+        """Exercise one concrete worker through valid and invalid raw log input."""
+        filter_ = {"blockHash": receipt["blockHash"], "address": SCALARS_ADDRESS,
+                   "topics": [receipt["logs"][0]["topics"][0]]}
+        (log,) = await call("eth_getLogs", [filter_])
+        self.assertEqual(log["transactionHash"], receipt["transactionHash"])
+        # All arguments are indexed, so the nonindexed payload must be empty.
+        selected = [{**log, "data": "0x01"}]
+        rpc_call = RPC.call
+
+        async def provide_log(rpc, method, params, *, deadline):
+            if method == "eth_getLogs" and params == [filter_]:
+                return selected
+            return await rpc_call(rpc, method, params, deadline=deadline)
+
+        before = await reader.checkpoint()
+        runtime_dsn = os.environ["CONIX_TEST_ANVIL_DSN"]
+        with (
+            patch.object(RPC, "call", provide_log),
+            patch.object(Writer, "advance_one", autospec=True, side_effect=Writer.advance_one) as advancing,
+            patch.object(core, "_event", wraps=core._event) as admit,
+            patch.object(Journal, "publish_block", autospec=True, side_effect=Journal.publish_block) as publish,
+        ):
+            with self.assertRaises(RpcProtocolError):
+                await advance(source, runtime_dsn)
+            admit.assert_called_once()
+            publish.assert_not_awaited()
+            self.assertEqual(await reader.checkpoint(), before)
+            retained_candidate = await (await reader.connection.execute(
+                "SELECT number FROM conix.blocks WHERE number = %s",
+                (int(receipt["blockNumber"], 16),),
+            )).fetchone()
+            self.assertIsNone(retained_candidate)
+
+            selected = [log]
+            published = await advance(source, runtime_dsn)
+            self.assertEqual(admit.call_count, 2)
+            self.assertEqual(advancing.await_count, 2)
+            publish.assert_awaited_once()
+            return published
+
+    async def repair_during_event_page(self, reader, writer, checkpoint, ancestor, first_page):
+        """Keep a real page snapshot open across an independent read and repair."""
+        cursor_opened = asyncio.Event()
+        repair_finished = asyncio.Event()
+        execute = AsyncServerCursor.execute
+
+        async def pause_page(cursor, *args, **kwargs):
+            result = await execute(cursor, *args, **kwargs)
+            if cursor.connection is reader.connection:
+                cursor_opened.set()
+                await repair_finished.wait()
+            return result
+
+        async def read_page(session):
+            return await session.events(
+                checkpoint=checkpoint, contract="token", event=TRANSFER_SIGNATURE,
+                where={"to": TO}, limit=1,
+            )
+
+        async def expect_invalidated_page():
+            with self.assertRaises(CursorInvalid):
+                await read_page(reader)
+
+        async with asyncio.timeout(10), open_reader(
+            catalog=reader.catalog, database_dsn=os.environ["CONIX_TEST_ANVIL_READ_DSN"],
+            rpc_url=os.environ["CONIX_TEST_ANVIL_URL"],
+        ) as independent_reader:
+            with (
+                patch.object(AsyncServerCursor, "execute", pause_page),
+                patch.object(Reader, "events", autospec=True, side_effect=Reader.events) as observe,
+                patch.object(Journal, "repair_to", autospec=True, side_effect=Journal.repair_to) as repair,
+            ):
+                async with asyncio.TaskGroup() as tasks:
+                    tasks.create_task(expect_invalidated_page())
+                    await cursor_opened.wait()
+                    self.assertEqual(await read_page(independent_reader), first_page)
+                    self.assertEqual(await read_page(independent_reader), first_page)
+
+                    with self.assertRaises(BranchConflict):
+                        await writer.repair_to(ancestor=replace(ancestor, hash=bytes(32)))
+                    repair.assert_not_awaited()
+                    repaired = await writer.repair_to(ancestor=ancestor)
+                    repair.assert_awaited_once()
+                    repair_finished.set()
+                self.assertEqual(observe.await_count, 3)
+        return repaired
 
 
 if __name__ == "__main__":

@@ -7,10 +7,11 @@ Conix's target is one generic EVM event indexer: a single-ABI-driven scanner,
 one complete-block PostgreSQL raw-log journal, and one checkpoint-bound reader
 supporting PayToPlay, ERC-20 and ERC-721 without contract-specific source code.
 T0-1 ABI, T0-2 offline catalog/owner-only journal, T0-3 blockHash-pinned
-scanner and T0-4 checkpoint-bound reader are implemented. T0-5 acceptance
-scenarios exist on the working branch, but its opt-in dapp32 campaign has not
-been qualified by ordinary CI. The experimental PayToPlay-only runtime was
-deleted without migration or adapters.
+scanner and T0-4 checkpoint-bound reader are implemented. The owned dapp32
+campaign passed T0-5, and T0-6 qualification closed for the selected baseline.
+Note 004, section 8.8, owns evidence and qualification scope. Note 000 lists
+the protected operations that later tiers must execute. The experimental
+PayToPlay-only runtime was deleted without migration or adapters.
 
 notes/004_rpc_evidence_and_raw_log_indexer_plan.txt governs the new Tier-0
 implementation and qualification. notes/005_rpc_history_acquisition_and_optimization.txt
@@ -139,9 +140,9 @@ retired automatically; preserve exact recovery records on uncertain outcomes.
 The borrowed and owned generic acceptance gates are distinct qualifications.
 Borrowed mode is nondestructive baseline acceptance; the owned campaign runs
 real Solidity token transactions, signed PayToPlay collection, process restart
-and manual reorganization repair. The owned campaign remains UNQUALIFIED until
-executed against the actual dapp32 fixture. Contained PostgreSQL/Anvil tests
-qualify generic scanner/reader behavior, not financial reconciliation.
+and manual reorganization repair. Contained PostgreSQL/Anvil tests qualify
+generic scanner/reader behavior. Financial reconciliation belongs to the
+consumer.
 
 Shared wheelhouse
 -----------------
@@ -165,6 +166,8 @@ Tool ownership
 tools/containers/client.py owns sanitized selected Docker CLI calls and
 rootless/image admission. tools/containers/operator.py composes that client
 for Conix-specific images, private inputs, deployment and contained tests.
+tools/containers/history.py owns admission and retirement of the foreground
+history worker on the selected client.
 The client must not import application lifecycles or the test harness.
 tools/fixtures/pay_to_play.py owns the dapp32 fixture campaign using the
 selected Docker operator without changing the sibling checkout.
@@ -194,11 +197,11 @@ campaign/indexer/acceptance/run creates, verifies and owns one producer
 fixture, then retires its own consumers before calling the producer's
 fixture/down. Do not reintroduce the old PayToPlay-only test command.
 
-IMAGE names the single image checked for its expected role; RUNNER_IMAGE names
-a composite test runner; INDEXER_IMAGE names the installed core library image used by private-input
-transport checks, NOT a runnable indexer worker. Both selectors are
-immutable sha256 IDs and
-the image role is validated before any durable activity. WHEELHOUSE and
+IMAGE names the single image checked for its expected role. RUNNER_IMAGE
+names a composite test runner. INDEXER_IMAGE names the installed core image
+for private inputs and the explicit one-block foreground command. Image
+selectors are immutable sha256 IDs and the image role is validated before
+any durable activity. WHEELHOUSE and
 DOCKER_CONTEXT stay explicit operator choices; source, test and build tooling
 must never change the selected engine implicitly. New test targets require
 separate source/admission tests and explicit granted resources.

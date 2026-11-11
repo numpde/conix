@@ -5,12 +5,15 @@ request identity and scanner behavior, not PostgreSQL publication; the
 journal's atomic persistence is tested independently against PostgreSQL.
 """
 
+import asyncio
 from dataclasses import replace
 import gzip
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 from uuid import UUID
 
 import httpx
@@ -72,6 +75,7 @@ def rpc_log(vector, address, transaction_index, log_index, transaction_hash):
 class Server:
     def __init__(self):
         self.requests = []
+        self.chain_id = "0x7a69"
         self.blocks = {
             "0x0": rpc_block(0, HASH0, HASH0),
             "0x1": rpc_block(1, HASH1, HASH0, (TX0, TX1)),
@@ -91,7 +95,7 @@ class Server:
         arguments = operation["params"]
 
         if method == "eth_chainId":
-            result = "0x7a69"
+            result = self.chain_id
         elif method == "eth_getBlockByNumber":
             if arguments[0] == "latest":
                 available = [
@@ -123,6 +127,33 @@ class Server:
             "id": operation["id"],
             "result": result,
         })
+
+
+class IncompleteLogStream(httpx.AsyncByteStream):
+    def __init__(self):
+        self.entered = asyncio.Event()
+        self.closed = False
+
+    async def __aiter__(self):
+        yield b'{"jsonrpc":"2.0"'
+        self.entered.set()
+        await asyncio.Future()
+
+    async def aclose(self):
+        self.closed = True
+
+
+class StalledLogs(Server):
+    def __init__(self):
+        super().__init__()
+        self.stream = IncompleteLogStream()
+
+    def __call__(self, request):
+        operation = json.loads(request.content)
+        if operation["method"] != "eth_getLogs":
+            return super().__call__(request)
+        self.requests.append(operation)
+        return httpx.Response(200, stream=self.stream)
 
 
 class RecordingJournal:
@@ -285,6 +316,101 @@ class ScannerEvidenceContracts(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RpcUnavailable) as error:
             await writer.advance_one()
         self.assertNotIn("secret upstream text", str(error.exception))
+        self.assertEqual(self.journal.publications, [])
+
+    async def test_wrong_chain_and_same_chain_id_with_wrong_genesis_are_refused(self):
+        before = self.journal.basis
+        self.server.chain_id = "0x1"
+        with self.assertRaises(BranchConflict):
+            await self.writer()
+        self.assertEqual([request["method"] for request in self.server.requests], ["eth_chainId"])
+
+        self.server = Server()
+        self.server.blocks["0x0"] = rpc_block(0, HASH2, HASH0)
+        with self.assertRaises(BranchConflict):
+            await self.writer()
+        self.assertEqual([request["method"] for request in self.server.requests],
+                         ["eth_chainId", "eth_getBlockByNumber"])
+        self.assertEqual(self.server.requests[1]["params"], ["0x0", False])
+        self.assertEqual(self.journal.basis, before)
+        self.assertEqual(self.journal.publications, [])
+
+    async def test_descending_distinct_logs_are_refused_without_sorting(self):
+        self.server.log_replies[hex_bytes(TOKEN)] = [
+            rpc_log(ERC20, TOKEN, 1, 7, TX1), rpc_log(ERC20, TOKEN, 0, 3, TX0),
+        ]
+        writer = await self.writer()
+        before = self.journal.basis
+        with self.assertRaises(RpcProtocolError):
+            await writer.advance_one()
+        self.assertEqual(self.journal.basis, before)
+        self.assertEqual(self.journal.publications, [])
+
+    async def test_truncated_json_is_not_a_complete_log_response(self):
+        class TruncatedLogs(Server):
+            def __call__(self, request):
+                operation = json.loads(request.content)
+                if operation["method"] != "eth_getLogs":
+                    return super().__call__(request)
+                payload = json.dumps({
+                    "jsonrpc": "2.0", "id": operation["id"],
+                    "result": self.log_replies[hex_bytes(TOKEN)],
+                }).encode("utf-8")
+                return httpx.Response(200, stream=httpx.ByteStream(payload[:-1]))
+
+        self.server = TruncatedLogs()
+        writer = await self.writer()
+        before = self.journal.basis
+        with self.assertRaises(RpcProtocolError) as failure:
+            await writer.advance_one()
+        self.assertIsInstance(failure.exception.__cause__, json.JSONDecodeError)
+        self.assertEqual(self.journal.basis, before)
+        self.assertEqual(self.journal.publications, [])
+
+    async def test_stalled_log_stream_is_closed_on_timeout_and_cancellation(self):
+        for cancel in (False, True):
+            with self.subTest(cancel=cancel):
+                self.server = StalledLogs()
+                writer = await self.writer()
+                before = self.journal.basis
+                if cancel:
+                    async with asyncio.timeout(10), asyncio.TaskGroup() as tasks:
+                        pending = tasks.create_task(writer.advance_one())
+                        await self.server.stream.entered.wait()
+                        pending.cancel()
+                        with self.assertRaises(asyncio.CancelledError):
+                            await pending
+                else:
+                    writer.rpc.limits = replace(self.source.limits, rpc_timeout_seconds=1)
+                    with self.assertRaises(RpcUnavailable) as failure:
+                        await writer.advance_one()
+                    self.assertIsInstance(failure.exception.__cause__, TimeoutError)
+
+                self.assertTrue(self.server.stream.entered.is_set())
+                self.assertTrue(self.server.stream.closed)
+                self.assertEqual(sum(request["method"] == "eth_getLogs" for request in self.server.requests), 1)
+                self.assertEqual(self.journal.basis, before)
+                self.assertEqual(self.journal.publications, [])
+
+    async def test_operation_deadline_prevents_recheck_after_valid_logs(self):
+        writer = await self.writer()
+        before = self.journal.basis
+        seconds = 0
+        clock = SimpleNamespace(monotonic=lambda: seconds)
+
+        def finish_at_deadline(_filter, rows):
+            nonlocal seconds
+            seconds = self.source.limits.operation_timeout_seconds
+            return rows
+
+        self.server.mutate = finish_at_deadline
+        with patch("conix.core.time", clock), patch("conix.rpc.time", clock):
+            with self.assertRaises(RpcUnavailable):
+                await writer.advance_one()
+
+        self.assertEqual(self.server.candidate_reads, 1)
+        self.assertEqual(sum(request["method"] == "eth_getLogs" for request in self.server.requests), 1)
+        self.assertEqual(self.journal.basis, before)
         self.assertEqual(self.journal.publications, [])
 
     async def test_rpc_reply_correlates_id_and_never_decompresses_opaque_bytes(self):

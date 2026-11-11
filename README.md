@@ -1,10 +1,11 @@
 Conix — generic EVM raw-log indexer
 ===================================
 
-Current status (2026-11-10): T0-1 ABI, T0-2 offline catalog and
-PostgreSQL journal, T0-3 blockHash-pinned scanner, and T0-4 checkpoint-bound
-reader are implemented. The obsolete PayToPlay-only runtime was deleted,
-with no production data to migrate.
+The generic ABI codec, catalog, PostgreSQL journal, blockHash-pinned scanner
+and checkpoint-bound reader have completed T0-6 qualification. The selected
+core baseline is frozen for concrete delegation by later tiers. Note 004,
+section 8.8, records the tested environment and scope. The obsolete
+PayToPlay-only runtime was deleted, with no production data to migrate.
 
 The authoritative end-state specification is
 notes/004_rpc_evidence_and_raw_log_indexer_plan.txt. The separate
@@ -43,10 +44,9 @@ latest. evidence() checks stored ancestors against the selected provider
 and distinguishes provider-reported finality from unavailable finality.
 These are provider-relative facts, not consensus proofs.
 
-The indexer image remains a library image: image/indexer/check exercises
-an installed ABI operation and imports writer/reader APIs, but does not
-run a worker. No deployment worker CLI exists. Owner schema initialization
-remains a separate Python API, not a Make action.
+The image/indexer/check lane exercises installed ABI behavior and imports
+the writer and reader APIs. The foreground worker is an explicit module
+invocation. Owner schema initialization is a separate Python API.
 
 Build and checks
 ----------------
@@ -86,11 +86,12 @@ The test runner never receives an owner DSN. Owned containers, network and
 volumes are retired after each run. No Docker socket mount, host port,
 unreviewed pull, privilege escalation or ambient Docker override is used.
 
-The separate private-input staging test verifies bounded TOML/DSN transport,
-non-root readability and cleanup of an engine-owned private volume. Staging
-proves *transport*, not configuration admission or successful deployment.
-prepare_catalog() admits local immutable ABI snapshots; the deployment
-input volume still needs to carry those bytes before a worker can start.
+The private-input staging test sends the TOML, selected ABI files and DSN
+through bounded stdin into an engine-owned volume. Use operator-owned input
+files. ABI paths in staged TOML have the form `abi/<name>.json`, relative
+to the configuration directory. The installed `prepare_catalog()` admits
+the snapshot from a read-only mount as the runtime UID. The proof lane
+retires its volume. Worker activation is a separate operation.
 
 Real-chain acceptance
 ---------------------
@@ -125,22 +126,29 @@ Select the actual local Docker context and prepared dapp32 checkout. The
 campaign creates and retires an isolated producer fixture and a separate
 Conix SQL project; on uncertain cleanup, inspect the reported ownership IDs.
 
-The cross-repository campaign must pass before T0-5 is qualified. Ordinary
-CI Anvil tests establish generic reader/writer behavior, not this dapp32
-end-to-end workflow.
+Note 004, section 8.8, records the tested revisions and environment, the scope
+of ordinary CI, and the open Tier-0 release gates.
 
 Security and next step
 ----------------------
 Private DB credentials are never embedded in images or public logs.
 Container operators preserve the first failure and report uncertain cleanup
 independently. Existing retained deployments may be inspected or removed
-using ownership-constrained deployment/status and deployment/remove; no
-new generic worker may be started until it is implemented and qualified.
+using ownership-constrained deployment/status and deployment/remove.
 
-Next is to execute and independently review the new T0-5 owned campaign
-against dapp32, address any real interoperability defects, and qualify the
-recorded event history, filtering and repair behavior. The signer and economic
-policy remain external. A production worker CLI and private immutable ABI
-snapshot staging are separate prerequisites for deployment.
+The signer and economic policy remain external. After the owner initializes the
+schema and you stage the runtime inputs, select two existing internal
+Docker networks with the database and RPC peers:
+
+    make history/advance DOCKER_CONTEXT=agentic INDEXER_IMAGE="$indexer" \
+      INPUT_VOLUME="$inputs" DATABASE_NETWORK="$db_network" RPC_NETWORK="$rpc_network"
+
+The command runs the installed `conix.worker advance` once and retires its
+container. It reports the confirmed block identity or that the source was
+at tip. Production deployment activation remains unavailable.
+Schema initialization uses the owner-only `conix.schema.initialize()` API
+in a separate process. Readers use `open_reader()` with the SELECT-only
+credential. An operator chooses a retained canonical ancestor and invokes
+`Writer.repair_to()` explicitly when repair is required.
 Do not reintroduce Collection models, PayToPlay-specific decoders or
 unqualified completeness shortcuts.

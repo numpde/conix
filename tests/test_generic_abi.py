@@ -9,7 +9,7 @@ from unittest.mock import patch
 from eth_abi import encode as reference_encode
 from eth_utils import to_checksum_address
 
-from abi_golden_vectors import ERC20, ERC721, MIXED, HASHED, FROM, TO, word
+from abi_golden_vectors import ERC20, ERC721, MIXED, HASHED, FROM, TO, padded, signature_topic, word
 from abi_contract_vectors import (
     COMPOUND, PAY_TO_PLAY, POSITION_ABI_TYPE, POSITION_CALL,
     POSITION_RETURN, POSITION_SAMPLE,
@@ -34,6 +34,62 @@ def scalar_event(kind, *, indexed=True, name="n"):
         "type": "event", "name": "Value", "anonymous": False,
         "inputs": [{"name": name, "type": kind, "indexed": indexed}],
     })
+
+
+class SupportedAbiFamilies(unittest.TestCase):
+
+    def test_declared_families_through_event_filters_and_read_calls(self):
+        pair = {"components": [{"type": "uint16"}, {"type": "bool"}]}
+        dynamic_pair = {"components": [{"type": "address"}, {"type": "string"}]}
+        specimens = {
+            "uintM": [("uint16", {}, 65535)],
+            "intM": [("int16", {}, -32768)],
+            "address": [("address", {}, TO)],
+            "bool": [("bool", {}, True)],
+            "bytesN": [("bytes4", {}, b"\x00\xffAB")],
+            "bytes": [("bytes", {}, b"\x00\xff")],
+            "string": [("string", {}, "é😀")],
+            "array": [("uint16[2]", {}, (0, 65535)), ("uint16[]", {}, (1, 2))],
+            "tuple": [("(uint16,bool)", pair, (3, True)), ("(address,string)", dynamic_pair, (TO, "é"))],
+        }
+        families = catalog("support_matrix")["families"]
+        self.assertEqual(set(specimens), {row["family"] for row in families})
+
+        for row in families:
+            for (canonical, shape, value) in specimens[row["family"]]:
+                with self.subTest(abi_type=canonical):
+                    self.check_family(canonical, shape, value, row["indexed_equality"])
+
+    def check_family(self, canonical, shape, value, indexed_equality):
+        field = {"type": "tuple" if shape else canonical, **shape}
+        event = compile_event({
+            "type": "event", "name": "MatrixValue", "anonymous": False,
+            "inputs": [
+                {**field, "name": "key", "indexed": True},
+                {**field, "name": "value", "indexed": False},
+            ],
+        })
+        echo = compile_function({
+            "type": "function", "name": "echo", "stateMutability": "pure",
+            "inputs": [field], "outputs": [field],
+        })
+        payload = reference_encode((canonical,), (value,))
+        topic0 = signature_topic(f"MatrixValue({canonical},{canonical})")
+        if indexed_equality:
+            (topic, key) = (payload, value)
+            self.assertEqual(encode_indexed_filter(event, "key", value), topic)
+        else:
+            topic = bytes(range(32))
+            key = IndexedHash(topic)
+            for invalid in (value, topic):
+                with self.assertRaises(InvalidCallerValue):
+                    encode_indexed_filter(event, "key", invalid)
+
+        self.assertEqual(decode_event(event, (topic0, topic), payload), (key, value))
+        with self.assertRaises(InvalidCallerValue):
+            encode_indexed_filter(event, "value", value)
+        self.assertEqual(encode_call(echo, (value,)), signature_topic(f"echo({canonical})")[:4] + payload)
+        self.assertEqual(decode_return(echo, payload), (value,))
 
 
 class ExactEventContracts(unittest.TestCase):
@@ -203,6 +259,78 @@ class ExactEventContracts(unittest.TestCase):
 
 
 class ReadOnlyFunctionContracts(unittest.TestCase):
+
+    def test_seeded_nested_fixed_arrays_of_dynamic_tuples(self):
+        shape = {
+            "name": "values", "type": "tuple[2][]", "components": [
+                {"name": "amount", "type": "int16"},
+                {"name": "text", "type": "string"},
+                {"name": "payload", "type": "bytes"},
+            ],
+        }
+        event = compile_event({
+            "type": "event", "name": "Nested", "anonymous": False,
+            "inputs": [{**shape, "indexed": False}],
+        })
+        echo = compile_function({
+            "type": "function", "name": "echo", "stateMutability": "pure",
+            "inputs": [shape], "outputs": [shape],
+        })
+        canonical = "(int16,string,bytes)[2][]"
+        topic = signature_topic(f"Nested({canonical})")
+        selector = signature_topic(f"echo({canonical})")[:4]
+        text_values = ("", "x" * 31, "é" * 16, "😀" * 8 + "x")
+
+        def check_round_trip(values):
+            wire = reference_encode((canonical,), (values,))
+            self.assertEqual(decode_event(event, (topic,), wire), (values,))
+            self.assertEqual(encode_call(echo, (values,)), selector + wire)
+            self.assertEqual(decode_return(echo, wire), (values,))
+
+        check_round_trip((((-32768, "", b""), (32767, "", b"")),))
+        for seed in range(24):
+            source = random.Random(seed)
+            values = tuple(
+                tuple(
+                    (source.randint(-32768, 32767), source.choice(text_values),
+                     source.randbytes(source.choice((0, 1, 31, 32, 33))))
+                    for _ in range(2)
+                )
+                for _ in range(seed % 4)
+            )
+            with self.subTest(seed=seed):
+                check_round_trip(values)
+
+        invalid_text = (((0, "\ud800", b""), (1, "", b"")),)
+        short_pair = (((0, "", b""),),)
+        for values in (invalid_text, short_pair):
+            with self.assertRaises(InvalidCallerValue):
+                encode_call(echo, (values,))
+
+    def test_noncanonical_dynamic_wire_is_refused_in_events_and_returns(self):
+        cases = (
+            ("invalid UTF-8", ("string",), ("x",), word(32) + word(1) + padded(b"\xff")),
+            ("nonzero padding", ("bytes",), (b"x",), word(32) + word(1) + b"x" + bytes(30) + b"\x01"),
+            ("aliased tails", ("bytes", "bytes"), (b"x", b"x"), word(64) * 2 + word(1) + padded(b"x")),
+        )
+        for (label, types, values, invalid_wire) in cases:
+            with self.subTest(case=label):
+                fields = [{"name": f"value{index}", "type": kind} for (index, kind) in enumerate(types)]
+                event = compile_event({
+                    "type": "event", "name": "Value", "anonymous": False,
+                    "inputs": [{**field, "indexed": False} for field in fields],
+                })
+                view = compile_function({
+                    "type": "function", "name": "echo", "stateMutability": "pure",
+                    "inputs": fields, "outputs": fields,
+                })
+                valid_wire = reference_encode(types, values)
+                self.assertEqual(decode_event(event, (event.topic0,), valid_wire), values)
+                self.assertEqual(decode_return(view, valid_wire), values)
+                with self.assertRaises(MalformedABIData):
+                    decode_event(event, (event.topic0,), invalid_wire)
+                with self.assertRaises(MalformedABIData):
+                    decode_return(view, invalid_wire)
 
     def test_actual_view_position_tuple_and_function_selector(self):
         source = next(row for row in catalog("pay_to_play") if row.get("name") == "viewPosition")

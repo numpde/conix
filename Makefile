@@ -20,7 +20,7 @@ override export CONIX_MAKE_DEPLOYMENT := $(value DEPLOYMENT)
 override export CONIX_MAKE_DATABASE_NETWORK := $(value DATABASE_NETWORK)
 override export CONIX_MAKE_RPC_NETWORK := $(value RPC_NETWORK)
 
-.PHONY: test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/postgres/run test/input-staging/run test/indexer/acceptance/run campaign/indexer/acceptance/run deployment/inputs/create deployment/inputs/remove deployment/config/check deployment/status deployment/remove help
+.PHONY: test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/postgres/run test/input-staging/run test/indexer/acceptance/run campaign/indexer/acceptance/run history/advance deployment/inputs/create deployment/inputs/remove deployment/config/check deployment/status deployment/remove help
 
 # Each action's declaration is also the help authority. Recipes share the
 # literal-value dispatchers; no Make target aliases or duplicate help list.
@@ -82,6 +82,9 @@ test/indexer/acceptance/run: ## Borrow dapp32 fixture; RUNNER_IMAGE=<id> FIXTURE
 
 campaign/indexer/acceptance/run: ## Own dapp32 fixture; RUNNER_IMAGE=<id> DAPP32_DIR=<path>
 	$(RUN_FIXTURE)
+
+history/advance: ## Advance one block; INDEXER_IMAGE=<id> INPUT_VOLUME=<id> DATABASE_NETWORK=<name> RPC_NETWORK=<name>
+	$(RUN_OPERATOR)
 
 deployment/inputs/create: ## Stage private inputs; INDEXER_IMAGE=<id> CONFIG_FILE=<path> DSN_FILE=<path>
 	$(RUN_OPERATOR)
