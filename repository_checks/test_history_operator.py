@@ -183,6 +183,56 @@ class HistoryOperatorContracts(unittest.TestCase):
         finally:
             session.retire_client()
 
+    def test_command_inspect_checks_stored_identity_and_scope(self):
+        """Accept only bounded, contiguous stored facts from an owned worker."""
+        reply = {
+            "version": 1, "outcome": "inspected", "source_id": "a" * 64,
+            "revision": 3, "generation": "00000000-0000-0000-0000-000000000001",
+            "history_start": 1, "blocked": True, "last_block_number": 2,
+            "blocks": [{"number": 2, "hash": "0x" + "b" * 64}],
+        }
+        script = (
+            "import json,sys\n"
+            f"reply={repr(reply)}\n"
+            "for line in sys.stdin:\n"
+            "  request=json.loads(line)\n"
+            "  if request['action']=='inspect': print(json.dumps(reply),flush=True)\n"
+            "  elif request['action']=='stop':\n"
+            "    print(json.dumps({'version':1,'outcome':'stopped'}),flush=True)\n"
+            "    break\n"
+        )
+        docker = Mock()
+        docker.docker_command_prefix = [sys.executable, "-u", "-c", script]
+        docker.working_dir = Path(__file__).resolve().parent.parent
+        docker.docker_environment = os.environ.copy()
+        session = history.CommandSession(docker, "c" * 64, lambda: False)
+        try:
+            self.assertEqual(session.inspect(limit=1)["blocks"], reply["blocks"])
+            session.stop()
+        finally:
+            session.retire_client()
+
+    def test_command_inspect_rejects_forged_noncontiguous_history(self):
+        """A plausible receipt may not skip a requested ancestry height."""
+        script = (
+            "import json,sys\n"
+            "sys.stdin.readline()\n"
+            "print(json.dumps({'version':1,'outcome':'inspected','source_id':'a'*64,"
+            "'revision':3,'generation':'00000000-0000-0000-0000-000000000001',"
+            "'history_start':1,'blocked':False,'last_block_number':2,"
+            "'blocks':[{'number':1,'hash':'0x'+'b'*64}]}),flush=True)\n"
+        )
+        docker = Mock()
+        docker.docker_command_prefix = [sys.executable, "-u", "-c", script]
+        docker.working_dir = Path(__file__).resolve().parent.parent
+        docker.docker_environment = os.environ.copy()
+        session = history.CommandSession(docker, "c" * 64, lambda: False)
+        try:
+            with self.assertRaises(OperationError):
+                session.inspect(limit=1)
+        finally:
+            session.retire_client()
+
     def test_persistent_session_retires_owned_container_after_caller_failure(self):
         """The session never converts a caller failure into successful cleanup."""
         docker = Mock(endpoint="unix:///tmp/selected.sock")

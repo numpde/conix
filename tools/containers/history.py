@@ -451,12 +451,15 @@ class CommandSession:
             start_new_session=True,
         )
 
-    def _reply(self, action):
+    def _reply(self, action, *, limit=None, through=None):
         """Only a complete bounded response can confirm a command outcome."""
         if self.stopped or self.cancelled():
             raise OperationError("History command session is no longer active.")
 
-        request = (json.dumps({"version": 1, "action": action}) + "\n").encode("ascii")
+        request_fields = {"version": 1, "action": action}
+        if action == "inspect":
+            request_fields.update(limit=limit, through=through)
+        request = (json.dumps(request_fields, separators=(",", ":")) + "\n").encode("ascii")
         try:
             self.process.stdin.write(request)
             self.process.stdin.flush()
@@ -510,6 +513,64 @@ class CommandSession:
         if response.get("outcome") not in ("at_tip", "advanced"):
             raise OperationError("History command worker did not confirm an advance.")
         return _receipt(json.dumps({key: value for key, value in response.items() if key != "version"}))
+
+    def inspect(self, *, limit=8, through=None):
+        """Read bounded stored ancestry, never a claim of RPC canonicality."""
+        if (
+            type(limit) is not int or not 1 <= limit <= 8
+            or through is not None and (type(through) is not int or not 0 <= through < 2**63)
+        ):
+            raise OperationError("Select a bounded retained ancestry interval.")
+
+        result = self._reply("inspect", limit=limit, through=through)
+        try:
+            if (
+                set(result) != {
+                    "version", "outcome", "source_id", "revision", "generation",
+                    "history_start", "blocked", "last_block_number", "blocks",
+                }
+                or result["outcome"] != "inspected"
+                or type(result["source_id"]) is not str
+                or ENGINE_ID.fullmatch(result["source_id"]) is None
+                or type(result["revision"]) is not int or result["revision"] < 0
+                or type(result["history_start"]) is not int
+                or not 0 <= result["history_start"] < 2**63
+                or type(result["blocked"]) is not bool
+                or type(result["generation"]) is not str
+                or re.fullmatch(
+                    r"[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}",
+                    result["generation"],
+                ) is None
+                or type(result["blocks"]) is not list
+            ):
+                raise ValueError
+            last = result["last_block_number"]
+            if last is not None and (
+                type(last) is not int or not result["history_start"] <= last < 2**63
+            ):
+                raise ValueError
+            if last is None:
+                if result["blocks"]:
+                    raise ValueError
+            else:
+                selected = last if through is None else through
+                if not result["history_start"] <= selected <= last:
+                    raise ValueError
+                expected = range(selected, max(result["history_start"], selected - limit + 1) - 1, -1)
+                if len(result["blocks"]) != len(expected):
+                    raise ValueError
+                for (record, number) in zip(result["blocks"], expected):
+                    if (
+                        type(record) is not dict or set(record) != {"number", "hash"}
+                        or type(record["number"]) is not int or record["number"] != number
+                        or type(record["hash"]) is not str
+                        or re.fullmatch(r"0x[a-f0-9]{64}", record["hash"]) is None
+                    ):
+                        raise ValueError
+        except (KeyError, TypeError, ValueError) as error:
+            raise OperationError("Command worker returned invalid retained ancestry evidence.") from error
+
+        return result
 
     def stop(self):
         """Request a cooperative exit; never confuse it with an advance result."""
