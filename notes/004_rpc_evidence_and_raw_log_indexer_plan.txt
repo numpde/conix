@@ -863,7 +863,10 @@ and input transport. The dapp32 campaign runs separately.
                        and representative public codec paths for every
                        admitted family. Events and returns reject invalid
                        UTF-8, nonzero dynamic padding, and aliased tails.
-                       Nested compound and boundary cases still need review.
+                       Seeded fixed arrays of dynamic tuples exercise
+                       word boundaries in events, calls and returns. An
+                       explicit control covers both int16 bounds. Invalid
+                       text and fixed-array shape fail at call admission.
   RPC and reader       Hostile responses, pinned calls, keyset pages, and
                        stale-generation rejection have executable cases.
                        The scanner refuses wrong chain or genesis, descending

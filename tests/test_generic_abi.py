@@ -260,6 +260,53 @@ class ExactEventContracts(unittest.TestCase):
 
 class ReadOnlyFunctionContracts(unittest.TestCase):
 
+    def test_seeded_nested_fixed_arrays_of_dynamic_tuples(self):
+        shape = {
+            "name": "values", "type": "tuple[2][]", "components": [
+                {"name": "amount", "type": "int16"},
+                {"name": "text", "type": "string"},
+                {"name": "payload", "type": "bytes"},
+            ],
+        }
+        event = compile_event({
+            "type": "event", "name": "Nested", "anonymous": False,
+            "inputs": [{**shape, "indexed": False}],
+        })
+        echo = compile_function({
+            "type": "function", "name": "echo", "stateMutability": "pure",
+            "inputs": [shape], "outputs": [shape],
+        })
+        canonical = "(int16,string,bytes)[2][]"
+        topic = signature_topic(f"Nested({canonical})")
+        selector = signature_topic(f"echo({canonical})")[:4]
+        text_values = ("", "x" * 31, "é" * 16, "😀" * 8 + "x")
+
+        def check_round_trip(values):
+            wire = reference_encode((canonical,), (values,))
+            self.assertEqual(decode_event(event, (topic,), wire), (values,))
+            self.assertEqual(encode_call(echo, (values,)), selector + wire)
+            self.assertEqual(decode_return(echo, wire), (values,))
+
+        check_round_trip((((-32768, "", b""), (32767, "", b"")),))
+        for seed in range(24):
+            source = random.Random(seed)
+            values = tuple(
+                tuple(
+                    (source.randint(-32768, 32767), source.choice(text_values),
+                     source.randbytes(source.choice((0, 1, 31, 32, 33))))
+                    for _ in range(2)
+                )
+                for _ in range(seed % 4)
+            )
+            with self.subTest(seed=seed):
+                check_round_trip(values)
+
+        invalid_text = (((0, "\ud800", b""), (1, "", b"")),)
+        short_pair = (((0, "", b""),),)
+        for values in (invalid_text, short_pair):
+            with self.assertRaises(InvalidCallerValue):
+                encode_call(echo, (values,))
+
     def test_noncanonical_dynamic_wire_is_refused_in_events_and_returns(self):
         cases = (
             ("invalid UTF-8", ("string",), ("x",), word(32) + word(1) + padded(b"\xff")),

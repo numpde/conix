@@ -1,6 +1,6 @@
 {
   "schema": "conix.abi.support.v1",
-  "description": "Prospective generic Tier-0 admission/codec contract. These fixture tests alone do not qualify a codec.",
+  "description": "Supported and rejected ABI cases for the installed generic codec. Note 004 records qualification evidence.",
   "indexed_note": "Dynamic, tuple and array event topics are stored as hash values, never decoded preimages or equality-filtered.",
   "families": [
     {
