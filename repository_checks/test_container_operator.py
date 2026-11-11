@@ -148,6 +148,32 @@ class LocalDockerOperatorTests(unittest.TestCase):
                     self.assertNotEqual(completed.returncode, 0,
                         "Unknown Docker command was silently accepted by the fake.")
 
+    def test_retired_owner_dsn_selector_is_rejected_before_docker(self):
+        """Schema-owner credentials have no general-purpose container CLI flag."""
+        with tempfile.TemporaryDirectory() as directory:
+            fake = Path(directory) / "docker"
+            fake.write_text(FAKE, encoding="utf-8")
+            fake.chmod(0o755)
+            log = Path(directory) / "docker.jsonl"
+            environment = os.environ.copy()
+            environment["PATH"] = directory + os.pathsep + environment["PATH"]
+            environment["CONIX_FAKE_LOG"] = str(log)
+
+            completed = subprocess.run(
+                [
+                    sys.executable, "-m", "tools.containers.operator",
+                    "--context", "science", "--origin", "command line",
+                    "--owner-dsn-file", "/tmp/retired-owner-credential",
+                    "image/indexer/check", "--image", "sha256:" + "a" * 64,
+                ],
+                cwd=ROOT, env=environment,
+                capture_output=True, text=True, timeout=10,
+            )
+
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("unrecognized arguments: --owner-dsn-file", completed.stderr)
+            self.assertFalse(log.exists(), "Retired credentials reached Docker selection.")
+
     def test_staging_diagnostics_admit_fixed_causes_but_not_secrets(self):
         admitted = operator._staging_failure(
             b"Conix input staging failed (InputError): Staged inputs were truncated or have trailing bytes.\n"
