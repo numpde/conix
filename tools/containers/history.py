@@ -457,6 +457,10 @@ def _advance_history(docker, *, image, volume, database, rpc, cancelled,
         if receipt is not None:
             _notice(f"Worker outcome before the operator failure: {json.dumps(receipt)}")
         raise failure
+    if receipt is None:
+        # A zero exit code and successful cleanup are not a substitute for
+        # the driver's explicit confirmed outcome.
+        raise OperationError("Cannot confirm the selected worker completion receipt.")
     if emit_receipt:
         try:
             print(json.dumps(receipt), flush=True)
