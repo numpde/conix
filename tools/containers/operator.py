@@ -375,13 +375,35 @@ class Docker(DockerClient):
 
         if operation == "remove":
             observed_ids = self.run(
-                "ps", "--all", *service_labels, "--format", "{{.ID}}",
+                "ps", "--all", "--no-trunc", *service_labels, "--format", "{{.ID}}",
                 capture=True, timeout=20,
             ).splitlines()
 
+            # Discovery labels identify candidates, not deletion authority.
+            # Inspect ALL exact immutable IDs before stopping any container.
             for container_id in observed_ids:
-                if re.fullmatch(r"[0-9a-f]{12,64}", container_id) is None:
-                    raise OperationError("Docker returned an invalid Conix container identity.")
+                if re.fullmatch(r"[0-9a-f]{64}", container_id) is None:
+                    raise OperationError("Docker returned an incomplete Conix container identity.")
+
+                try:
+                    observed = json.loads(self.run(
+                        "container", "inspect", "--format", "{{json .}}", container_id,
+                        capture=True, timeout=15,
+                    ))
+                    configuration = observed["Config"]
+                    labels = configuration["Labels"]
+                except (ValueError, KeyError, TypeError) as error:
+                    raise OperationError("Cannot establish the selected container's ownership.") from error
+
+                if (
+                    type(observed) is not dict or observed.get("Id") != container_id
+                    or type(labels) is not dict
+                    or labels.get("com.docker.compose.project") != project
+                    or labels.get("com.docker.compose.service") != "indexer"
+                ):
+                    raise OperationError(
+                        "Selected container ownership changed; no containers were retired."
+                    )
 
             for container_id in observed_ids:
                 self.run("container", "stop", "--time", "90", container_id, timeout=105)
