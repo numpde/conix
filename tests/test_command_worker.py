@@ -11,7 +11,8 @@ import httpx
 
 from anvil_catalog import catalog_for_anvil
 from conix.command_worker import CommandProtocolError, _command, serve
-from conix.journal import CommitOutcomeUnknown
+from conix.journal import Block, CommitOutcomeUnknown, RetainedAncestry, Progress
+from uuid import UUID
 from conix.reader import open_reader
 from conix.worker import progress_receipt
 
@@ -56,6 +57,48 @@ class CommandWorkerContracts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0]["block_hash"], "0x" + "b" * 64)
         self.assertEqual(results[0]["revision"], 5)
         self.assertEqual(results[1]["source_id"], "a" * 64)
+
+    async def test_inspect_reads_real_journal_facts_not_an_advance(self):
+        """The command protocol cannot treat retained headers as canonical."""
+        header = Block(12, bytes.fromhex("b" * 64), bytes.fromhex("c" * 64), 1234)
+        progress = Progress(
+            source_id=bytes.fromhex("a" * 64),
+            generation=UUID("00000000-0000-0000-0000-000000000001"),
+            history_start=1, revision=3, last_block=header,
+            blocked_reason="repair required",
+        )
+        request = (json.dumps({
+            "version": 1, "action": "inspect", "limit": 2, "through": 12,
+        }) + "\n").encode("ascii")
+        output = io.BytesIO()
+        with (
+            patch("conix.command_worker.inspect_retained_ancestry",
+                  return_value=RetainedAncestry(progress, (header,))) as inspected,
+            patch("conix.command_worker.advance") as advanced,
+        ):
+            await serve(None, "dsn",
+                        incoming=io.BytesIO(request + frame("stop")), outgoing=output)
+        inspected.assert_awaited_once_with(
+            catalog=None, database_dsn="dsn", limit=2, through=12,
+        )
+        advanced.assert_not_awaited()
+        (seen, stopped) = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(seen["outcome"], "inspected")
+        self.assertTrue(seen["blocked"])
+        self.assertEqual(seen["blocks"], [{"number": 12, "hash": "0x" + "b" * 64}])
+        self.assertEqual(stopped, {"version": 1, "outcome": "stopped"})
+
+    def test_inspect_cannot_widen_or_omit_its_bounded_scope(self):
+        """Malformed scope is rejected before any journal inspection."""
+        for request in (
+            {"version": 1, "action": "inspect", "limit": 9, "through": None},
+            {"version": 1, "action": "inspect", "limit": True, "through": None},
+            {"version": 1, "action": "inspect", "limit": 1, "through": -1},
+            {"version": 1, "action": "inspect", "limit": 1},
+            {"version": 1, "action": "inspect", "limit": 1, "through": None, "extra": 0},
+        ):
+            with self.subTest(request=request), self.assertRaises(CommandProtocolError):
+                _command((json.dumps(request) + "\n").encode("ascii"))
 
     async def test_unknown_commit_terminates_without_acknowledging_or_replaying(self):
         """Uncertain publication may not return success or read another request."""

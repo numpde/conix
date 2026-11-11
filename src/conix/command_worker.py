@@ -11,10 +11,12 @@ import json
 import sys
 
 from conix.input_staging import load_runtime_inputs
+from conix.journal import inspect_retained_ancestry
 from conix.worker import advance, progress_receipt
 
 
 MAX_COMMAND_BYTES = 128
+MAX_INSPECT_BLOCKS = 8  # Keep the response inside the host-side 4096-byte bound.
 
 
 class CommandProtocolError(ValueError):
@@ -36,15 +38,21 @@ def _command(line: bytes) -> str:
         document = json.loads(line, object_pairs_hook=_object)
     except (ValueError, UnicodeError) as error:
         raise CommandProtocolError("A command is not valid JSON.") from error
-    if (
-        type(document) is not dict
-        or set(document) != {"version", "action"}
-        or type(document["version"]) is not int
-        or document["version"] != 1
-        or document["action"] not in ("advance", "stop")
-    ):
-        raise CommandProtocolError("A command has an unsupported action or version.")
-    return document["action"]
+    if type(document) is not dict or type(document.get("version")) is not int or document["version"] != 1:
+        raise CommandProtocolError("A command has an unsupported version.")
+
+    action = document.get("action")
+    if action in ("advance", "stop") and set(document) == {"version", "action"}:
+        return action
+    if action == "inspect" and set(document) == {"version", "action", "limit", "through"}:
+        limit, through = document["limit"], document["through"]
+        if (
+            type(limit) is int and 1 <= limit <= MAX_INSPECT_BLOCKS
+            and (through is None or type(through) is int and 0 <= through < 2**63)
+        ):
+            return (action, limit, through)
+
+    raise CommandProtocolError("A command has an unsupported action or arguments.")
 
 
 def _write(stream, record):
@@ -60,6 +68,30 @@ async def serve(catalog, database_dsn, *, incoming, outgoing):
         if action == "stop":
             _write(outgoing, {"outcome": "stopped"})
             return
+
+        if isinstance(action, tuple):
+            (_, limit, through) = action
+            ancestry = await inspect_retained_ancestry(
+                catalog=catalog, database_dsn=database_dsn, limit=limit, through=through,
+            )
+            # Journal facts are not a decision that the chain is canonical.
+            _write(outgoing, {
+                "outcome": "inspected",
+                "source_id": ancestry.progress.source_id.hex(),
+                "revision": ancestry.progress.revision,
+                "generation": str(ancestry.progress.generation),
+                "history_start": ancestry.progress.history_start,
+                "blocked": ancestry.progress.blocked_reason is not None,
+                "last_block_number": (
+                    None if ancestry.progress.last_block is None
+                    else ancestry.progress.last_block.number
+                ),
+                "blocks": [
+                    {"number": block.number, "hash": "0x" + block.hash.hex()}
+                    for block in ancestry.blocks
+                ],
+            })
+            continue
 
         # Only this existing method is authorized to validate and publish.
         progress = await advance(catalog, database_dsn)
