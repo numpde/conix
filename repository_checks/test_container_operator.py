@@ -493,6 +493,40 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertIn("confinement", result.stderr)
         self.assertFalse(any("up" in call["args"] for call in calls))
 
+    def test_remove_rechecks_selected_container_ownership_before_mutation(self):
+        """A matching Compose project selector is not a deletion credential."""
+        selected_id = "a" * 64
+        calls = []
+        docker = operator.Docker("unix:///tmp/selected.sock", ROOT)
+
+        def observed(*arguments, **_kwargs):
+            calls.append(arguments)
+            if arguments[0] == "ps":
+                return selected_id + "\n"
+            if arguments[:2] == ("container", "inspect"):
+                return json.dumps({
+                    "Id": selected_id,
+                    "Name": "/conix-pilot-indexer-1",
+                    "Config": {"Labels": {
+                        "com.docker.compose.project": "unrelated-project",
+                        "com.docker.compose.service": "indexer",
+                    }},
+                })
+            if arguments[:2] == ("container", "stop"):
+                self.fail("A foreign container was stopped without ownership admission.")
+            return None
+
+        with patch.object(docker, "run", side_effect=observed):
+            with self.assertRaises(operator.OperationError):
+                docker.deployment(
+                    operation="remove", name="pilot", image=None,
+                    volume=None, database=None, rpc=None,
+                )
+
+        self.assertTrue(any(item[:2] == ("container", "inspect") for item in calls))
+        self.assertFalse(any(item[:2] in (("container", "stop"), ("container", "rm"))
+                             for item in calls))
+
     def test_runtime_stop_does_not_need_removed_external_resources(self):
         result, calls = self.run_runtime_fake(operation="remove", missing_resources=True)
         self.assertEqual(result.returncode, 0, result.stderr)
