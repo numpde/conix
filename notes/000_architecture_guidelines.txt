@@ -2,13 +2,12 @@ Executable core with mandatory delegation
 ========================================
 
 Date: 2026-11-08
-Status: governing rule for Tier 1/2 delegation AFTER a generic Tier 0 has
-been implemented and qualified. Active fresh Tier-0 plan: 004.
-Earlier examples refer to an experimental PayToPlay-specific core; they
-do not require preservation of its code, schema, API or event history.
-The generic Tier-0 baseline is qualified and frozen within the scope
-recorded in Note 004, section 8.8. Protect its concrete operations from
-replacement by later tiers.
+Status: governing rule for Tier 1/2 delegation over the qualified,
+frozen generic Tier-0 baseline. Note 004, section 8.8, records its evidence
+and the limits of qualification. Earlier examples describe a removed
+experimental PayToPlay-specific core; they do not preserve its code,
+schema, API or event history. Protect the listed concrete operations
+from replacement by later tiers.
 Note 005 alone governs physical historical RPC method substitution and
 evidence-form admission. This note governs whether a higher tier actually
 delegates to the concrete validator/publisher, regardless of RPC strategy.
