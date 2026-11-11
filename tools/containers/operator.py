@@ -427,6 +427,8 @@ class Docker(DockerClient):
             indexer_service = rendered_services["indexer"]
             input_mounts = indexer_service.get("volumes", [])
             rendered_networks = rendered_configuration["networks"]
+            logging = indexer_service.get("logging")
+            options = logging.get("options") if type(logging) is dict else None
 
             if (
                 set(rendered_services) != {"indexer"}
@@ -436,6 +438,13 @@ class Docker(DockerClient):
                 or indexer_service.get("command") != HISTORY_ADVANCE_COMMAND
                 or indexer_service.get("user") != "65532:65532"
                 or indexer_service.get("read_only") is not True
+                or indexer_service.get("cpus") != 1
+                or indexer_service.get("pids_limit") != 128
+                or str(indexer_service.get("mem_limit")) not in ("536870912", "512m")
+                or str(indexer_service.get("memswap_limit")) not in ("536870912", "512m")
+                or type(logging) is not dict or logging.get("driver") != "local"
+                or type(options) is not dict
+                or options.get("max-size") != "10m" or str(options.get("max-file")) != "3"
                 or indexer_service.get("privileged", False)
                 or indexer_service.get("ports") or indexer_service.get("network_mode")
                 or set(indexer_service.get("cap_drop", [])) != {"ALL"}
