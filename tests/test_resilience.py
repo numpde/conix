@@ -1,4 +1,9 @@
-"""Follow the chain tip without taking over Tier-0 publication or recovery."""
+"""Contracts for Tier-1 scheduling and delegation to the qualified Tier-0 core.
+
+The first group isolates scheduling decisions; the contained Anvil/PostgreSQL
+witness exercises real publication and observes its durable result. Scheduling
+mocks alone cannot establish that the authoritative core was executed.
+"""
 
 import asyncio
 import os
@@ -17,11 +22,16 @@ from conix.worker import advance
 
 
 class ContinuousAdvanceContracts(unittest.IsolatedAsyncioTestCase):
+    """Control worker outcomes to test the loop without RPC or SQL timing."""
+
     async def test_catches_up_without_waiting_between_published_blocks(self):
+        """Published blocks trigger immediate re-entry, not the tip delay."""
         stop = asyncio.Event()
         calls = []
 
         async def advanced(catalog, database_dsn):
+            # The third invocation reports the tip and requests clean exit;
+            # a sleep between the first two would exceed the one-second bound.
             calls.append((catalog, database_dsn))
             if len(calls) == 3:
                 stop.set()
@@ -34,6 +44,7 @@ class ContinuousAdvanceContracts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, [("catalog", "dsn")] * 3)
 
     async def test_idle_wait_releases_control_immediately_on_stop(self):
+        """Idle shutdown must not wait for the configured polling interval."""
         stop = asyncio.Event()
         at_tip = asyncio.Event()
         calls = 0
@@ -48,6 +59,8 @@ class ContinuousAdvanceContracts(unittest.IsolatedAsyncioTestCase):
             task = asyncio.create_task(follow(None, None, stop=stop, poll_interval=30))
             try:
                 await asyncio.wait_for(at_tip.wait(), 1)
+                # Let the supervisor enter its tip wait before checking that
+                # no second worker ran while the long poll was pending.
                 await asyncio.sleep(0)
                 self.assertEqual(calls, 1)
             finally:
@@ -56,12 +69,15 @@ class ContinuousAdvanceContracts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, 1)
 
     async def test_resumes_after_a_tip_poll(self):
+        """New chain progress is discovered by the next poll, not a push."""
         stop = asyncio.Event()
         at_tip = asyncio.Event()
         new_block = asyncio.Event()
         resumed = asyncio.Event()
 
         async def advanced(_catalog, _database_dsn):
+            # The test changes only the apparent chain tip; the supervisor
+            # must return to the same Tier-0 entry point to observe it.
             if not new_block.is_set():
                 at_tip.set()
                 return None
@@ -80,6 +96,7 @@ class ContinuousAdvanceContracts(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(task, 1)
 
     async def test_fails_without_retrying_or_masking_the_cause(self):
+        """An unsafe or unclassified failure escapes unchanged, exactly once."""
         stop = asyncio.Event()
         cause = RuntimeError("no automatic recovery yet")
         with patch("conix.resilience.supervisor.advance", side_effect=cause) as advanced:
@@ -89,9 +106,12 @@ class ContinuousAdvanceContracts(unittest.IsolatedAsyncioTestCase):
         advanced.assert_awaited_once()
 
     async def test_cancellation_propagates_from_an_active_advance(self):
+        """Cancelling active work is not mistaken for reaching the chain tip."""
         entered = asyncio.Event()
 
         async def blocked(_catalog, _database_dsn):
+            # A never-completing operation proves cancellation propagates
+            # through the await instead of waiting for a polling deadline.
             entered.set()
             await asyncio.Future()
 
@@ -104,6 +124,7 @@ class ContinuousAdvanceContracts(unittest.IsolatedAsyncioTestCase):
         advanced.assert_awaited_once()
 
     async def test_invalid_poll_interval_cannot_create_a_busy_loop(self):
+        """Reject zero or negative polling periods before starting work."""
         with patch("conix.resilience.supervisor.advance") as advanced:
             for interval in (0, -1):
                 with self.subTest(interval=interval), self.assertRaises(ValueError):
@@ -118,7 +139,14 @@ class ContinuousAdvanceContracts(unittest.IsolatedAsyncioTestCase):
     "Requires the owner-initialized disposable Anvil and PostgreSQL source",
 )
 class ResilienceAnvilContracts(unittest.IsolatedAsyncioTestCase):
+    """Prove real Tier-0 indexing and reading in the existing owned fixture."""
+
     async def test_follows_real_events_and_empty_blocks_through_tier_zero(self):
+        """Publish an Anvil Transfer, wait at tip, then publish an empty block.
+
+        Durable SQL state and a SELECT-only reader distinguish genuine
+        delegation from a supervisor that merely reports plausible progress.
+        """
         url = os.environ["CONIX_TEST_ANVIL_URL"]
         runtime_dsn = os.environ["CONIX_TEST_ANVIL_DSN"]
         stop = asyncio.Event()
@@ -128,6 +156,7 @@ class ResilienceAnvilContracts(unittest.IsolatedAsyncioTestCase):
 
         async with httpx.AsyncClient(trust_env=False, timeout=5) as http:
             async def rpc(method, params):
+                """Issue test-producer RPC calls; the indexer remains read-only."""
                 response = await http.post(url, json={
                     "jsonrpc": "2.0", "id": 1, "method": method, "params": params,
                 })
@@ -162,6 +191,7 @@ class ResilienceAnvilContracts(unittest.IsolatedAsyncioTestCase):
             first_height = int(receipt["blockNumber"], 16)
 
             async def observed_advance(source, database_dsn):
+                """Observe genuine Tier-0 results without replacing its work."""
                 progress = await advance(source, database_dsn)
                 if progress is None:
                     at_tip.set()
@@ -177,6 +207,8 @@ class ResilienceAnvilContracts(unittest.IsolatedAsyncioTestCase):
             ):
                 task = asyncio.create_task(follow(catalog, runtime_dsn, stop=stop, poll_interval=0.05))
                 try:
+                    # Mine only after a verified tip: the next invocation
+                    # must reopen the core writer and publish the new block.
                     await asyncio.wait_for(at_tip.wait(), 30)
                     await rpc("evm_mine", [])
                     second_height = first_height + 1
@@ -185,6 +217,8 @@ class ResilienceAnvilContracts(unittest.IsolatedAsyncioTestCase):
                     stop.set()
                     await asyncio.wait_for(task, 10)
 
+            # These are lower bounds, not a brittle count of the Anvil
+            # fixture's pre-existing blocks and tip observations.
             self.assertGreaterEqual(scanning.await_count, 3)
             self.assertGreaterEqual(publishing.await_count, 2)
 
@@ -193,6 +227,8 @@ class ResilienceAnvilContracts(unittest.IsolatedAsyncioTestCase):
                 database_dsn=os.environ["CONIX_TEST_ANVIL_READ_DSN"],
                 rpc_url=url,
             ) as reader:
+                # Observing the persisted checkpoint and the mined
+                # transaction rules out a synthetic supervisor-only success.
                 checkpoint = await reader.checkpoint()
                 self.assertEqual(checkpoint.block.number, second_height)
                 page = await reader.events(
