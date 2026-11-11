@@ -48,9 +48,13 @@ elif "compose" in args and "config" in args:
         item = {"image": os.environ["CONIX_INDEXER_IMAGE"], "user": "65532:65532",
                 "read_only": True, "pull_policy": "never", "cap_drop": ["ALL"],
                 "security_opt": ["no-new-privileges:true"],
+                "entrypoint": ["python"],
+                "command": ["-I", "-m", "conix.worker", "advance"],
                 "networks": {"database": None, "rpc": None},
                 "volumes": [{"source": named_volume, "type": "volume",
                              "target": "/run/conix", "read_only": True}]}
+        if os.getenv("CONIX_FAKE_LEGACY_RUNTIME_COMMAND"):
+            item["command"] = ["run", "--config", "/run/conix/config.toml"]
         if os.getenv("CONIX_FAKE_BAD_RUNTIME_CAP"):
             item["cap_add"] = ["SYS_ADMIN"]
         if os.getenv("CONIX_FAKE_BAD_RUNTIME_PRIVILEGES"):
@@ -363,7 +367,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
     def run_runtime_fake(self, *, bad_bind=False, operation="config/check", missing_resources=False,
                          role="indexer",
                          bad_cap=False, bad_privileges=False, bad_runtime_network=False,
-                         rootful=False, fail_up=False):
+                         legacy_command=False, rootful=False, fail_up=False):
         """Prove deployment confinement before start and recovery after failure."""
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)
@@ -377,6 +381,8 @@ class LocalDockerOperatorTests(unittest.TestCase):
             env["CONIX_FAKE_ROLE"] = role
             env["DOCKER_HOST"] = "tcp://malicious.invalid:2375"
             env["COMPOSE_FILE"] = "/tmp/foreign.yml"
+            if legacy_command:
+                env["CONIX_FAKE_LEGACY_RUNTIME_COMMAND"] = "1"
             if bad_bind:
                 env["CONIX_FAKE_BAD_RUNTIME_BIND"] = "1"
             if bad_cap:
@@ -414,6 +420,13 @@ class LocalDockerOperatorTests(unittest.TestCase):
         for record in calls:
             if "context" not in record["args"]:
                 self.assertIn("unix:///tmp/science-docker.sock", record["args"])
+
+    def test_runtime_configuration_rejects_deleted_cli_entrypoint(self):
+        """A safe container with an obsolete worker command is not deployable."""
+        result, calls = self.run_runtime_fake(legacy_command=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("confinement", result.stderr)
+        self.assertFalse(any("up" in call["args"] for call in calls))
 
     def test_runtime_stop_does_not_need_removed_external_resources(self):
         result, calls = self.run_runtime_fake(operation="remove", missing_resources=True)
