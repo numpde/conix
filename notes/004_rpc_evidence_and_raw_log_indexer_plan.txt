@@ -818,7 +818,49 @@ ordinary RPC failure must not be silently retried under a stronger claim.
 8.8. Tier-0 acceptance evidence and release gates
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Test data from commit C:
+T0-6 qualification closed on 2026-11-11 for executable baseline 06b8959
+on fw, Linux amd64, rootless Docker context agentic and its selected Unix
+endpoint. The generic core is frozen for subsequent concrete delegation.
+Genuine correctness fixes still belong in their existing core owners.
+
+The final local checks passed:
+  - 98 repository tests; the separate input-policy command passed its
+    three cases;
+  - 80 installed PostgreSQL/Anvil tests, with the two owner-only cases
+    separately executed by the initializer;
+  - offline indexer and EVM image admission and 23 hash-locked wheel artifacts;
+  - the full owned dapp32 campaign and a separate borrowed baseline, using
+    dapp32 294cfe2a. The borrowed baseline preserved the observed producer
+    head and attachments. Both producers and Conix resources were retired;
+  - selected-Engine foreground, staged-input and signal checks below.
+
+A subsequent full local run on 2026-11-11 also passed every command in
+.github/workflows/tier0.yml, using agentic in place of the CI default
+context. It acquired the pinned images and wheels into a fresh empty
+host-local pool, then checked and built offline. Source compilation,
+private-input staging and prospective deployment configuration passed.
+The owned and borrowed dapp32 checks also passed against these fresh builds:
+  indexer  sha256:c7143c56608223e9db3c152170e9e56d1e6057dfd6f77bb14a3a24f237402674
+  tests    sha256:741a008ee350011c5f87ded89932db241645cc08a8d98031addaf81047db72e5
+  EVM      sha256:5237bf7fef9872388c5478d7a0511cbf9f0f485ce41f1ce39edf45282539ac19
+This local run does not establish the separate GitHub Actions result.
+
+Qualified artifact identities:
+  indexer  sha256:985ce3e1885b60bf063eca00dcc8a263977589da2a0152f93327906f28416f9a
+  tests    sha256:45bf8768078f5a80e871445352c83ad1af2e4ea6d18ea471861ee8b82fff281f
+  EVM      sha256:ea6e578674c26756199a572920cb8b00216a16954607ebab327c25df936a0390
+
+The supported ABI matrix remains tests/fixtures/abi/support_matrix.json.
+The wire and compound cases qualify the bounded admitted types through
+the installed codec. Real EVM histories and SQL tests qualify their
+scanner, reader and durable-state boundaries. The selected provider is
+trusted for complete responses. Live public-chain finality, power-loss
+durability, unattended recovery, retained deployment activation and
+alternative Engine configurations are outside this qualification.
+The existing index set is retained; the topic1 comparison described below
+is an optimization question with no Tier-0 throughput requirement.
+
+ABI fixture sources:
   tests/fixtures/abi/{erc20,erc721,pay_to_play,compound}.json
   tests/fixtures/abi/support_matrix.json
   tests/abi_golden_vectors.py, tests/abi_contract_vectors.py
@@ -830,7 +872,7 @@ Solidity. The literal event/call encodings were assembled independently of
 Conix and checked by a separately maintained eth_abi codec. A fixture test
 passing proves only the fixture oracle, NOT generic Conix support.
 
-Test harness from commit D:
+Executable acceptance entrypoints:
   test/indexer/acceptance/run         (borrowed validated dapp32 fixture)
   campaign/indexer/acceptance/run     (owned dapp32 fixture lifecycle)
   tests/generic_acceptance.py        (installed-image phases)
@@ -851,14 +893,14 @@ customer/channel-filtered history and block-pinned positions. It also checked
 fresh-process restart and explicit reorganization repair. PostgreSQL and producer fixture
 teardown were confirmed. A separate networkless run of solc-js
 0.8.35+commit.47b9dedd reproduced both tokens' creation and runtime bytes.
-The borrowed fixture and public-chain behavior were outside this run.
+The borrowed fixture and public-chain behavior were outside that T0-5 run.
 Consumer accounting and monetary policy remain the consumer's responsibility.
 
-The following matrix records existing evidence and open work against section 5.
+The following matrix records qualification evidence and scope against section 5.
 Ordinary CI exercises the contained PostgreSQL/Anvil suite, runner admission
 and input transport. The dapp32 campaign runs separately.
 
-  Gate                 Existing evidence / remaining proof
+  Gate                 Qualification evidence and scope
   ABI                  Independent wire vectors, seeded compound cases,
                        and representative public codec paths for every
                        admitted family. Events and returns reject invalid
@@ -914,10 +956,12 @@ and input transport. The dapp32 campaign runs separately.
                        creation and during retirement. Other Engines and
                        hard host process loss remain outside that proof.
   Packaging and core   Curated image inputs include tracked ABI fixtures.
-                       The installed foreground witness forwards raw
-                       evidence through real admission and publication.
-                       Invalid raw evidence leaves no block or checkpoint
-                       change. Repeated reads execute Reader.events, and
+                       The installed worker.advance witness uses patched
+                       RPC to forward raw evidence through real admission
+                       and publication. Invalid evidence leaves no block or
+                       checkpoint change. The separate foreground command
+                       checks above use real Anvil. Repeated reads execute
+                       Reader.events, and
                        only checked repair reaches Journal.repair_to.
                        Note 000, section 8, lists the protected operations.
 
@@ -958,8 +1002,9 @@ used the same index. The absent customer on the rare channel removed 256
 rows and hit 140 shared buffers, with zero reads. Customer-only used
 events_by_contract and removed 439 rows on the first page. The payee
 query used events_by_topic3. The measured plans had zero shared reads.
-The run gives no basis for an index change yet. Measure sparse or absent
-customer-only queries and representative selectivity before deciding.
+The run gave no basis for an index change. The scanner run below adds
+absent customer-only measurements; representative selectivity and index
+write/storage comparisons remain open before deciding.
 
 The journal published synthetic rows directly. Scanner RPC acquisition
 and ABI validation were outside the publication timing. These warm

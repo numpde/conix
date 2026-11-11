@@ -2,8 +2,9 @@ Conix — generic EVM raw-log indexer
 ===================================
 
 The generic ABI codec, catalog, PostgreSQL journal, blockHash-pinned scanner
-and checkpoint-bound reader are implemented. The owned dapp32 campaign passed
-T0-5. Tier 0 remains open for T0-6 release qualification. The obsolete
+and checkpoint-bound reader have completed T0-6 qualification. The selected
+core baseline is frozen for concrete delegation by later tiers. Note 004,
+section 8.8, records the tested environment and scope. The obsolete
 PayToPlay-only runtime was deleted, with no production data to migrate.
 
 The authoritative end-state specification is
@@ -135,8 +136,7 @@ Container operators preserve the first failure and report uncertain cleanup
 independently. Existing retained deployments may be inspected or removed
 using ownership-constrained deployment/status and deployment/remove.
 
-T0-6 qualifies the generic core for independent operator use. The signer
-and economic policy remain external. After the owner initializes the
+The signer and economic policy remain external. After the owner initializes the
 schema and you stage the runtime inputs, select two existing internal
 Docker networks with the database and RPC peers:
 
@@ -146,5 +146,9 @@ Docker networks with the database and RPC peers:
 The command runs the installed `conix.worker advance` once and retires its
 container. It reports the confirmed block identity or that the source was
 at tip. Production deployment activation remains unavailable.
+Schema initialization uses the owner-only `conix.schema.initialize()` API
+in a separate process. Readers use `open_reader()` with the SELECT-only
+credential. An operator chooses a retained canonical ancestor and invokes
+`Writer.repair_to()` explicitly when repair is required.
 Do not reintroduce Collection models, PayToPlay-specific decoders or
 unqualified completeness shortcuts.

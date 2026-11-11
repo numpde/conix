@@ -8,9 +8,10 @@ one complete-block PostgreSQL raw-log journal, and one checkpoint-bound reader
 supporting PayToPlay, ERC-20 and ERC-721 without contract-specific source code.
 T0-1 ABI, T0-2 offline catalog/owner-only journal, T0-3 blockHash-pinned
 scanner and T0-4 checkpoint-bound reader are implemented. The owned dapp32
-campaign passed T0-5. Note 004, section 8.8, owns the evidence and open T0-6
-release gates. The experimental PayToPlay-only runtime was deleted without
-migration or adapters.
+campaign passed T0-5, and T0-6 qualification closed for the selected baseline.
+Note 004, section 8.8, owns evidence and qualification scope. Note 000 lists
+the protected operations that later tiers must execute. The experimental
+PayToPlay-only runtime was deleted without migration or adapters.
 
 notes/004_rpc_evidence_and_raw_log_indexer_plan.txt governs the new Tier-0
 implementation and qualification. notes/005_rpc_history_acquisition_and_optimization.txt
