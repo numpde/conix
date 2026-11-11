@@ -1,6 +1,7 @@
 """Run one installed history advance on an explicitly selected Engine."""
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 import json
 import os
 import re
@@ -19,6 +20,35 @@ VOLUME_NAME = re.compile(r"conix-inputs-([a-f0-9]{24})\Z")
 RUN_LABEL = "io.conix.history-run"
 COMMAND = ["-I", "-m", "conix.worker", "advance"]
 OUTPUT_LIMIT = 4096
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerInvocation:
+    """A bounded installed-Python entry point, not an arbitrary host command."""
+
+    module: str
+    arguments: tuple[str, ...]
+    timeout_seconds: int = 330
+
+    def __post_init__(self):
+        if (
+            type(self.module) is not str
+            or re.fullmatch(r"conix(?:\.[a-z][a-z0-9_]*){1,4}", self.module) is None
+            or type(self.arguments) is not tuple
+            or len(self.arguments) > 6
+            or any(type(arg) is not str or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", arg) is None
+                   for arg in self.arguments)
+            or type(self.timeout_seconds) is not int
+            or not 1 <= self.timeout_seconds <= 3600
+        ):
+            raise OperationError("Select a bounded installed Conix worker entry point.")
+
+    @property
+    def command(self):
+        return ["-I", "-m", self.module, *self.arguments]
+
+
+BASE_WORKER = WorkerInvocation("conix.worker", ("advance",))
 
 
 def _record(docker, kind, identity):
@@ -64,7 +94,7 @@ def _owned(record, container_id, name, image, token):
         return False
 
 
-def _admit_container(record, volume, networks):
+def _admit_container(record, volume, networks, invocation=BASE_WORKER):
     try:
         config = record["Config"]
         host = record["HostConfig"]
@@ -73,7 +103,7 @@ def _admit_container(record, volume, networks):
         confined = (
             record["State"]["Status"] == "created"
             and config["User"] == "65532:65532"
-            and config["Entrypoint"] == ["python"] and config["Cmd"] == COMMAND
+            and config["Entrypoint"] == ["python"] and config["Cmd"] == invocation.command
             and config["StopSignal"] == "SIGINT" and host["Init"] is True
             and host["ReadonlyRootfs"] is True and host["Privileged"] is False
             and host["CapDrop"] == ["ALL"] and not host["CapAdd"]
@@ -148,11 +178,11 @@ def _retire(docker, token, name, image, known_id):
         raise OperationError("The owned history worker is still present.")
 
 
-def _attached(docker, container_id, cancelled=lambda: False):
+def _attached(docker, container_id, cancelled=lambda: False, *, timeout_seconds=330):
     """Capture one worker result with a byte bound and a host deadline."""
     command = docker.docker_command_prefix + ["container", "start", "--attach", container_id]
     started = time.monotonic()
-    deadline = started + 330
+    deadline = started + timeout_seconds
     next_report = started + 15
     child = subprocess.Popen(
         command, cwd=docker.working_dir, env=docker.docker_environment, stdin=subprocess.DEVNULL,
@@ -317,12 +347,31 @@ def _cancellation_requests():
 
 
 def advance_history(docker, *, image, volume, database, rpc):
-    """Keep interruption requests inside the exact worker's ownership lifetime."""
+    """Keep the existing one-shot CLI and its exact core receipt unchanged."""
     with _cancellation_requests() as cancelled:
-        _advance_history(docker, image=image, volume=volume, database=database, rpc=rpc, cancelled=cancelled)
+        return _advance_history(docker, image=image, volume=volume, database=database,
+                                rpc=rpc, cancelled=cancelled)
 
 
-def _advance_history(docker, *, image, volume, database, rpc, cancelled):
+def run_history_program(docker, *, image, volume, database, rpc, invocation, parse_receipt):
+    """Execute an installed Conix driver within the same confined envelope.
+
+    Only a trusted composition selects the driver and supplies its receipt
+    parser. This grants no journal authority or permission to bypass Tier 0.
+    The caller must independently qualify that its driver delegates to the
+    concrete core and rejects unconfirmed outcomes.
+    """
+    if type(invocation) is not WorkerInvocation or not callable(parse_receipt):
+        raise OperationError("Select an installed worker and a receipt decoder.")
+
+    with _cancellation_requests() as cancelled:
+        return _advance_history(docker, image=image, volume=volume, database=database,
+                                rpc=rpc, cancelled=cancelled, invocation=invocation,
+                                parse_receipt=parse_receipt, emit_receipt=False)
+
+
+def _advance_history(docker, *, image, volume, database, rpc, cancelled,
+                     invocation=BASE_WORKER, parse_receipt=_receipt, emit_receipt=True):
     """Admit the grants, run one worker, and retire only its container."""
     docker.require_rootless_engine()
     docker.require_role(image, "indexer")
@@ -340,14 +389,15 @@ def _advance_history(docker, *, image, volume, database, rpc, cancelled):
     try:
         if cancelled():
             raise KeyboardInterrupt
-        container_id = _create(docker, image, volume, (database_id, rpc_id), name, token)
+        container_id = _create(docker, image, volume, (database_id, rpc_id), name, token,
+                               invocation=invocation)
         if not ENGINE_ID.fullmatch(container_id):
             raise OperationError("Cannot confirm the created history worker identity.")
         known_id = container_id
         record = _record(docker, "container", container_id)
         if not _owned(record, container_id, name, image, token):
             raise OperationError("Cannot confirm ownership of the created history worker.")
-        _admit_container(record, volume, ((database, database_id), (rpc, rpc_id)))
+        _admit_container(record, volume, ((database, database_id), (rpc, rpc_id)), invocation)
         # Creation attaches the named volume. Check the mounted identity
         # again before starting in case Docker replaced a missing name.
         _admit_volume(docker, volume)
@@ -355,10 +405,12 @@ def _advance_history(docker, *, image, volume, database, rpc, cancelled):
             raise KeyboardInterrupt
 
         print(f"[conix] History advance {name}: started", file=sys.stderr, flush=True)
-        (client_exit, stdout, stderr) = _attached(docker, container_id, cancelled)
+        (client_exit, stdout, stderr) = _attached(
+            docker, container_id, cancelled, timeout_seconds=invocation.timeout_seconds,
+        )
         if stdout:
             try:
-                receipt = _receipt(stdout)
+                receipt = parse_receipt(stdout)
             except OperationError:
                 pass  # Worker diagnostics remain primary when stdout is not a receipt.
         exit_status = docker.run("container", "wait", container_id, capture=True, timeout=15).strip()
@@ -370,9 +422,13 @@ def _advance_history(docker, *, image, volume, database, rpc, cancelled):
             if type(state) is dict and state.get("Status") == "created" and state.get("Error"):
                 raise OperationError("Docker rejected the history worker start before advance began.")
         if exit_code:
-            raise _failure(stderr, exit_code)
+            if invocation == BASE_WORKER:
+                raise _failure(stderr, exit_code)
+            raise OperationError(
+                f"Selected worker failed (exit {exit_code}). Inspect durable progress."
+            )
         if receipt is None:
-            receipt = _receipt(stdout)
+            receipt = parse_receipt(stdout)
         if client_exit or stderr:
             raise OperationError(f"The attach client reported a failure after worker completion (exit {client_exit}).")
         if cancelled():
@@ -401,15 +457,17 @@ def _advance_history(docker, *, image, volume, database, rpc, cancelled):
         if receipt is not None:
             _notice(f"Worker outcome before the operator failure: {json.dumps(receipt)}")
         raise failure
-    try:
-        print(json.dumps(receipt), flush=True)
-    except OSError as error:
-        _notice(f"Worker completed and retired: {json.dumps(receipt)}")
-        raise OperationError("Cannot deliver the history advance receipt on stdout.") from error
+    if emit_receipt:
+        try:
+            print(json.dumps(receipt), flush=True)
+        except OSError as error:
+            _notice(f"Worker completed and retired: {json.dumps(receipt)}")
+            raise OperationError("Cannot deliver the history advance receipt on stdout.") from error
     _notice("[conix] History advance: completed and retired")
+    return receipt
 
 
-def _create(docker, image, volume, networks, name, token):
+def _create(docker, image, volume, networks, name, token, *, invocation=BASE_WORKER):
     (database_id, rpc_id) = networks
     try:
         return docker.run(
@@ -421,7 +479,7 @@ def _create(docker, image, volume, networks, name, token):
             "--mount", f"type=volume,source={volume},target=/run/conix,readonly,volume-nocopy",
             "--log-driver", "local", "--log-opt", "max-size=32k", "--log-opt", "max-file=1",
             "--log-opt", "compress=false",
-            "--entrypoint", "python", image, *COMMAND, capture=True, timeout=30,
+            "--entrypoint", "python", image, *invocation.command, capture=True, timeout=30,
         ).strip()
     except OperationError as error:
         raise OperationError(f"Cannot confirm creation of {name} on {docker.endpoint}. {error}") from error

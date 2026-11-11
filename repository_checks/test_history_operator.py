@@ -125,6 +125,73 @@ class HistoryOperatorContracts(unittest.TestCase):
             {"database": {"NetworkID": rpc_id}, "rpc": {"NetworkID": database_id}}, selected,
         ))
 
+    def test_alternate_driver_reuses_confined_worker_lifecycle(self):
+        """Changing the installed driver changes neither admission nor retirement."""
+        docker = Mock(endpoint="unix:///tmp/selected.sock")
+        docker.run.return_value = "0\n"
+        invocation = history.WorkerInvocation("conix.resilience.supervisor", ("follow",), 600)
+        selected = {"outcome": "stopped"}
+        create = Mock(return_value="c" * 64)
+        admit = Mock()
+        retire = Mock()
+
+        with (
+            patch.multiple(
+                history, _admit_volume=Mock(),
+                _admit_network=Mock(side_effect=("d" * 64, "e" * 64)),
+                _create=create, _record=Mock(), _owned=Mock(return_value=True),
+                _admit_container=admit,
+                _attached=Mock(return_value=(0, b'{"outcome":"stopped"}', b"")),
+                _retire=retire,
+            ),
+            patch("sys.stdout", new_callable=io.StringIO) as stdout,
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            result = history.run_history_program(
+                docker, image="sha256:" + "a" * 64,
+                volume="inputs", database="database", rpc="rpc",
+                invocation=invocation, parse_receipt=lambda raw: json.loads(raw),
+            )
+
+        self.assertEqual(result, selected)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIs(create.call_args.kwargs["invocation"], invocation)
+        self.assertIs(admit.call_args.args[-1], invocation)
+        self.assertEqual(retire.call_count, 1)
+
+    def test_alternate_driver_cannot_supply_an_arbitrary_command_or_timeout(self):
+        """Only finite-duration installed Conix modules are launchable."""
+        for module, args, timeout in (
+            ("/bin/sh", ("-c",), 330),
+            ("other.worker", (), 330),
+            ("conix.worker", ("../escape",), 330),
+            ("conix.worker", ("advance",), 0),
+            ("conix.worker", ("advance",), 3601),
+            ("conix.worker", ("advance",), True),
+        ):
+            with self.subTest(module=module, args=args, timeout=timeout):
+                with self.assertRaises(OperationError):
+                    history.WorkerInvocation(module, args, timeout)
+
+    def test_selected_worker_keeps_the_full_creation_confinement(self):
+        """Alternative entry points change only python module/arguments."""
+        invocation = history.WorkerInvocation("conix.next_driver", ("run",), 600)
+        docker = Mock()
+        docker.run.return_value = "c" * 64
+        observed = history._create(
+            docker, "sha256:" + "a" * 64, "conix-inputs-" + "b" * 24,
+            ("d" * 64, "e" * 64), "conix-advance-" + "f" * 24, "f" * 24,
+            invocation=invocation,
+        )
+        arguments = docker.run.call_args.args
+
+        self.assertEqual(observed, "c" * 64)
+        self.assertEqual(arguments[-4:], ("-I", "-m", "conix.next_driver", "run"))
+        for restriction in ("--read-only", "--cap-drop", "--security-opt", "--pids-limit",
+                            "--memory", "--memory-swap", "--cpus", "--mount", "--network"):
+            self.assertIn(restriction, arguments)
+        self.assertNotIn("--privileged", arguments)
+
     def test_operator_failures_preserve_worker_outcome_on_stderr_only(self):
         docker = Mock(endpoint="unix:///tmp/unused.sock")
         docker.run.return_value = "0\n"
