@@ -174,6 +174,33 @@ class LocalDockerOperatorTests(unittest.TestCase):
             self.assertIn("unrecognized arguments: --owner-dsn-file", completed.stderr)
             self.assertFalse(log.exists(), "Retired credentials reached Docker selection.")
 
+    def test_public_acquisition_worker_cannot_echo_private_stderr(self):
+        """A privileged network worker's stderr remains an untrusted string."""
+        from types import SimpleNamespace
+
+        credential = "0x" + "ab" * 32
+        response = SimpleNamespace(
+            returncode=17,
+            stdout="",
+            stderr=(
+                f"Shared acquisition rejected privateKey={credential} on upstream.\n"
+                "Shared acquisition failed after a refused response.\n"
+            ),
+        )
+        with patch.object(client.subprocess, "run", return_value=response):
+            with self.assertRaises(client.OperationError) as raised:
+                client.command(
+                    ["docker", "run", "checked-acquisition-worker"],
+                    env={}, working_dir=ROOT,
+                    public_diagnostic=True,
+                )
+
+        explanation = str(raised.exception)
+        self.assertIn("exit 17", explanation)
+        self.assertIn("Shared acquisition failed after a refused response", explanation)
+        self.assertNotIn("privateKey", explanation)
+        self.assertNotIn(credential, explanation)
+
     def test_staging_diagnostics_admit_fixed_causes_but_not_secrets(self):
         admitted = operator._staging_failure(
             b"Conix input staging failed (InputError): Staged inputs were truncated or have trailing bytes.\n"
