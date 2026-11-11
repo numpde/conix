@@ -66,6 +66,19 @@ class Progress:
     blocked_reason: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class RetainedAncestry:
+    """Bounded stored headers tied to a freshly observed durable basis.
+
+    These headers are journal facts, NOT an assertion that their branch is
+    currently canonical at an RPC provider. A later repair revalidates its
+    selected ancestor through the ordinary checked core method.
+    """
+
+    progress: Progress
+    blocks: tuple[Block, ...]
+
+
 class Journal:
     """The only concrete durable mutation path used by future scanners."""
 
@@ -163,6 +176,48 @@ class Journal:
         if self.retired:
             raise HistoryConflict("This writer has retired; open a fresh session.")
         return await self._read_basis(connection=self.connection, catalog=self.catalog)
+
+    async def retained_ancestry(
+        self, *, limit: int, through: int | None = None,
+    ) -> RetainedAncestry:
+        """Read recent stored block identities, even if history is blocked.
+
+        The journal's exclusive writer lock fences this snapshot against
+        authorized publication and repair. No RPC interpretation or repair
+        policy is applied to the returned records.
+        """
+        if type(limit) is not int or not 1 <= limit <= self.catalog.limits.max_evidence_blocks:
+            raise ValueError("Retained ancestry limit exceeds the configured evidence budget.")
+
+        progress = await self.inspect()
+        if progress.last_block is None:
+            if through is not None:
+                raise HistoryConflict("No retained block exists at the selected height.")
+            return RetainedAncestry(progress, ())
+
+        highest = progress.last_block.number
+        if through is not None:
+            if type(through) is not int or not progress.history_start <= through <= highest:
+                raise HistoryConflict("Selected retained height is outside the complete prefix.")
+            highest = through
+
+        lowest = max(progress.history_start, highest - limit + 1)
+        try:
+            records = await (
+                await self.connection.execute(
+                    "SELECT number, hash, parent_hash, timestamp FROM conix.blocks "
+                    "WHERE number BETWEEN %s AND %s ORDER BY number DESC",
+                    (lowest, highest),
+                )
+            ).fetchall()
+        except psycopg.Error as error:
+            raise StorageUnavailable("Cannot inspect retained ancestry blocks.") from error
+
+        blocks = tuple(Block(*record) for record in records)
+        if tuple(block.number for block in blocks) != tuple(range(highest, lowest - 1, -1)):
+            raise HistoryConflict("Retained ancestry contains an incomplete block interval.")
+
+        return RetainedAncestry(progress, blocks)
 
     @asynccontextmanager
     async def _transaction(self):
@@ -354,3 +409,16 @@ async def open_journal(*, catalog: Catalog, database_dsn: str):
         yield journal
     finally:
         await journal.close()
+
+
+async def inspect_retained_ancestry(
+    *, catalog: Catalog, database_dsn: str, limit: int, through: int | None = None,
+) -> RetainedAncestry:
+    """Expose stored ancestry without handing callers a writable journal.
+
+    Access uses the same source checks, runtime identity and exclusive writer
+    lock as the ordinary Tier-0 publisher. A supervisor may compare these
+    facts with independently observed RPC headers but cannot repair here.
+    """
+    async with open_journal(catalog=catalog, database_dsn=database_dsn) as journal:
+        return await journal.retained_ancestry(limit=limit, through=through)
