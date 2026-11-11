@@ -2,8 +2,9 @@ Conix — historical RPC acquisition and Tier-2 substitution contract
 =================================================================
 
 Date: 2026-11-10
-Status: T0-3 SELECTED_LOG_RESPONSES IMPLEMENTED (2026-11-10);
-        later receipt/range acquisition remains a normative design.
+Status: T0-6-qualified SELECTED_LOG_RESPONSES is the concrete Tier-0
+        acquisition path (2026-11-11; Note 004, section 8.8).
+        Receipt/range acquisition remains an unimplemented Tier-2 proposal.
         src/conix/core.py owns validation and one-block publication;
         src/conix/rpc.py owns bounded HTTP JSON-RPC transport.
 
