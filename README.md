@@ -86,11 +86,12 @@ The test runner never receives an owner DSN. Owned containers, network and
 volumes are retired after each run. No Docker socket mount, host port,
 unreviewed pull, privilege escalation or ambient Docker override is used.
 
-The separate private-input staging test verifies bounded TOML/DSN transport,
-non-root readability and cleanup of an engine-owned private volume. Staging
-proves *transport*, not configuration admission or successful deployment.
-prepare_catalog() admits local immutable ABI snapshots; the deployment
-input volume still needs to carry those bytes before a worker can start.
+The private-input staging test sends the TOML, selected ABI files and DSN
+through bounded stdin into an engine-owned volume. Use operator-owned input
+files. ABI paths in staged TOML have the form `abi/<name>.json`, relative
+to the configuration directory. The installed `prepare_catalog()` admits
+the snapshot from a read-only mount as the runtime UID. The proof lane
+retires its volume. Worker activation is a separate operation.
 
 Real-chain acceptance
 ---------------------
@@ -138,6 +139,6 @@ new generic worker may be started until it is implemented and qualified.
 
 T0-6 qualifies the generic core for independent operator use. The signer
 and economic policy remain external. Production worker activation still
-requires an operator workflow and private immutable ABI snapshot staging.
+requires an operator workflow.
 Do not reintroduce Collection models, PayToPlay-specific decoders or
 unqualified completeness shortcuts.

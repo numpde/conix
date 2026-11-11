@@ -44,13 +44,16 @@ jobs:
           make image/evm-test-runner/check DOCKER_CONTEXT=default IMAGE="$fixture_image"
           # Stage the real distribution's fixed inputs in a private engine volume.
           # A second, unprivileged, read-only container proves readability.
-          candidate="$(mktemp)"
-          dsn="$(mktemp)"
-          trap 'rm -f -- "$candidate" "$dsn"' EXIT
-          cp examples/conix.toml "$candidate"
+          candidate="$(mktemp -d)"
+          dsn="$candidate/connection.dsn"
+          trap 'rm -rf -- "$candidate"' EXIT
+          mkdir "$candidate/abi"
+          install -m 600 examples/conix.toml "$candidate/config.toml"
+          install -m 600 tests/fixtures/abi/pay_to_play.json "$candidate/abi/pay_to_play.json"
+          (umask 077; : > "$dsn")
           printf '%s\n' 'postgresql://fixture:disposable@postgres:5432/conix_test' > "$dsn"
           make test/input-staging/run DOCKER_CONTEXT=default INDEXER_IMAGE="$runtime" \
-            CONFIG_FILE="$candidate" DSN_FILE="$dsn"
+            CONFIG_FILE="$candidate/config.toml" DSN_FILE="$dsn"
           # Render the actual production profile without creating resources.
           make deployment/config/check DOCKER_CONTEXT=default \
             DEPLOYMENT=ci INDEXER_IMAGE="$runtime" \

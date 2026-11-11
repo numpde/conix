@@ -1,5 +1,6 @@
 """Behavioral contract for the operation-owned Docker client; never contact a daemon."""
 import errno
+import io
 import json
 import os
 from pathlib import Path
@@ -155,6 +156,86 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertIsNone(operator._staging_failure(
             b"database password in upstream stderr only\n"
         ))
+
+    def test_staging_snapshot_reads_only_declared_regular_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            configuration = b'[contracts.a]\nabi_file="abi/shared.json"\n[contracts.b]\nabi_file="abi/shared.json"\n'
+            config.write_bytes(configuration)
+            config.chmod(0o600)
+            abi = root / "abi"
+            abi.mkdir()
+            member = abi / "shared.json"
+            member.write_bytes(b"[ ]\n")
+            member.chmod(0o600)
+            (abi / "unused.json").symlink_to(root / "unused.json")
+            docker = operator.Docker("unix:///tmp/unused.sock", root)
+            self.assertEqual(docker.catalog_snapshot(config), (configuration, {"shared.json": b"[ ]\n"}))
+
+            member.unlink()
+            member.symlink_to(config)
+            with self.assertRaises(operator.OperationError):
+                docker.catalog_snapshot(config)
+
+    def test_staging_snapshot_refuses_paths_outside_its_flat_abi_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            docker = operator.Docker("unix:///tmp/unused.sock", root)
+            for relative in ("../other.json", "abi/../other.json", "abi/nested/other.json", "/other.json"):
+                with self.subTest(relative=relative), self.assertRaises(operator.OperationError) as failure:
+                    config.write_text(f'[contracts.a]\nabi_file="{relative}"\n')
+                    config.chmod(0o600)
+                    docker.catalog_snapshot(config)
+                self.assertIn("ABI paths", str(failure.exception))
+
+    def test_staging_timeout_stays_primary_when_volume_cleanup_is_uncertain(self):
+        with tempfile.TemporaryDirectory() as directory:
+            docker = operator.Docker("unix:///tmp/unused.sock", Path(directory))
+            token = "a" * 24
+            volume = "conix-inputs-" + token
+            private_value = "do-not-print-private-input"
+            timeout = subprocess.TimeoutExpired(["docker", private_value], 40)
+            with (
+                patch.object(operator.secrets, "token_hex", return_value=token),
+                patch.object(operator.subprocess, "run", side_effect=timeout),
+                patch.object(docker, "require_role"),
+                patch.object(docker, "catalog_snapshot", return_value=(b"settings", {"a.json": b"[]"})),
+                patch.object(docker, "private_bytes", return_value=private_value.encode()),
+                patch.object(docker, "run", return_value=volume),
+                patch.object(docker, "remove_inputs", side_effect=operator.OperationError("cleanup failed")) as remove,
+                patch("sys.stderr", new_callable=io.StringIO) as stderr,
+                self.assertRaises(operator.OperationError) as failure,
+            ):
+                docker.stage_inputs("sha256:" + "b" * 64, "/config.toml", "/dsn")
+
+            self.assertIs(failure.exception.__cause__, timeout)
+            self.assertIn("timed out", str(failure.exception))
+            self.assertIn(volume, stderr.getvalue())
+            self.assertNotIn(private_value, str(failure.exception) + stderr.getvalue())
+            remove.assert_called_once_with(volume, token=token)
+
+    def test_uncertain_volume_creation_reports_the_selected_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            docker = operator.Docker("unix:///tmp/unused.sock", Path(directory))
+            token = "a" * 24
+            creation_failure = operator.OperationError("Docker volume create timed out.")
+            with (
+                patch.object(operator.secrets, "token_hex", return_value=token),
+                patch.object(docker, "require_role"),
+                patch.object(docker, "catalog_snapshot", return_value=(b"settings", {"a.json": b"[]"})),
+                patch.object(docker, "private_bytes", return_value=b"credential"),
+                patch.object(docker, "run", side_effect=creation_failure),
+                patch.object(docker, "remove_inputs") as remove,
+                self.assertRaises(operator.OperationError) as failure,
+            ):
+                docker.stage_inputs("sha256:" + "b" * 64, "/config.toml", "/dsn")
+
+            self.assertIs(failure.exception.__cause__, creation_failure)
+            self.assertIn("conix-inputs-" + token, str(failure.exception))
+            self.assertIn(docker.endpoint, str(failure.exception))
+            remove.assert_not_called()
 
     def test_docker_client_errors_retain_cause_without_private_arguments(self):
         private_argument = "postgresql://private:password@secret.example"

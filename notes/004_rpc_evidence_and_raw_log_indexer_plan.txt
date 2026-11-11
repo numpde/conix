@@ -877,9 +877,12 @@ and input transport. The dapp32 campaign runs separately.
   PostgreSQL baseline  Synthetic journal and filtered-page measurements
                        below. Scanner catch-up, larger history distributions
                        and database memory still need evidence.
-  Operator boundary    Owned rootless campaign and private TOML/DSN transport
-                       have separate evidence. Prove the operator workflow,
-                       ABI snapshot staging, egress, cancellation and cleanup.
+  Operator boundary    The owned rootless campaign and private TOML/ABI/DSN
+                       staging have separate evidence. The installed verifier
+                       admitted staged inputs as UID 65532 and refused a
+                       malformed ABI on fw agentic. Both proof volumes were
+                       retired. Operator workflow, egress and interruption
+                       still need evidence.
   Packaging and core   Curated image inputs include tracked ABI fixtures.
                        Verify delivered artifacts and record the concrete
                        operations and delegation witness before the freeze.
@@ -1056,10 +1059,9 @@ establishes imports/ABI behavior; the contained Anvil+PostgreSQL suite
 qualifies T0-3 and T0-4 against tested event/view combinations.
 Section 8.8 records the separate owned dapp32 campaign and open release gates.
 
-Deployment input transport still stages TOML and DSN only. Before
-activating a real worker, it must also supply the immutable ABI snapshot
-files admitted by the catalog; do not duplicate catalog validation in
-the transport layer or resurrect the old collections schema.
+Deployment input transport includes the declared ABI files. The installed
+catalog validates the staged volume as the worker UID on a read-only mount.
+The one-shot proof checks valid and malformed catalogs before activation.
 
 Last line
 ---------

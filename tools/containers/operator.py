@@ -12,6 +12,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 from tools.containers.client import (
@@ -52,6 +53,11 @@ def _staging_failure(stderr):
         return None
 
     for diagnostic_line in reversed(stderr_lines):
+        if re.fullmatch(
+            r"Conix input stage failed \([A-Za-z][A-Za-z0-9_]{0,63}\) at [A-Za-z0-9_]{1,64}\.py:[1-9][0-9]{0,5}\.",
+            diagnostic_line,
+        ):
+            return diagnostic_line
         if not diagnostic_line.startswith(diagnostic_prefix):
             continue
 
@@ -66,6 +72,27 @@ def _staging_failure(stderr):
             return safe_reason
 
     return None
+
+
+def _declared_abi_names(configuration):
+    """Project transport paths without interpreting the selected catalog."""
+    try:
+        contracts = tomllib.loads(configuration.decode("utf-8")).get("contracts")
+    except (UnicodeError, tomllib.TOMLDecodeError) as error:
+        raise OperationError("Cannot read ABI paths from the selected TOML settings.") from error
+
+    if not isinstance(contracts, dict) or not 1 <= len(contracts) <= 32:
+        raise OperationError("Staged settings must select one to 32 contracts.")
+
+    names = {}
+    for contract in contracts.values():
+        path = contract.get("abi_file") if isinstance(contract, dict) else None
+        if not isinstance(path, str) or not (
+            match := re.fullmatch(r"abi/([A-Za-z0-9][A-Za-z0-9_.-]{0,122}\.json)", path)
+        ):
+            raise OperationError("Staged ABI paths must have the form abi/<name>.json.")
+        names[match[1]] = None
+    return names
 
 
 class Docker(DockerClient):
@@ -147,36 +174,65 @@ class Docker(DockerClient):
 
         print("Verified offline EVM acceptance runner image and Cast signer.", file=sys.stderr)
 
-    def private_bytes(self, value, max_size, *, secret):
-        """Read an operator-owned regular file without following its final symlink."""
+    def private_bytes(self, value, max_size, *, secret, directory=None):
+        """Read a selected operator-owned regular file without following its symlink."""
         source_path = Path(value)
 
-        if not source_path.is_absolute():
+        if directory is None and not source_path.is_absolute():
             raise OperationError("Staged input files must use absolute host paths.")
 
         open_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
-        source_fd = os.open(source_path, open_flags)
-
         try:
-            file_stat = os.fstat(source_fd)
-
-            if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_uid != os.getuid():
-                raise OperationError("Staged input must be an operator-owned regular file.")
-
-            if secret and file_stat.st_mode & 0o077:
-                raise OperationError("Database credential source must have no group/other permissions.")
-
-            if not secret and file_stat.st_mode & 0o022:
-                raise OperationError("Conix settings source must not be group/other writable.")
-
-            input_bytes = os.read(source_fd, max_size + 1)
-        finally:
-            os.close(source_fd)
+            source_fd = os.open(source_path, open_flags, dir_fd=directory)
+            with os.fdopen(source_fd, "rb") as stream:
+                file_stat = os.fstat(source_fd)
+                if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_uid != os.getuid():
+                    raise OperationError("Staged input must be an operator-owned regular file.")
+                if secret and file_stat.st_mode & 0o077:
+                    raise OperationError("Database credential source must have no group/other permissions.")
+                if not secret and file_stat.st_mode & 0o022:
+                    raise OperationError("Settings and ABI sources must not be group/other writable.")
+                input_bytes = stream.read(max_size + 1)
+        except OSError as error:
+            subject = "database credential" if secret else "catalog input"
+            raise OperationError(f"Cannot read selected {subject} (errno={error.errno}).") from error
 
         if not 0 < len(input_bytes) <= max_size:
             raise OperationError("Staged input file is empty or exceeds its size limit.")
 
         return input_bytes
+
+    def catalog_snapshot(self, config_path):
+        """Copy only the declared ABI members relative to the selected settings directory."""
+        config_path = Path(config_path)
+        if not config_path.is_absolute() or not config_path.name:
+            raise OperationError("Staged input files must use absolute host paths.")
+
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        try:
+            directory = os.open(config_path.parent, directory_flags)
+        except OSError as error:
+            raise OperationError(f"Cannot open selected settings directory (errno={error.errno}).") from error
+        try:
+            configuration = self.private_bytes(config_path.name, 64 * 1024, secret=False, directory=directory)
+            names = _declared_abi_names(configuration)
+            try:
+                abi_directory = os.open("abi", directory_flags, dir_fd=directory)
+            except OSError as error:
+                raise OperationError(f"Cannot open adjacent ABI directory (errno={error.errno}).") from error
+            try:
+                members = {}
+                remaining = 8 * 1024 * 1024
+                for name in names:
+                    member = self.private_bytes(name, min(remaining, 1024 * 1024),
+                                                secret=False, directory=abi_directory)
+                    members[name] = member
+                    remaining -= len(member)
+            finally:
+                os.close(abi_directory)
+        finally:
+            os.close(directory)
+        return (configuration, members)
 
     def stage_inputs(self, image, config_path, dsn_path, *, proof=False, announce=True):
         """Stage one private snapshot in a new volume; never mount host secrets."""
@@ -185,32 +241,42 @@ class Docker(DockerClient):
 
         self.require_role(image, "indexer")
 
-        config_bytes = self.private_bytes(config_path, 64 * 1024, secret=False)
+        (config_bytes, abi_members) = self.catalog_snapshot(config_path)
         dsn_bytes = self.private_bytes(dsn_path, 8192, secret=True)
 
-        # Transport the exact bytes. The contained provisioner checks the
-        # envelope's private credential destination once; T0-2's catalog
-        # will own the full source/ABI configuration admission.
-        # The DSN travels only in private stdin, not Docker argv, environment,
-        # labels or image layers. The provisioner is networkless with CAP_CHOWN.
+        # The contained verifier compiles the exact staged catalog. The DSN
+        # travels only in private stdin to the networkless provisioner.
         staging_payload = (
-            b"CONIX-INPUTS-V1\n"
-            + struct.pack("!II", len(config_bytes), len(dsn_bytes))
+            b"CONIX-INPUTS-V2\n"
+            + struct.pack("!III", len(config_bytes), len(dsn_bytes), len(abi_members))
             + config_bytes + dsn_bytes
+            + b"".join(
+                struct.pack("!HI", len(name), len(member)) + name.encode("ascii") + member
+                for (name, member) in abi_members.items()
+            )
         )
 
         volume_token = secrets.token_hex(12)
         input_volume_name = "conix-inputs-" + volume_token
 
-        created_volume_name = self.run(
-            "volume", "create", "--label", "io.conix.input-token=" + volume_token,
-            "--name", input_volume_name, timeout=15, capture=True,
-        ).strip()
+        try:
+            created_volume_name = self.run(
+                "volume", "create", "--label", "io.conix.input-token=" + volume_token,
+                "--name", input_volume_name, timeout=15, capture=True,
+            ).strip()
+        except OperationError as error:
+            raise OperationError(
+                f"Cannot confirm creation of private volume {input_volume_name} on {self.endpoint}. {error}"
+            ) from error
 
         if created_volume_name != input_volume_name:
-            raise OperationError("Created input volume identity differs from the selected name; inspect the Engine.")
+            raise OperationError(
+                f"Engine {self.endpoint} returned a different volume identity. "
+                f"Inspect whether the requested {input_volume_name} exists."
+            )
 
-        cleanup_required = proof
+        cleanup_required = True
+        primary_failure = None
 
         try:
             staging_argv = self.docker_command_prefix + [
@@ -222,15 +288,13 @@ class Docker(DockerClient):
                 "--entrypoint", "python", image, "-I", "-m", "conix.input_staging", "stage",
             ]
 
-            staging_result = subprocess.run(
-                staging_argv,
-                input=staging_payload,
-                capture_output=True,
-                cwd=ROOT,
-                env=self.docker_environment,
-                timeout=40,
-                check=False,
-            )
+            try:
+                staging_result = subprocess.run(
+                    staging_argv, input=staging_payload, capture_output=True, cwd=ROOT,
+                    env=self.docker_environment, timeout=40, check=False,
+                )
+            except subprocess.TimeoutExpired as error:
+                raise OperationError("Input staging timed out; the container outcome is unconfirmed.") from error
 
             if staging_result.returncode:
                 admitted_reason = _staging_failure(staging_result.stderr)
@@ -240,30 +304,27 @@ class Docker(DockerClient):
             self.verify_inputs(image, input_volume_name)
 
             if not proof:
-                cleanup_required = False
-
                 if announce:
-                    print(input_volume_name)
-        except Exception:
-            cleanup_required = True
+                    print(input_volume_name, flush=True)
+                cleanup_required = False
+        except BaseException as error:
+            primary_failure = error
             raise
         finally:
             if cleanup_required:
                 try:
                     self.remove_inputs(input_volume_name, token=volume_token)
                 except Exception as cleanup_error:
-                    original_failure = sys.exc_info()[1]
-                    original_failure_note = (
-                        f" Original staging failure: {original_failure}."
-                        if isinstance(original_failure, OperationError) else
-                        f" Original staging failure: {type(original_failure).__name__}."
-                        if original_failure is not None else ""
-                    )
-
-                    raise OperationError(
+                    cleanup_message = (
                         f"Cannot confirm cleanup of owned private volume {input_volume_name}; "
-                        f"inspect selected Engine {self.endpoint}.{original_failure_note}"
-                    ) from cleanup_error
+                        f"inspect selected Engine {self.endpoint}."
+                    )
+                    if primary_failure is None:
+                        raise OperationError(cleanup_message) from cleanup_error
+                    try:
+                        print(cleanup_message, file=sys.stderr)
+                    except OSError:
+                        pass  # Preserve the original operation failure.
 
         return None if proof else input_volume_name
 

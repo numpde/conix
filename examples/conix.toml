@@ -1,4 +1,4 @@
-# Illustrative generic source; cannot be deployed until T0-2/T0-3.
+# Replace the illustrative source coordinates before indexing.
 version = 1
 
 [chain]
@@ -9,7 +9,7 @@ rpc_url = "http://anvil:8545"
 
 [contracts.payment]
 address = "0x0000000000000000000000000000000000000000"
-abi_file = "/run/conix/abi/PayToPlay.json"
+abi_file = "abi/pay_to_play.json"
 events = ["VoucherCollected(address,uint256,address,uint256,uint256,bytes32)"]
 
 [database]
