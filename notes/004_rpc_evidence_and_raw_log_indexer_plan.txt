@@ -866,7 +866,9 @@ and input transport. The dapp32 campaign runs separately.
                        Nested compound and boundary cases still need review.
   RPC and reader       Hostile responses, pinned calls, keyset pages, and
                        stale-generation rejection have executable cases.
-                       Audit uncovered fault, sparse page and deadline cases.
+                       The scanner refuses wrong chain or genesis, descending
+                       selected logs and truncated JSON before publication.
+                       Audit deadline and remaining fault cases.
   SQL and recovery     Real PostgreSQL writer exclusion, rollback, role
                        separation, restart and repair. Injected confirmation
                        loss before and after COMMIT exercises both durable
