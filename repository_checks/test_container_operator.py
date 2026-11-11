@@ -428,6 +428,34 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertNotEqual(pg.returncode, 0)
         self.assertFalse(any("up" in x["args"] or "down" in x["args"] for x in sql_calls))
 
+    def test_malformed_test_compose_observation_is_bounded_and_read_only(self):
+        """A null service in rendered JSON is a refusal, not a traceback."""
+        runtime = operator.Docker("unix:///tmp/selected.sock", ROOT)
+        services = {
+            "tests": None,
+            "postgres": {},
+            "bootstrap": {},
+            "initializer": {},
+            "anvil": {},
+        }
+        selected_graph = json.dumps({
+            "services": services,
+            "networks": {"tests": {"internal": True}},
+        })
+        with (
+            patch.object(runtime, "require_role"),
+            patch.object(runtime, "require_image"),
+            patch.object(runtime, "run", return_value=selected_graph) as invoked,
+        ):
+            with self.assertRaisesRegex(operator.OperationError, "Cannot validate"):
+                runtime.test(
+                    "sha256:" + "a" * 64,
+                    {"postgres": "postgres", "foundry": "foundry"},
+                )
+
+        self.assertEqual(len(invoked.call_args_list), 1)
+        self.assertIn("config", invoked.call_args.args)
+
     def test_failed_test_still_tears_down(self):
         completed, calls = self.run_fake(fail_up=True)
         self.assertNotEqual(completed.returncode, 0)
