@@ -608,7 +608,6 @@ def main():
     parser.add_argument("--indexer-image")
     parser.add_argument("--config-file")
     parser.add_argument("--dsn-file")
-    parser.add_argument("--owner-dsn-file")
     parser.add_argument("--volume")
     parser.add_argument("--deployment")
     parser.add_argument("--database-network")
@@ -622,7 +621,7 @@ def main():
             make_inputs = {name: os.environ.get("CONIX_MAKE_" + name, "") for name in (
                 "DOCKER_CONTEXT", "WHEELHOUSE", "IMAGE", "RUNNER_IMAGE",
                 "INDEXER_IMAGE", "CONFIG_FILE", "DSN_FILE",
-                "OWNER_DSN_FILE", "INPUT_VOLUME", "DEPLOYMENT",
+                "INPUT_VOLUME", "DEPLOYMENT",
                 "DATABASE_NETWORK", "RPC_NETWORK",
             )}
 
@@ -633,7 +632,6 @@ def main():
             options.indexer_image = make_inputs["INDEXER_IMAGE"]
             options.config_file = make_inputs["CONFIG_FILE"]
             options.dsn_file = make_inputs["DSN_FILE"]
-            options.owner_dsn_file = make_inputs["OWNER_DSN_FILE"]
             options.volume = make_inputs["INPUT_VOLUME"]
             options.deployment = make_inputs["DEPLOYMENT"]
             options.database_network = make_inputs["DATABASE_NETWORK"]
