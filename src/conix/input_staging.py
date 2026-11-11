@@ -57,15 +57,22 @@ def decode(payload: bytes) -> tuple[bytes, bytes, dict[str, bytes]]:
     config_bytes = payload[header_size:dsn_offset]
     dsn_bytes = payload[dsn_offset:abi_offset]
 
+    _credential_text(dsn_bytes)
+    return (config_bytes, dsn_bytes, _decode_abis(payload, abi_offset, count))
+
+
+def _credential_text(data: bytes) -> str:
+    if not 0 < len(data) <= MAX_DSN:
+        raise InputError("Staged credential file is empty or exceeds its bound.")
     try:
-        dsn_text = dsn_bytes.decode("utf-8").strip()
+        text = data.decode("utf-8")
     except UnicodeError as error:
         raise InputError("Staged credential bytes must be UTF-8.") from error
-
-    if not dsn_text or "\x00" in dsn_text:
+    if not text.strip() or "\x00" in text:
         raise InputError("Staged credential file is empty or contains a NUL byte.")
-
-    return (config_bytes, dsn_bytes, _decode_abis(payload, abi_offset, count))
+    if text.endswith("\r\n"):
+        return text[:-2]
+    return text.removesuffix("\n")
 
 
 def _decode_abis(payload: bytes, offset: int, count: int) -> dict[str, bytes]:
@@ -163,8 +170,8 @@ def _stage_abis(directory_fd: int, members: dict[str, bytes]) -> None:
         os.close(abi_directory)
 
 
-def verify(target: Path = TARGET) -> None:
-    """Admit the staged catalog as the actual unprivileged worker."""
+def load_runtime_inputs(target: Path = TARGET):
+    """Admit the staged catalog and bounded credential as the runtime identity."""
     if (os.getuid(), os.getgid()) != (OWNER, OWNER):
         raise InputError("Runtime input check must use the selected worker identity.")
 
@@ -193,19 +200,19 @@ def verify(target: Path = TARGET) -> None:
             or stat.S_IMODE(metadata.st_mode) != 0o600):
             raise InputError("Runtime input file has unexpected permissions.")
 
-        with path.open("rb") as stream:
-            if not stream.read(1):
-                raise InputError("Runtime input file is empty.")
-
     # The catalog owns ABI admission and source identity. Do not relay its
     # messages from a private snapshot into operator diagnostics.
     from conix.abi import ResourceExceeded, UnsupportedABI
     from conix.catalog import ConfigurationError, prepare_catalog
 
     try:
-        prepare_catalog(target / CONFIG)
+        catalog = prepare_catalog(target / CONFIG)
     except (ConfigurationError, ResourceExceeded, UnsupportedABI) as error:
         raise InputError(f"Staged catalog was refused ({type(error).__name__}).") from error
+
+    with (target / DSN).open("rb") as stream:
+        database_dsn = _credential_text(stream.read(MAX_DSN + 1))
+    return (catalog, database_dsn)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -219,7 +226,7 @@ def main(argv: list[str] | None = None) -> None:
             payload = sys.stdin.buffer.read(MAX_ENVELOPE + 1)
             stage(payload)
         else:
-            verify()
+            load_runtime_inputs()
     except InputError as error:
         # The messages are source-controlled and never include input bytes.
         phase = "staging" if operation == ["stage"] else "verification"

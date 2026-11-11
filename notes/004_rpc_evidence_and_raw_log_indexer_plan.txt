@@ -883,8 +883,10 @@ and input transport. The dapp32 campaign runs separately.
                        staging have separate evidence. The installed verifier
                        admitted staged inputs as UID 65532 and refused a
                        malformed ABI on fw agentic. Both proof volumes were
-                       retired. Operator workflow, egress and interruption
-                       still need evidence.
+                       retired. The installed foreground worker published
+                       a real Anvil log, observed tip, resumed with an empty
+                       block, and refused a reader credential on fw agentic.
+                       Host workflow, egress and interruption remain open.
   Packaging and core   Curated image inputs include tracked ABI fixtures.
                        Verify delivered artifacts and record the concrete
                        operations and delegation witness before the freeze.
@@ -1055,10 +1057,11 @@ real Transfer events and checks raw bytes, empty-block advancement, indexed
 topic-filtered keyset pages, EIP-1898 pinned calls, canonical ancestry,
 generation invalidation, suffix repair and reindexing.
 
-The owner initializer remains a Python administrative API, not a Make
-action. No production worker CLI exists. The image smoke check only
-establishes imports/ABI behavior; the contained Anvil+PostgreSQL suite
-qualifies T0-3 and T0-4 against tested event/view combinations.
+The owner initializer remains a Python administrative API. The explicit
+installed conix.worker advance command composes one writer session and
+one block operation. The host deployment apply action remains unavailable.
+The image smoke check establishes imports and ABI behavior. The contained
+Anvil+PostgreSQL suite qualifies the tested T0-3 and T0-4 combinations.
 Section 8.8 records the separate owned dapp32 campaign and open release gates.
 
 Deployment input transport includes the declared ABI files. The installed

@@ -32,7 +32,7 @@ RUN --network=none \
     && python -m pip check
 USER 65532:65532
 WORKDIR /tmp
-# The scanner is an installed Python API; no worker CLI or legacy entry point.
+# The foreground worker is an explicit module invocation.
 
 FROM indexer AS test-runner
 LABEL io.conix.image-role=test-runner

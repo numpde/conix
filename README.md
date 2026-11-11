@@ -43,10 +43,9 @@ latest. evidence() checks stored ancestors against the selected provider
 and distinguishes provider-reported finality from unavailable finality.
 These are provider-relative facts, not consensus proofs.
 
-The indexer image remains a library image: image/indexer/check exercises
-an installed ABI operation and imports writer/reader APIs, but does not
-run a worker. No deployment worker CLI exists. Owner schema initialization
-remains a separate Python API, not a Make action.
+The image/indexer/check lane exercises installed ABI behavior and imports
+the writer and reader APIs. The foreground worker is an explicit module
+invocation. Owner schema initialization is a separate Python API.
 
 Build and checks
 ----------------
@@ -134,11 +133,14 @@ Security and next step
 Private DB credentials are never embedded in images or public logs.
 Container operators preserve the first failure and report uncertain cleanup
 independently. Existing retained deployments may be inspected or removed
-using ownership-constrained deployment/status and deployment/remove; no
-new generic worker may be started until it is implemented and qualified.
+using ownership-constrained deployment/status and deployment/remove.
 
 T0-6 qualifies the generic core for independent operator use. The signer
-and economic policy remain external. Production worker activation still
-requires an operator workflow.
+and economic policy remain external. Inside a confined container with the
+staged runtime inputs mounted read-only at `/run/conix`,
+`python -I -m conix.worker advance` advances at most one complete block
+and exits. It reports the confirmed block identity or that the source
+was at tip. The owner initializes the schema separately. Production
+deployment activation remains unavailable.
 Do not reintroduce Collection models, PayToPlay-specific decoders or
 unqualified completeness shortcuts.

@@ -65,7 +65,8 @@ FIXTURE_DESCRIPTOR          Existing private owner-owned mode-0600 descriptor.
 DAPP32_DIR                  Explicit absolute dapp32 checkout (owned campaign).
 CONFIG_FILE, DSN_FILE       Absolute paths to operator-owned staged inputs.
                            Each staged abi_file is abi/<name>.json beside
-                           CONFIG_FILE. Keep the DSN source mode 0600.
+                           CONFIG_FILE. Keep the DSN source mode 0600. A
+                           final LF or CRLF terminates the credential line.
 INPUT_VOLUME               Exact ownership-labelled staged resource ID.
 DEPLOYMENT                  Exact selected Conix deployment name.
 DATABASE_NETWORK, RPC_NETWORK  Explicit separate pre-existing networks.

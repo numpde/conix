@@ -194,11 +194,11 @@ campaign/indexer/acceptance/run creates, verifies and owns one producer
 fixture, then retires its own consumers before calling the producer's
 fixture/down. Do not reintroduce the old PayToPlay-only test command.
 
-IMAGE names the single image checked for its expected role; RUNNER_IMAGE names
-a composite test runner; INDEXER_IMAGE names the installed core library image used by private-input
-transport checks, NOT a runnable indexer worker. Both selectors are
-immutable sha256 IDs and
-the image role is validated before any durable activity. WHEELHOUSE and
+IMAGE names the single image checked for its expected role. RUNNER_IMAGE
+names a composite test runner. INDEXER_IMAGE names the installed core image
+for private inputs and the explicit one-block foreground command. Image
+selectors are immutable sha256 IDs and the image role is validated before
+any durable activity. WHEELHOUSE and
 DOCKER_CONTEXT stay explicit operator choices; source, test and build tooling
 must never change the selected engine implicitly. New test targets require
 separate source/admission tests and explicit granted resources.

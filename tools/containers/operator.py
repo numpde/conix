@@ -148,7 +148,7 @@ class Docker(DockerClient):
             timeout=30,
             capture=True,
         )
-        print("Verified installed generic ABI package, not an indexer worker.", file=sys.stderr)
+        print("Verified installed package imports and ABI behavior.", file=sys.stderr)
 
     def check_evm_test_runner(self, image):
         """Verify offline test-runner Python and Cast without fixture secrets."""
