@@ -496,7 +496,7 @@ class Docker(DockerClient):
                 or rendered_networks["rpc"].get("external") is not True
             ):
                 raise OperationError("Rendered runtime deployment violates image, input or confinement policy.")
-        except (ValueError, KeyError, IndexError, TypeError) as error:
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError) as error:
             raise OperationError("Cannot validate the selected runtime deployment configuration.") from error
 
         print(f"Verified constrained prospective runtime Compose graph for {project}.")
