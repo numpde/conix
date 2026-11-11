@@ -884,6 +884,8 @@ and input transport. The dapp32 campaign runs separately.
                        exercise both durable outcomes. An independent reader
                        completes while a page snapshot is open, then repair
                        invalidates that page.
+                       A contended repair rejects a changed revision, keeps
+                       the old suffix and excludes another journal writer.
                        Restarted advance rejects a persisted blocked source
                        at the current tip until checked repair clears it.
                        Before COMMIT, task cancellation preserves the

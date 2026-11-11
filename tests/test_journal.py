@@ -257,11 +257,44 @@ class JournalContracts(unittest.IsolatedAsyncioTestCase):
         attempted = replace(event, transaction_hash=b"\xee" * 32)
         await self.check_publication_cancellation(recovered, alternate, attempted)
         continued = await self.check_publication_process_loss(recovered, alternate, attempted)
+        fenced = await self.check_repair_under_contention(continued, block1, attempted)
         next_block = Block(
             number=alternate.number + 1, hash=b"\x55" * 32,
             parent_hash=alternate.hash, timestamp=alternate.timestamp + 1,
         )
-        await self.check_unconfirmed_publication(continued, next_block, replace(event, transaction_hash=b"\xff" * 32))
+        await self.check_unconfirmed_publication(fenced, next_block, replace(event, transaction_hash=b"\xff" * 32))
+
+    async def check_repair_under_contention(self, before, ancestor, retained_event):
+        """A changed durable basis must roll back the repair's suffix deletion."""
+        runtime_dsn = os.environ["CONIX_TEST_DSN"]
+        async with asyncio.timeout(10), open_journal(catalog=self.catalog, database_dsn=runtime_dsn) as writer:
+            async def reject_repair():
+                with self.assertRaises(HistoryConflict):
+                    await writer.repair_to(ancestor=ancestor)
+
+            async with await AsyncConnection.connect(runtime_dsn, connect_timeout=5) as blocker:
+                await blocker.execute("UPDATE conix.source_progress SET revision = revision + 1 WHERE singleton = 1")
+                async with asyncio.TaskGroup() as tasks:
+                    tasks.create_task(reject_repair())
+                    while True:
+                        row = await (await blocker.execute(
+                            "SELECT pg_blocking_pids(%s)", (writer.connection.info.backend_pid,),
+                        )).fetchone()
+                        if blocker.info.backend_pid in row[0]:
+                            break
+                        await asyncio.sleep(0.05)
+
+                    retained = [self.expected_row(before.last_block, retained_event)]
+                    self.assertEqual(await self.candidate_rows(before.last_block), retained)
+                    with self.assertRaises(WriterBusy):
+                        async with open_journal(catalog=self.catalog, database_dsn=runtime_dsn):
+                            self.fail("A second writer acquired the journal during repair.")
+                    await blocker.commit()
+
+            expected = replace(before, revision=before.revision + 1)
+            self.assertEqual(await writer.inspect(), expected)
+            self.assertEqual(await self.candidate_rows(before.last_block), retained)
+            return expected
 
     async def check_publication_cancellation(self, before, block, event):
         """Cancel after real DML and verify the original session can still inspect."""
