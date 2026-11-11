@@ -878,9 +878,10 @@ and input transport. The dapp32 campaign runs separately.
                        writer session and process loss permits fresh
                        publication. Wire interruption during COMMIT and
                        operator cancellation still need proof.
-  PostgreSQL baseline  Synthetic journal and filtered-page measurements
-                       below. Scanner catch-up, larger history distributions
-                       and database memory still need evidence.
+  PostgreSQL baseline  Journal, scanner, filtered-page, relation size and
+                       database cgroup measurements below. Real-provider
+                       latency and alternative history distributions are
+                       outside the measured baseline.
   Operator boundary    The owned rootless campaign and private TOML/ABI/DSN
                        staging have separate evidence. The installed verifier
                        admitted staged inputs as UID 65532 and refused a
@@ -943,6 +944,34 @@ The journal published synthetic rows directly. Scanner RPC acquisition
 and ABI validation were outside the publication timing. These warm
 measurements describe one local workload and impose no throughput target.
 The disposable database, network and services were retired.
+
+Scanner baseline on the same 8,192-block distribution
+.....................................................
+
+A second disposable fw agentic run used installed test runner
+sha256:9adf6031ee12e3f4e1776f43b927f0fa57fa036ad9bb091c807b9805d813289d
+and PostgreSQL 16.6 with the same resource caps. Writer.advance_one()
+read deterministic JSON-RPC responses through the real RPC parser and
+ran the actual block checks, ABI validation and PostgreSQL publication.
+The scanned blocks came from an in-process transport. The fixture used
+Anvil to establish the source for the reader.
+
+The first 128 blocks took 1.325 s. Blocks 129 through 8,192 took 78.160 s,
+with median block times of 2.061 ms (empty), 6.580 ms (eight events) and
+68.476 ms (64 events). The larger run retained the same 56,320 events and
+57,589,760 table and index bytes as the journal-only run. The Python
+process reached 63,704 KiB RSS. The PostgreSQL container's memory cgroup
+reported 294,776,832 current and 321,507,328 peak bytes against a
+536,870,912-byte cap. These cgroup counters include charged page cache.
+
+With current event statistics, an absent customer-only query used
+events_by_contract, filtered all 56,320 rows and hit 3,155 shared buffers.
+Execution took 17.787 ms in EXPLAIN and 21.433 ms through Reader.events().
+The absent customer on the rare channel used events_by_topic2 and
+filtered 256 rows. Both were warm, with zero shared reads. The customer-only
+scan is a candidate for a topic1 index comparison. The measured baseline
+keeps the existing indexes because write and space costs of a candidate
+index and alternate selectivities were outside these runs.
 
 
 9. Existing libraries — deliberate reuse decision (2026-11-10)
