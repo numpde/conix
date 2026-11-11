@@ -13,8 +13,8 @@ from unittest.mock import patch
 import httpx
 from psycopg import AsyncConnection, AsyncServerCursor
 
-from abi_golden_vectors import ERC20, FROM, TO, TRANSFER_SIGNATURE, word
-from anvil_catalog import catalog_for_anvil
+from abi_golden_vectors import ERC20, FROM, TO, TRANSFER_SIGNATURE, padded, signature_topic, signed_word, word
+from anvil_catalog import SCALARS_ADDRESS, SCALARS_EVENT, catalog_for_anvil
 from conix.core import BranchConflict, open_writer
 from conix.journal import HistoryConflict
 from conix.reader import CursorInvalid, HistoricalCallUnavailable, HistoryUnavailable, open_reader
@@ -500,6 +500,48 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                 self.assertNotEqual(repaired.generation, blocked.generation)
                 self.assertEqual(repaired.last_block, blocked.last_block)
                 self.assertIsNone(await restarted.advance_one())
+
+            await self.check_indexed_scalar_pages(
+                source, url, call, mined_receipt, accounts[0],
+            )
+
+    async def check_indexed_scalar_pages(self, source, url, call, mined_receipt, sender):
+        """Read exact signed, boolean and fixed-bytes topics from an actual EVM log."""
+        tag = b"\x00\xfe\x12\xff"
+        topics = (signature_topic(SCALARS_EVENT), signed_word(-128), word(1), padded(tag))
+        runtime = b"".join(b"\x7f" + topic for topic in reversed(topics)) + b"\x60\x00\x60\x00\xa4\x00"
+        await call("anvil_setCode", [SCALARS_ADDRESS, hex_bytes(runtime)])
+        transaction = await call("eth_sendTransaction", [{
+            "from": sender, "to": SCALARS_ADDRESS, "gas": "0x100000",
+        }])
+        receipt = await mined_receipt(transaction)
+        self.assertEqual(receipt["status"], "0x1")
+        (log,) = receipt["logs"]
+        self.assertEqual(log["topics"], [hex_bytes(topic) for topic in topics])
+
+        async with open_writer(
+            catalog=source, database_dsn=os.environ["CONIX_TEST_ANVIL_DSN"], rpc_url=url,
+        ) as writer:
+            published = await writer.advance_one()
+        self.assertEqual(published.last_block.hash, bytes.fromhex(receipt["blockHash"][2:]))
+
+        async with open_reader(
+            catalog=source, database_dsn=os.environ["CONIX_TEST_ANVIL_READ_DSN"], rpc_url=url,
+        ) as reader:
+            checkpoint = await reader.checkpoint()
+            for (field, selected, absent) in (("signed", -128, -127), ("flag", True, False), ("tag", tag, b"\x00" * 4)):
+                with self.subTest(field=field):
+                    page = await reader.events(checkpoint=checkpoint, contract="scalars", event=SCALARS_EVENT,
+                                               where={field: selected})
+                    self.assertTrue(page.complete)
+                    (event,) = page.events
+                    self.assertEqual(event.values, (-128, True, tag))
+                    self.assertIs(event.values[1], True)
+                    self.assertEqual(event.topics, topics)
+                    empty = await reader.events(checkpoint=checkpoint, contract="scalars", event=SCALARS_EVENT,
+                                                where={field: absent})
+                    self.assertTrue(empty.complete)
+                    self.assertEqual(empty.events, ())
 
     async def repair_during_event_page(self, reader, writer, checkpoint, ancestor, first_page):
         """Keep a real page snapshot open across an independent read and repair."""

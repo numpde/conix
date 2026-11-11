@@ -1,0 +1,12 @@
+[
+  {
+    "type": "event",
+    "name": "IndexedScalars",
+    "anonymous": false,
+    "inputs": [
+      {"name": "signed", "type": "int8", "indexed": true},
+      {"name": "flag", "type": "bool", "indexed": true},
+      {"name": "tag", "type": "bytes4", "indexed": true}
+    ]
+  }
+]

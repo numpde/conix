@@ -871,11 +871,16 @@ and input transport. The dapp32 campaign runs separately.
                        Timeout and cancellation close a partial log stream.
                        The shared deadline stops the canonicality recheck
                        after otherwise valid logs.
+                       Anvil log topics prove signed, boolean and fixed
+                       bytes equality through the installed reader. The
+                       Transfer and PayToPlay histories cover address and
+                       unsigned channel filters.
   SQL and recovery     Real PostgreSQL writer exclusion, rollback, role
                        separation, restart and repair. An injected unsent
                        COMMIT and a withheld real PostgreSQL COMMIT response
-                       exercise both durable outcomes. An independent reader completes while a
-                       page snapshot is open; repair invalidates that page.
+                       exercise both durable outcomes. An independent reader
+                       completes while a page snapshot is open, then repair
+                       invalidates that page.
                        Restarted advance rejects a persisted blocked source
                        at the current tip until checked repair clears it.
                        Before COMMIT, task cancellation preserves the
