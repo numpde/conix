@@ -93,6 +93,18 @@ class OfflineInputChecks(unittest.TestCase):
         self.assertEqual((ROOT / "Dockerfile").read_text().splitlines()[0],
                          "# syntax=" + images["dockerfile_frontend"])
 
+    def test_foundry_source_image_is_selected_only_from_reviewed_manifest(self):
+        """The Dockerfile must not carry a second default digest for Foundry."""
+        from tools.containers.operator import pinned_images
+
+        images = pinned_images()
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        self.assertEqual(
+            [line for line in dockerfile.splitlines() if line.startswith("ARG FOUNDRY_IMAGE")],
+            ["ARG FOUNDRY_IMAGE"],
+        )
+        self.assertNotIn(images["foundry"], dockerfile)
+
     def test_offline_wheel_installation_is_not_tied_to_an_old_package_version(self):
         """Install the unique built artifact, not a second hard-coded wheel name."""
         dockerfile = (ROOT / "Dockerfile").read_text()
