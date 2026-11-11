@@ -28,6 +28,19 @@ signing, invoice acceptance, payment policy and wallet keys belong elsewhere.
 Do not restore the removed PayToPlay-specific scanner, journal, reader,
 legacy Collection schema or CLI to make old tests green.
 
+Branch ownership
+----------------
+main owns the qualified Tier-0 implementation and its repository/tooling
+contracts. Tier-1 code belongs on main-tier-1, not on main. The tier-1 owned
+paths currently include src/conix/resilience/, tools/resilience/,
+tests/resilience/, tests/test_resilience.py and compose/resilience/.
+
+A Tier-1 requirement that changes any other file first requires a separate
+qualified change on main. Integrate the resulting main revision upward before
+using it on main-tier-1. Never merge main-tier-1 into main. CI checks the
+known owned paths and compares the Tier-1 tree against the current main;
+this supplements, but does not replace, protected-branch review.
+
 Implementation discipline
 -------------------------
 - Make small coherent commits. Each commit needs a concise imperative subject
