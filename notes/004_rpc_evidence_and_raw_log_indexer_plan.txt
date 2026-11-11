@@ -872,6 +872,8 @@ and input transport. The dapp32 campaign runs separately.
                        loss before and after COMMIT exercises both durable
                        outcomes. An independent reader completes while a
                        page snapshot is open; repair invalidates that page.
+                       Restarted advance rejects a persisted blocked source
+                       at the current tip until checked repair clears it.
                        Wire interruption, process termination, and
                        cancellation still need proof.
   PostgreSQL baseline  Synthetic journal and filtered-page measurements

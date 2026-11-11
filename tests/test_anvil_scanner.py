@@ -16,6 +16,7 @@ from psycopg import AsyncConnection, AsyncServerCursor
 from abi_golden_vectors import ERC20, FROM, TO, TRANSFER_SIGNATURE, word
 from anvil_catalog import catalog_for_anvil
 from conix.core import BranchConflict, open_writer
+from conix.journal import HistoryConflict
 from conix.reader import CursorInvalid, HistoricalCallUnavailable, HistoryUnavailable, open_reader
 from conix.rpc import RpcUnavailable
 
@@ -478,6 +479,27 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                     )
                     self.assertEqual(len(restored_page.events), 2)
                     self.assertTrue(restored_page.complete)
+
+            runtime_dsn = os.environ["CONIX_TEST_ANVIL_DSN"]
+            async with await AsyncConnection.connect(runtime_dsn, connect_timeout=5) as connection:
+                await connection.execute(
+                    "UPDATE conix.source_progress SET blocked_reason = %s WHERE singleton = 1",
+                    ("fixture requires explicit repair",),
+                )
+
+            async with open_writer(catalog=source, database_dsn=runtime_dsn, rpc_url=url) as restarted:
+                blocked = await restarted.journal.inspect()
+                self.assertEqual(blocked.last_block, restored.last_block)
+                self.assertIsNotNone(blocked.blocked_reason)
+                with self.assertRaises(HistoryConflict):
+                    await restarted.advance_one()
+                self.assertEqual(await restarted.journal.inspect(), blocked)
+
+                repaired = await restarted.repair_to(ancestor=blocked.last_block)
+                self.assertIsNone(repaired.blocked_reason)
+                self.assertNotEqual(repaired.generation, blocked.generation)
+                self.assertEqual(repaired.last_block, blocked.last_block)
+                self.assertIsNone(await restarted.advance_one())
 
     async def repair_during_event_page(self, reader, writer, checkpoint, ancestor, first_page):
         """Keep a real page snapshot open across an independent read and repair."""
