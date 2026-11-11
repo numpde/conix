@@ -211,14 +211,15 @@ class SharedWheelhouse:
                 "--pull=false", "--platform", "linux/amd64",
                 "--network", "none", "--target", image_role, "--file", "Dockerfile",
                 "--build-arg", "PYTHON_BASE_IMAGE=" + self.images["python_base"],
+                # BuildKit resolves all FROM tokens while parsing, including
+                # unused test stages. The reviewed manifest supplies this
+                # reference without requiring an ordinary runtime to pull it.
+                "--build-arg", "FOUNDRY_IMAGE=" + self.images["foundry"],
                 "--label", "io.conix.source-inputs=" + source_identity,
                 "--label", "io.conix.wheel-selection=" + wheel_identity,
                 "--label", "io.conix.image-role=" + image_role,
                 "--iidfile", str(image_id_path),
             ]
-
-            if image_role == "evm-test-runner":
-                build_argv.extend(("--build-arg", "FOUNDRY_IMAGE=" + self.images["foundry"]))
 
             build_argv.append("-")
 
