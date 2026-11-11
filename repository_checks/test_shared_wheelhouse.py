@@ -20,6 +20,32 @@ from tools.wheelhouse import policy as pool
 class SharedWheelhouseContracts(unittest.TestCase):
     """Prove admission and least privilege without a real package index."""
 
+    def test_unreapable_offline_builder_is_reported_without_throwing(self):
+        """Cleanup cannot replace the build failure or skip other child cleanup."""
+        import signal
+        import subprocess
+
+        from tools.wheelhouse import operations
+
+        class ResistantChild:
+            pid = 30017
+
+            def wait(self, *, timeout):
+                raise subprocess.TimeoutExpired("offline-builder", timeout)
+
+        forwarded = []
+        with patch.object(
+            operations.os, "killpg",
+            side_effect=lambda pid, sig: forwarded.append((pid, sig)),
+        ):
+            retired = operations._retire(ResistantChild())
+
+        self.assertFalse(retired)
+        self.assertEqual(
+            forwarded,
+            [(30017, signal.SIGTERM), (30017, signal.SIGKILL)],
+        )
+
     def test_explicit_existing_private_pool_and_no_symlink_ancestor(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
