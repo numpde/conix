@@ -404,6 +404,8 @@ class Docker(DockerClient):
         if not re.fullmatch(r"conix-inputs-[0-9a-f]{24}", volume or ""):
             raise OperationError("Select an explicit Conix input-volume identity.")
 
+        from tools.containers.history import COMMAND as HISTORY_ADVANCE_COMMAND
+
         compose_argv = [
             "compose", "--env-file", "/dev/null", "--project-directory", str(ROOT),
             "-p", project, "-f", str(ROOT / "compose/runtime.yml"),
@@ -430,6 +432,8 @@ class Docker(DockerClient):
                 set(rendered_services) != {"indexer"}
                 or indexer_service.get("image") != image
                 or indexer_service.get("pull_policy") != "never"
+                or indexer_service.get("entrypoint") != ["python"]
+                or indexer_service.get("command") != HISTORY_ADVANCE_COMMAND
                 or indexer_service.get("user") != "65532:65532"
                 or indexer_service.get("read_only") is not True
                 or indexer_service.get("privileged", False)
