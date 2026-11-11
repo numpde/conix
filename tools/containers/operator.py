@@ -546,7 +546,9 @@ class Docker(DockerClient):
                 env=compose_environment,
                 timeout=240,
             )
-        except Exception as error:
+        except BaseException as error:
+            # Caller cancellation also owns its original failure identity.
+            # The finally block still retires the disposable Compose project.
             test_failure = error
 
             # Collect fixture-only diagnostics before disposable containers
