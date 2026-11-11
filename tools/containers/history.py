@@ -319,7 +319,7 @@ def _cancellation_requests():
 def advance_history(docker, *, image, volume, database, rpc):
     """Keep interruption requests inside the exact worker's ownership lifetime."""
     with _cancellation_requests() as cancelled:
-        _advance_history(docker, image=image, volume=volume, database=database, rpc=rpc, cancelled=cancelled)
+        return _advance_history(docker, image=image, volume=volume, database=database, rpc=rpc, cancelled=cancelled)
 
 
 def _advance_history(docker, *, image, volume, database, rpc, cancelled):
@@ -407,6 +407,8 @@ def _advance_history(docker, *, image, volume, database, rpc, cancelled):
         _notice(f"Worker completed and retired: {json.dumps(receipt)}")
         raise OperationError("Cannot deliver the history advance receipt on stdout.") from error
     _notice("[conix] History advance: completed and retired")
+    # Only a confirmed, fully retired worker has a reusable outcome.
+    return receipt
 
 
 def _create(docker, image, volume, networks, name, token):

@@ -125,6 +125,38 @@ class HistoryOperatorContracts(unittest.TestCase):
             {"database": {"NetworkID": rpc_id}, "rpc": {"NetworkID": database_id}}, selected,
         ))
 
+    def test_successful_advance_returns_only_a_validated_retired_outcome(self):
+        """The one-shot CLI and programmatic caller share the same confirmed result."""
+        for expected in (
+            {"outcome": "at_tip", "source_id": "a" * 64},
+            {"outcome": "advanced", "source_id": "a" * 64,
+             "block_number": 1, "block_hash": "0x" + "b" * 64, "revision": 1},
+        ):
+            with self.subTest(outcome=expected["outcome"]):
+                docker = Mock(endpoint="unix:///tmp/selected.sock")
+                docker.run.return_value = "0\n"
+                retirement = Mock()
+                with (
+                    patch.multiple(
+                        history, _admit_volume=Mock(),
+                        _admit_network=Mock(side_effect=("d" * 64, "e" * 64)),
+                        _create=Mock(return_value="c" * 64), _record=Mock(),
+                        _owned=Mock(return_value=True), _admit_container=Mock(),
+                        _attached=Mock(return_value=(0, json.dumps(expected).encode(), b"")),
+                        _retire=retirement,
+                    ),
+                    patch("sys.stdout", new_callable=io.StringIO) as stdout,
+                    patch("sys.stderr", new_callable=io.StringIO),
+                ):
+                    returned = history.advance_history(
+                        docker, image="sha256:" + "a" * 64,
+                        volume="inputs", database="database", rpc="rpc",
+                    )
+
+                retirement.assert_called_once()
+                self.assertEqual(returned, expected)
+                self.assertEqual(json.loads(stdout.getvalue()), expected)
+
     def test_operator_failures_preserve_worker_outcome_on_stderr_only(self):
         docker = Mock(endpoint="unix:///tmp/unused.sock")
         docker.run.return_value = "0\n"
