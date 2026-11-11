@@ -874,8 +874,10 @@ and input transport. The dapp32 campaign runs separately.
                        page snapshot is open; repair invalidates that page.
                        Restarted advance rejects a persisted blocked source
                        at the current tip until checked repair clears it.
-                       Wire interruption, process termination, and
-                       cancellation still need proof.
+                       Before COMMIT, task cancellation preserves the
+                       writer session and process loss permits fresh
+                       publication. Wire interruption during COMMIT and
+                       operator cancellation still need proof.
   PostgreSQL baseline  Synthetic journal and filtered-page measurements
                        below. Scanner catch-up, larger history distributions
                        and database memory still need evidence.
