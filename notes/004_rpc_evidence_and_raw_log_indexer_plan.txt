@@ -466,10 +466,11 @@ endpoints; it is not part of Conix's generic Tier-0 implementation.
 8. T0-0 public contract — frozen choices for first generic implementation
 --------------------------------------------------------------------------
 
-This section resolves the remaining T0-0 design choices. It is normative for
-the NEW implementation; it is not a statement that the code exists. Earlier
-"illustrative"/"proposed" wording above yields to these specific choices.
-The existing package in src/conix remains a disposable PayToPlay prototype.
+This section records the T0-0 decisions implemented by the qualified
+generic Tier-0 core. It remains normative for source identity, admission and
+public behavior. Earlier "illustrative"/"proposed" wording above yields to
+these specific choices. The former PayToPlay-only prototype was retired;
+section 8.8 records the executable qualification and its limits.
 
 8.1. Configuration and admission
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
