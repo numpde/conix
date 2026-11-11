@@ -52,6 +52,8 @@ elif "compose" in args and "config" in args:
                 "command": ["-I", "-m", "conix.worker", "advance"],
                 "cpus": 1, "pids_limit": 128,
                 "mem_limit": 536870912, "memswap_limit": 536870912,
+                "init": True, "restart": "no",
+                "tmpfs": ["/tmp:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=16m"],
                 "logging": {"driver": "local", "options": {
                     "max-size": "10m", "max-file": "3",
                 }},
@@ -545,7 +547,10 @@ class LocalDockerOperatorTests(unittest.TestCase):
 
     def test_prospective_runtime_requires_declared_resource_limits(self):
         """Each independent resource boundary is mandatory before activation."""
-        for limit in ("cpus", "pids_limit", "mem_limit", "memswap_limit", "logging"):
+        for limit in (
+            "cpus", "pids_limit", "mem_limit", "memswap_limit",
+            "logging", "init", "restart", "tmpfs",
+        ):
             with self.subTest(limit=limit):
                 result, calls = self.run_runtime_fake(missing_limit=limit)
                 self.assertNotEqual(result.returncode, 0)
