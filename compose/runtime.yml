@@ -6,7 +6,9 @@ services:
     image: ${CONIX_INDEXER_IMAGE:?select verified immutable runtime image ID}
     pull_policy: never
     init: true
-    command: ["run", "--config", "/run/conix/config.toml"]
+    # One foreground advance. Retained deployment activation is not yet supported.
+    entrypoint: ["python"]
+    command: ["-I", "-m", "conix.worker", "advance"]
     restart: "no"
     user: "65532:65532"
     read_only: true
