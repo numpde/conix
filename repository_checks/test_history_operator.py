@@ -256,7 +256,8 @@ class HistoryOperatorContracts(unittest.TestCase):
     def test_signal_after_creation_cannot_start_or_skip_retirement(self):
         docker = Mock(endpoint="unix:///tmp/unused.sock")
 
-        def create_then_signal(*_args):
+        def create_then_signal(*_args, **_kwargs):
+            # Optional worker selection does not change the signal/cleanup contract.
             os.kill(os.getpid(), signal.SIGTERM)
             return "c" * 64
 
