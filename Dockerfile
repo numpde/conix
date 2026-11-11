@@ -40,9 +40,9 @@ COPY tests /tests
 COPY tools/fixtures/protocol.py /tests/fixture_protocol.py
 ENTRYPOINT ["python", "-m", "unittest", "discover", "-s", "/tests", "-v"]
 
-# Optional *test-only* Foundry signing tool; absent from runtime and ordinary tests.
-# The deployed PayToPlay contract supplies voucherDigest. Cast signs that
-# prehashed EIP-712 digest using only dapp32's public fixture key.
+# Optional test-only Foundry signature verifier; absent from the runtime.
+# Anvil signs disposable EIP-712 vouchers; Cast independently verifies
+# signatures against the deployed PayToPlay voucherDigest.
 FROM ${FOUNDRY_IMAGE} AS fixture_signer
 FROM indexer AS evm-test-runner
 LABEL io.conix.image-role=evm-test-runner
