@@ -94,11 +94,12 @@ _PUBLIC_WORKER_LINE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.,:;()/'=+-]{0,239}\Z"
 
 
 def _public_worker_explanation(stderr):
-    """Preserve one safe worker cause, never raw container stderr.
+    """Return one bounded worker line after heuristic disclosure checks.
 
-    Network-enabled acquisition runs a published tool, but its output may
-    contain remote response material or ambient credentials. Reject any
-    line with control characters, private markers or key-shaped data.
+    Acquisition uses public release/PyPI sources without intentionally supplied
+    credentials. These checks reject controls and selected credential shapes;
+    they neither authenticate source-owned prose nor redact arbitrary secrets.
+    A credentialed acquisition lane would need a validated diagnostic contract.
     """
     if type(stderr) is not str:
         return None

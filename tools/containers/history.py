@@ -240,7 +240,11 @@ _WORKER_FAILURE = re.compile(
 
 
 def _admitted_worker_cause(value):
-    """Admit literal source-owned failure facts, never arbitrary worker output."""
+    """Filter bounded cause text from the installed worker's known failures.
+
+    Character and keyword checks do not establish the text's provenance.
+    The installed worker owns these messages and omits raw RPC and SQL prose.
+    """
     return (
         _SAFE_WORKER_CAUSE.fullmatch(value) is not None
         and not any(marker in value.lower() for marker in (
@@ -259,6 +263,9 @@ def _failure(stderr, exit_code):
         )
 
     if match := _WORKER_FAILURE.fullmatch(stderr):
+        # Known worker failures use ASCII literals and bounded scalar facts.
+        # The byte matcher alone does not establish that encoding: a producer
+        # that adds non-ASCII causes would need decoding refusal here first.
         (operation, category, cause) = (field.decode("ascii") for field in match.groups())
         if _admitted_worker_cause(cause):
             return OperationError(f"{operation} ({category}; worker exit {exit_code}). {cause}")
