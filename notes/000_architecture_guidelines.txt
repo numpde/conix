@@ -332,7 +332,7 @@ Runtime privileges at the initial boundary (subject to database admission):
   conix schema: USAGE, not CREATE.
   source_progress: SELECT and UPDATE, not INSERT, DELETE or TRUNCATE.
   blocks: SELECT, INSERT, DELETE; checked repair deletes its orphaned suffix.
-  collections: SELECT and INSERT; suffix removal follows blocks' FK cascade.
+  events: SELECT and INSERT; suffix removal follows blocks' FK cascade.
   No table ownership, DDL, cross-ledger access or cluster privileges.
 
 The schema owner is not a PostgreSQL superuser and must not be able to
