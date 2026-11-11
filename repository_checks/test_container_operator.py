@@ -577,6 +577,44 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertFalse(any(item[:2] in (("container", "stop"), ("container", "rm"))
                              for item in calls))
 
+    def test_removal_admits_every_candidate_before_retiring_any(self):
+        """A later foreign candidate must not cause partial project deletion."""
+        candidates = ("a" * 64, "b" * 64)
+        observed = []
+        docker = operator.Docker("unix:///tmp/selected.sock", ROOT)
+
+        def selected(*arguments, **_kwargs):
+            observed.append(arguments)
+            if arguments[0] == "ps":
+                return "\n".join(candidates) + "\n"
+            if arguments[:2] == ("container", "inspect"):
+                identity = arguments[-1]
+                return json.dumps({
+                    "Id": identity,
+                    "Config": {"Labels": {
+                        "com.docker.compose.project": (
+                            "conix-pilot" if identity == candidates[0] else "foreign"
+                        ),
+                        "com.docker.compose.service": "indexer",
+                    }},
+                })
+            if arguments[:2] in (("container", "stop"), ("container", "rm")):
+                self.fail("The first candidate was retired before every owner was checked.")
+            return ""
+
+        with patch.object(docker, "run", side_effect=selected):
+            with self.assertRaises(operator.OperationError):
+                docker.deployment(
+                    operation="remove", name="pilot", image=None,
+                    volume=None, database=None, rpc=None,
+                )
+
+        inspected = [
+            arguments[-1] for arguments in observed
+            if arguments[:2] == ("container", "inspect")
+        ]
+        self.assertEqual(inspected, list(candidates))
+
     def test_runtime_removal_checks_full_id_and_labels_before_stopping(self):
         result, calls = self.run_runtime_fake(operation="remove")
         self.assertEqual(result.returncode, 0, result.stderr)
