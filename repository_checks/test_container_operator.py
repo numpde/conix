@@ -59,7 +59,8 @@ elif "compose" in args and "config" in args:
                 }},
                 "networks": {"database": None, "rpc": None},
                 "volumes": [{"source": named_volume, "type": "volume",
-                             "target": "/run/conix", "read_only": True}]}
+                             "target": "/run/conix", "read_only": True,
+                             "volume": {"nocopy": True}}]}
         if os.getenv("CONIX_FAKE_LEGACY_RUNTIME_COMMAND"):
             item["command"] = ["run", "--config", "/run/conix/config.toml"]
         if name := os.getenv("CONIX_FAKE_MISSING_RUNTIME_LIMIT"):
@@ -70,11 +71,14 @@ elif "compose" in args and "config" in args:
             item["security_opt"] = []
         if os.getenv("CONIX_FAKE_BAD_RUNTIME_NETWORK"):
             item["networks"] = {"database": None}
+        if os.getenv("CONIX_FAKE_ALLOW_VOLUME_COPY"):
+            item["volumes"][0]["volume"]["nocopy"] = False
         if os.getenv("CONIX_FAKE_BAD_RUNTIME_BIND"):
             item["volumes"].append({"type": "bind", "source": "/tmp", "target": "/tmp"})
+        external = not bool(os.getenv("CONIX_FAKE_ALLOW_NETWORK_CREATION"))
         print(json.dumps({"services": {"indexer": item}, "networks": {
-            "database": {"name": os.environ["CONIX_DATABASE_NETWORK"]},
-            "rpc": {"name": os.environ["CONIX_RPC_NETWORK"]}}}))
+            "database": {"name": os.environ["CONIX_DATABASE_NETWORK"], "external": external},
+            "rpc": {"name": os.environ["CONIX_RPC_NETWORK"], "external": external}}}))
     else:
         print(json.dumps({"services": {
             "tests": {"image": os.environ["CONIX_TEST_RUNNER_IMAGE"],
@@ -439,6 +443,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
                          role="indexer",
                          bad_cap=False, bad_privileges=False, bad_runtime_network=False,
                          legacy_command=False, missing_limit=None,
+                         allow_network_creation=False, allow_volume_copy=False,
                          rootful=False, fail_up=False):
         """Prove deployment confinement before start and recovery after failure."""
         with tempfile.TemporaryDirectory() as folder:
@@ -457,6 +462,10 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 env["CONIX_FAKE_LEGACY_RUNTIME_COMMAND"] = "1"
             if missing_limit:
                 env["CONIX_FAKE_MISSING_RUNTIME_LIMIT"] = missing_limit
+            if allow_network_creation:
+                env["CONIX_FAKE_ALLOW_NETWORK_CREATION"] = "1"
+            if allow_volume_copy:
+                env["CONIX_FAKE_ALLOW_VOLUME_COPY"] = "1"
             if bad_bind:
                 env["CONIX_FAKE_BAD_RUNTIME_BIND"] = "1"
             if bad_cap:
@@ -591,6 +600,21 @@ class LocalDockerOperatorTests(unittest.TestCase):
             self.assertFalse(any("compose" in args for args in arguments))
             self.assertFalse(any("up" in args for args in arguments))
             self.assertFalse(any("image" in args and "inspect" in args for args in arguments))
+
+    def test_prospective_runtime_never_creates_borrowed_networks_or_copies_inputs(self):
+        """The external network and no-copy volume promises are ownership facts."""
+        for scenario in ("network", "volume"):
+            with self.subTest(scenario=scenario):
+                result, calls = self.run_runtime_fake(
+                    allow_network_creation=scenario == "network",
+                    allow_volume_copy=scenario == "volume",
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("confinement", result.stderr)
+                self.assertFalse(any(
+                    "up" in record["args"] or "stop" in record["args"]
+                    for record in calls
+                ))
 
     def test_runtime_bind_mount_rejected_before_start(self):
         run, calls = self.run_runtime_fake(bad_bind=True)
