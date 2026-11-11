@@ -5,12 +5,15 @@ request identity and scanner behavior, not PostgreSQL publication; the
 journal's atomic persistence is tested independently against PostgreSQL.
 """
 
+import asyncio
 from dataclasses import replace
 import gzip
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 from uuid import UUID
 
 import httpx
@@ -124,6 +127,33 @@ class Server:
             "id": operation["id"],
             "result": result,
         })
+
+
+class IncompleteLogStream(httpx.AsyncByteStream):
+    def __init__(self):
+        self.entered = asyncio.Event()
+        self.closed = False
+
+    async def __aiter__(self):
+        yield b'{"jsonrpc":"2.0"'
+        self.entered.set()
+        await asyncio.Future()
+
+    async def aclose(self):
+        self.closed = True
+
+
+class StalledLogs(Server):
+    def __init__(self):
+        super().__init__()
+        self.stream = IncompleteLogStream()
+
+    def __call__(self, request):
+        operation = json.loads(request.content)
+        if operation["method"] != "eth_getLogs":
+            return super().__call__(request)
+        self.requests.append(operation)
+        return httpx.Response(200, stream=self.stream)
 
 
 class RecordingJournal:
@@ -334,6 +364,52 @@ class ScannerEvidenceContracts(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RpcProtocolError) as failure:
             await writer.advance_one()
         self.assertIsInstance(failure.exception.__cause__, json.JSONDecodeError)
+        self.assertEqual(self.journal.basis, before)
+        self.assertEqual(self.journal.publications, [])
+
+    async def test_stalled_log_stream_is_closed_on_timeout_and_cancellation(self):
+        for cancel in (False, True):
+            with self.subTest(cancel=cancel):
+                self.server = StalledLogs()
+                writer = await self.writer()
+                before = self.journal.basis
+                if cancel:
+                    async with asyncio.timeout(10), asyncio.TaskGroup() as tasks:
+                        pending = tasks.create_task(writer.advance_one())
+                        await self.server.stream.entered.wait()
+                        pending.cancel()
+                        with self.assertRaises(asyncio.CancelledError):
+                            await pending
+                else:
+                    writer.rpc.limits = replace(self.source.limits, rpc_timeout_seconds=1)
+                    with self.assertRaises(RpcUnavailable) as failure:
+                        await writer.advance_one()
+                    self.assertIsInstance(failure.exception.__cause__, TimeoutError)
+
+                self.assertTrue(self.server.stream.entered.is_set())
+                self.assertTrue(self.server.stream.closed)
+                self.assertEqual(sum(request["method"] == "eth_getLogs" for request in self.server.requests), 1)
+                self.assertEqual(self.journal.basis, before)
+                self.assertEqual(self.journal.publications, [])
+
+    async def test_operation_deadline_prevents_recheck_after_valid_logs(self):
+        writer = await self.writer()
+        before = self.journal.basis
+        seconds = 0
+        clock = SimpleNamespace(monotonic=lambda: seconds)
+
+        def finish_at_deadline(_filter, rows):
+            nonlocal seconds
+            seconds = self.source.limits.operation_timeout_seconds
+            return rows
+
+        self.server.mutate = finish_at_deadline
+        with patch("conix.core.time", clock), patch("conix.rpc.time", clock):
+            with self.assertRaises(RpcUnavailable):
+                await writer.advance_one()
+
+        self.assertEqual(self.server.candidate_reads, 1)
+        self.assertEqual(sum(request["method"] == "eth_getLogs" for request in self.server.requests), 1)
         self.assertEqual(self.journal.basis, before)
         self.assertEqual(self.journal.publications, [])
 

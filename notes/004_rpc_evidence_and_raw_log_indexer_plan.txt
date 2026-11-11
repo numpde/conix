@@ -868,7 +868,9 @@ and input transport. The dapp32 campaign runs separately.
                        stale-generation rejection have executable cases.
                        The scanner refuses wrong chain or genesis, descending
                        selected logs and truncated JSON before publication.
-                       Audit deadline and remaining fault cases.
+                       Timeout and cancellation close a partial log stream.
+                       The shared deadline stops the canonicality recheck
+                       after otherwise valid logs.
   SQL and recovery     Real PostgreSQL writer exclusion, rollback, role
                        separation, restart and repair. Injected confirmation
                        loss before and after COMMIT exercises both durable
