@@ -50,11 +50,20 @@ elif "compose" in args and "config" in args:
                 "security_opt": ["no-new-privileges:true"],
                 "entrypoint": ["python"],
                 "command": ["-I", "-m", "conix.worker", "advance"],
+                "cpus": 1, "pids_limit": 128,
+                "mem_limit": 536870912, "memswap_limit": 536870912,
+                "logging": {"driver": "local", "options": {
+                    "max-size": "10m", "max-file": "3",
+                }},
                 "networks": {"database": None, "rpc": None},
                 "volumes": [{"source": named_volume, "type": "volume",
                              "target": "/run/conix", "read_only": True}]}
         if os.getenv("CONIX_FAKE_LEGACY_RUNTIME_COMMAND"):
             item["command"] = ["run", "--config", "/run/conix/config.toml"]
+        if os.getenv("CONIX_FAKE_MISSING_RUNTIME_LIMITS"):
+            for limit in ("cpus", "pids_limit", "mem_limit",
+                          "memswap_limit", "logging"):
+                item.pop(limit)
         if os.getenv("CONIX_FAKE_BAD_RUNTIME_CAP"):
             item["cap_add"] = ["SYS_ADMIN"]
         if os.getenv("CONIX_FAKE_BAD_RUNTIME_PRIVILEGES"):
@@ -420,7 +429,8 @@ class LocalDockerOperatorTests(unittest.TestCase):
     def run_runtime_fake(self, *, bad_bind=False, operation="config/check", missing_resources=False,
                          role="indexer",
                          bad_cap=False, bad_privileges=False, bad_runtime_network=False,
-                         legacy_command=False, rootful=False, fail_up=False):
+                         legacy_command=False, missing_limits=False,
+                         rootful=False, fail_up=False):
         """Prove deployment confinement before start and recovery after failure."""
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)
@@ -436,6 +446,8 @@ class LocalDockerOperatorTests(unittest.TestCase):
             env["COMPOSE_FILE"] = "/tmp/foreign.yml"
             if legacy_command:
                 env["CONIX_FAKE_LEGACY_RUNTIME_COMMAND"] = "1"
+            if missing_limits:
+                env["CONIX_FAKE_MISSING_RUNTIME_LIMITS"] = "1"
             if bad_bind:
                 env["CONIX_FAKE_BAD_RUNTIME_BIND"] = "1"
             if bad_cap:
@@ -532,6 +544,13 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertNotEqual(run.returncode, 0)
         self.assertFalse(any("stop" in item["args"] or "up" in item["args"] for item in calls))
         self.assertIn("confinement", run.stderr)
+
+    def test_prospective_runtime_requires_declared_resource_limits(self):
+        """A weakened Compose graph must not pass as the reviewed runtime."""
+        result, calls = self.run_runtime_fake(missing_limits=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("confinement", result.stderr)
+        self.assertFalse(any("up" in call["args"] for call in calls))
 
     def test_rendered_runtime_cannot_reintroduce_capabilities(self):
         result, calls = self.run_runtime_fake(bad_cap=True)
