@@ -90,7 +90,7 @@ def _docker_operation(argv):
     return "Docker operation"
 
 
-_PUBLIC_WORKER_LINE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.,:;()/'=+-]{0,239}\\Z")
+_PUBLIC_WORKER_LINE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.,:;()/'=+-]{0,239}\Z")
 
 
 def _public_worker_explanation(stderr):
