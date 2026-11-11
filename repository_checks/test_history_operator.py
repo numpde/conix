@@ -74,6 +74,20 @@ class HistoryOperatorContracts(unittest.TestCase):
         self.assertIn("output bound", str(failure.exception))
         self.assertNotIn("upstream", str(failure.exception))
 
+    def test_known_worker_failure_retains_a_safe_causal_explanation(self):
+        """A documented RPC deadline failure has useful method and effect."""
+        known_failure = (
+            b"Index advance failed (RpcUnavailable). "
+            b"RPC eth_getLogs exceeded its request deadline.\n"
+        )
+        admitted = history._failure(known_failure, 3)
+        description = str(admitted)
+
+        self.assertIn("RpcUnavailable", description)
+        self.assertIn("eth_getLogs", description)
+        self.assertIn("request deadline", description)
+        self.assertIn("3", description)
+
     def test_worker_diagnostics_admit_category_without_arbitrary_text(self):
         secret = "private producer output"
         diagnostic = history._failure(f"Index advance failed (RpcUnavailable). {secret}\n".encode(), 1)
