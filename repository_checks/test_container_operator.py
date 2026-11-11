@@ -106,10 +106,19 @@ elif "run" in args and "compose" not in args and args[args.index("run") + 1:]:
         sys.exit(97)
 elif "ps" in args and "compose" not in args:
     if "--format" in args:
-        print("0123456789ab")
+        print("0123456789abcdef" * 4)
 elif "container" in args and "compose" not in args:
     action = args[args.index("container") + 1]
-    if action not in ("stop", "rm"):
+    if action == "inspect":
+        print(json.dumps({
+            "Id": "0123456789abcdef" * 4,
+            "Name": "/conix-pilot-indexer-1",
+            "Config": {"Labels": {
+                "com.docker.compose.project": "conix-pilot",
+                "com.docker.compose.service": "indexer",
+            }},
+        }))
+    elif action not in ("stop", "rm"):
         print("Unknown container mutation.", file=sys.stderr)
         sys.exit(97)
 elif "compose" in args:
@@ -526,6 +535,16 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertTrue(any(item[:2] == ("container", "inspect") for item in calls))
         self.assertFalse(any(item[:2] in (("container", "stop"), ("container", "rm"))
                              for item in calls))
+
+    def test_runtime_removal_checks_full_id_and_labels_before_stopping(self):
+        result, calls = self.run_runtime_fake(operation="remove")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        queries = [record["args"] for record in calls]
+        self.assertTrue(any("ps" in query and "--no-trunc" in query for query in queries))
+        self.assertTrue(any("container" in query and "inspect" in query for query in queries))
+        inspect_position = next(i for (i, query) in enumerate(queries) if "inspect" in query and "container" in query)
+        stop_position = next(i for (i, query) in enumerate(queries) if "stop" in query and "container" in query)
+        self.assertLess(inspect_position, stop_position)
 
     def test_runtime_stop_does_not_need_removed_external_resources(self):
         result, calls = self.run_runtime_fake(operation="remove", missing_resources=True)
