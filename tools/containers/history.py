@@ -230,9 +230,39 @@ def _receipt(stdout):
     raise OperationError("Cannot confirm the history worker receipt. Inspect durable progress.")
 
 
+_SAFE_WORKER_CAUSE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.,:;()/'=+-]{0,239}\Z")
+_WORKER_FAILURE = re.compile(
+    rb"(Cannot load staged inputs|Index advance (?:failed|was interrupted)) "
+    rb"\((InputError|BranchConflict|HistoryConflict|StorageUnavailable|WriterBusy|"
+    rb"RpcProtocolError|RpcUnavailable|MalformedABIData|ResourceExceeded|"
+    rb"TimeoutError|KeyboardInterrupt)\)\. ([^\r\n]{1,240})\n?\Z"
+)
+
+
+def _admitted_worker_cause(value):
+    """Admit literal source-owned failure facts, never arbitrary worker output."""
+    return (
+        _SAFE_WORKER_CAUSE.fullmatch(value) is not None
+        and not any(marker in value.lower() for marker in (
+            "private", "password", "secret", "token", "dsn", "://",
+        ))
+        and re.search(r"(?:0x)?[0-9a-fA-F]{64}", value) is None
+    )
+
+
 def _failure(stderr, exit_code):
+    """Preserve classified worker causes without trusting arbitrary stderr."""
     if stderr.startswith(b"Index advance has an unconfirmed PostgreSQL COMMIT."):
-        return OperationError("Index advance has an unconfirmed PostgreSQL COMMIT. Inspect durable progress.")
+        return OperationError(
+            f"Index advance has an unconfirmed PostgreSQL COMMIT (worker exit {exit_code}). "
+            "Inspect durable progress before another advance."
+        )
+
+    if match := _WORKER_FAILURE.fullmatch(stderr):
+        (operation, category, cause) = (field.decode("ascii") for field in match.groups())
+        if _admitted_worker_cause(cause):
+            return OperationError(f"{operation} ({category}; worker exit {exit_code}). {cause}")
+
     match = re.search(
         rb"\A(?:Cannot load staged inputs|Index advance (?:failed|was interrupted)) "
         rb"\((InputError|BranchConflict|HistoryConflict|StorageUnavailable|WriterBusy|RpcProtocolError|"
@@ -241,16 +271,25 @@ def _failure(stderr, exit_code):
     )
     if match:
         category = match[1].decode("ascii")
-        return OperationError(f"History advance failed ({category}). Inspect durable progress before another run.")
-    if (match := re.fullmatch(
+        return OperationError(
+            f"History advance failed ({category}; worker exit {exit_code}). "
+            "Inspect durable progress before another run."
+        )
+
+    if match := re.fullmatch(
         rb"Index advance failed during (staged inputs|advance) \(([A-Za-z][A-Za-z0-9_]{0,63})\) "
         rb"at ([A-Za-z0-9_]{1,64}\.py:[1-9][0-9]{0,5})\.\n?",
         stderr,
-    )):
-        (phase, category, location) = (item.decode("ascii") for item in match.groups())
-        return OperationError(f"History advance failed during {phase} ({category}) at {location}.")
-    return OperationError(f"History advance exit {exit_code} has no admitted diagnostic. Inspect durable progress.")
+    ):
+        (phase, category, location) = (field.decode("ascii") for field in match.groups())
+        return OperationError(
+            f"History advance failed during {phase} ({category}) at {location}; "
+            f"worker exit {exit_code}."
+        )
 
+    return OperationError(
+        f"History advance exit {exit_code} has no admitted diagnostic. Inspect durable progress."
+    )
 
 @contextmanager
 def _cancellation_requests():
