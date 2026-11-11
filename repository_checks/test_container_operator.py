@@ -554,9 +554,15 @@ class LocalDockerOperatorTests(unittest.TestCase):
 
     def test_primary_test_error_survives_independent_cleanup_failure(self):
         """The original test error stays primary if project removal fails."""
-        original = operator.OperationError("Original test execution failed.")
         cleanup = operator.OperationError("Compose project retirement failed.")
+        for original in (
+            operator.OperationError("Original test execution failed."),
+            KeyboardInterrupt(),
+        ):
+            with self.subTest(primary=type(original).__name__):
+                self._verify_primary_test_failure_survives_cleanup(original, cleanup)
 
+    def _verify_primary_test_failure_survives_cleanup(self, original, cleanup):
         with (
             patch.object(operator.Docker, "require_role"),
             patch.object(operator.Docker, "require_image"),
@@ -591,7 +597,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 return ""
 
             invoke.side_effect = run
-            with self.assertRaises(operator.OperationError) as raised:
+            with self.assertRaises(type(original)) as raised:
                 runtime.test("sha256:" + "a" * 64, {"postgres": "postgres", "foundry": "foundry"})
 
         self.assertIs(raised.exception, original)
