@@ -165,12 +165,23 @@ class CommandWorkerAnvilContracts(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(int(mined["number"], 16), int(before["number"], 16) + 1)
 
             output = io.BytesIO()
+            inspect = (json.dumps({
+                "version": 1, "action": "inspect", "limit": 1, "through": None,
+            }) + "\n").encode("ascii")
             await serve(catalog, runtime_dsn,
-                        incoming=io.BytesIO(frame("advance") + frame("stop")),
+                        incoming=io.BytesIO(frame("advance") + inspect + frame("stop")),
                         outgoing=output)
-            (advanced, stopped) = [json.loads(line) for line in output.getvalue().splitlines()]
+            (advanced, ancestry, stopped) = [
+                json.loads(line) for line in output.getvalue().splitlines()
+            ]
             self.assertEqual(advanced["outcome"], "advanced")
             self.assertEqual(advanced["block_hash"], mined["hash"].lower())
+            self.assertEqual(ancestry["outcome"], "inspected")
+            self.assertEqual(ancestry["last_block_number"], int(mined["number"], 16))
+            self.assertEqual(ancestry["blocks"], [{
+                "number": int(mined["number"], 16),
+                "hash": mined["hash"].lower(),
+            }])
             self.assertEqual(stopped, {"version": 1, "outcome": "stopped"})
 
             async with open_reader(catalog=catalog,
