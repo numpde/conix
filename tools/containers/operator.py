@@ -561,7 +561,7 @@ class Docker(DockerClient):
                 or not next(iter(rendered_networks.values())).get("internal")
             ):
                 raise OperationError("Rendered test services violate selected images, no-bind, network or confinement rules.")
-        except (KeyError, ValueError) as error:
+        except (KeyError, ValueError, TypeError, AttributeError) as error:
             raise OperationError("Cannot validate rendered test deployment.") from error
 
         test_failure = None
