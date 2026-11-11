@@ -93,6 +93,17 @@ class OfflineInputChecks(unittest.TestCase):
         self.assertEqual((ROOT / "Dockerfile").read_text().splitlines()[0],
                          "# syntax=" + images["dockerfile_frontend"])
 
+    def test_offline_wheel_installation_is_not_tied_to_an_old_package_version(self):
+        """Install the unique built artifact, not a second hard-coded wheel name."""
+        dockerfile = (ROOT / "Dockerfile").read_text()
+
+        self.assertIsNone(
+            re.search(r"conix-[0-9]+\\.[0-9]+\\.[0-9]+-py3-none-any\\.whl", dockerfile),
+        )
+        self.assertIn("source=/dist,target=/dist,readonly", dockerfile)
+        self.assertIn("set -- /dist/conix-*.whl", dockerfile)
+        self.assertIn('test "$#" -eq 1', dockerfile)
+
     def test_duplicate_missing_and_malformed_wheel_pins_are_rejected(self):
         pin = "foo==1.0 --hash=sha256:" + "a" * 64
         for data in (pin + "\n" + pin, "foo==1.0",
