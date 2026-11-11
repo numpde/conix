@@ -2,9 +2,10 @@ Executable core with mandatory delegation
 ========================================
 
 Date: 2026-11-08
-Status: governing rule for Tier 1/2 delegation over the qualified,
-frozen generic Tier-0 baseline. Note 004, section 8.8, records its evidence
-and the limits of qualification. Earlier examples describe a removed
+Status: governing rule for Tier 1/2 delegation over the qualified
+T0-6 generic core. Note 004, section 8.8, records its evidence and the
+limits of qualification; section 11 governs the still-unimplemented
+T0-7 standalone application. Earlier examples describe a removed
 experimental PayToPlay-specific core; they do not preserve its code,
 schema, API or event history. Protect the listed concrete operations
 from replacement by later tiers.
@@ -46,13 +47,16 @@ An authoritative operation validates usable evidence, changes durable indexed
 history or progress, or returns a validated checkpoint-bound observation.
 Every successful such operation must use its concrete Tier 0 implementation.
 
-Normal ingestion:
-  run_session()
-    -> advance_one()
-       -> acquire the next block's data
-       -> decode and validate source, identity, continuity and completeness
-       -> confirm branch compatibility
-       -> publish_block() atomically
+Normal ingestion (T0-7 application, not yet implemented):
+  conix run
+    -> open_writer()
+       -> repeat Writer.advance_one() until the checked chain tip
+          -> acquire the next block's data
+          -> decode and validate source, identity, continuity and completeness
+          -> confirm branch compatibility
+          -> publish_block() atomically
+       -> release writer and wait; reopen when polling the tip
+  This ordinary loop belongs to Tier 0. No Tier-1 duplicate scheduler.
 
 Observation:
   core observation operation
@@ -124,12 +128,14 @@ is not permission to replace the existing concrete implementation.
 
 Higher-tier orchestration may differ; the meaning of core operations may not.
 
-Tier 0:
-  session runs -> fails -> command exits
+Tier 0 (T0-7):
+  standalone application catches up and follows the tip -> on failure
+  the application exits, without automatic retry or repair
 
 Tier 1:
-  the same session runs -> the same failure occurs -> supervisor waits or
-  repairs -> a new instance of the same session runs
+  that same Tier-0 application fails -> supervisor waits or invokes the
+  same checked repair -> a new instance of the application starts and
+  determines progress from the durable journal
 
 The supervisor changes the response to a failure. It does not turn invalid
 evidence into success or resume a failed transaction under another identity.
@@ -193,14 +199,15 @@ owns extension selection and lifetimes; extensions depend on concrete core
 operations. Tier 0 remains independently installable/runnable and tested.
 
 Tier 0 composition:
-  base session + base reads + base observer + manually invoked base repair
+  autonomous application + base reads + base observer + manual base repair
 
 Tier 1 composition:
-  supervision around that session + retries around those reads + automatic
-  invocation of that repair
+  supervision around that SAME application + qualified recovery decisions
+  and optional bounded read retries + automatic invocation of base repair
 
 Tier 2 composition:
-  Tier 1 + bounded I/O assistance beneath the same semantic operations
+  bounded I/O assistance beneath the same semantic operations, whether
+  supervised or not; never another normal indexing loop
 
 No EnhancedIndexer replaces Indexer. Prefer ordinary composition and explicit
 delegation. Local inheritance is acceptable only if it cannot obscure or
@@ -223,9 +230,11 @@ all meaningful work into callbacks; do not burden it with unused flexibility.
 Manual repair and restart are present because operators need them in Tier 0,
 not merely because an eventual extension might need an interface.
 
-Before freezing Tier 0, test that wrappers can repeat a real read, invoke the
-real repair and supply raw inputs without bypassing the real validator. Use
-small probes with the installed core. The protected concrete operations are:
+Before qualifying any higher-tier composition, test that wrappers can repeat
+a real read, invoke the real repair and supply raw inputs without bypassing
+the real validator. Use small probes with the installed core; T0-7 first
+qualifies the complete application lifecycle (Note 004, section 11).
+The protected concrete operations are:
 
   conix.catalog.prepare_catalog and conix.schema.initialize
       admit the selected source and establish owner-only durable history.
@@ -238,10 +247,11 @@ small probes with the installed core. The protected concrete operations are:
   conix.reader.open_reader and Reader.checkpoint, events, call and evidence
       own checkpoint-bound observations.
 
-The installed Anvil/PostgreSQL suite exercises the foreground worker's
-advance composition and the public reader and repair calls. Note 004,
-section 8.8, owns qualification evidence. Each later composition must prove
-that its own authoritative execution traverses these implementations.
+The T0-6 Anvil/PostgreSQL suite exercises the one-shot foreground advance,
+reader and repair, but NOT continuous execution. Note 004, section 8.8,
+owns that evidence; section 11 defines T0-7's missing application tests.
+Each later composition must prove that its authoritative execution
+traverses the same core AND standalone application implementations.
 
 Later feature changes should touch extension, composition and extension-test
 code. Review every protected-core edit explicitly. Fix genuine correctness

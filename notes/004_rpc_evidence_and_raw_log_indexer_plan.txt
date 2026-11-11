@@ -2,9 +2,11 @@ Conix — pristine generic Tier 0: design, evidence, and execution plan
 =====================================================================
 
 Date: 2026-11-09
-Status: GENERIC TIER 0 QUALIFIED AND FROZEN (2026-11-11).
-Section 8.8 records the executable baseline, verified scope and limitations.
-Sections 1–8 retain the original requirements and implementation decisions.
+Status: T0-6 GENERIC CORE QUALIFIED (2026-11-11); T0-7 STANDALONE
+        APPLICATION PLANNED, NOT IMPLEMENTED OR QUALIFIED.
+Section 8.8 records the qualified core, its evidence and its limitations.
+Section 11 is the governing standalone application plan. Sections 1–8
+retain the initial generic-core requirements and implementation decisions.
 This note owns product scope, correctness, public API,
 source identity, journal and release gates. Note 005 is the SINGLE authority
 for historical RPC acquisition methods, admitted evidence and Tier-2 method
@@ -374,6 +376,11 @@ Tier 0 needs no promised throughput beyond explicit finite bounds.
 Record the exact concrete core operations for future delegation
 proofs, without prebuilding extension infrastructure.
 
+T0-6 qualified the selected ABI, scanner, journal, reader and one-shot
+worker, NOT a continuously running standalone indexer. The missing
+application lifecycle is T0-7 (section 11), without invalidating or
+inflating the T0-6 evidence in section 8.8.
+
 Exit standard: remove ALL future-tier code and the installed Tier-0
 package remains correct and operator-usable. One wrong ABI value,
 dropped configured log, false complete page, stale usable cursor,
@@ -386,13 +393,15 @@ facts, but not as proof of API/implementation compatibility.
 6. Later tiers — explicit non-goals of this implementation
 ----------------------------------------------------------
 
-Tier 1: unattended resilience. Classify and retry transient RPC reads,
-retire and restart failed sessions, and invoke the SAME checked Tier-0
-manual repair after bounded ancestor discovery. It must call the
-concrete Tier-0 scanner, validator, journal and reader. No parallel
-publisher or repair SQL. An unattended recovery scenario and a
-selected live-RPC qualification campaign are Tier-1 OPERATIONS tests,
-not reasons to make Tier 0 depend on a paid provider.
+Tier 1: unattended resilience around the entire T0-7 standalone
+application. On classified recoverable failures it may back off, retire
+and reopen the application, or select a canonical repair ancestor and
+invoke the SAME checked Tier-0 repair. Any narrow read retry must still
+delegate to the concrete core and preserve its evidence and deadlines.
+Tier 1 does not own or duplicate normal block scheduling, catch-up or
+tip following. No parallel publisher or repair SQL. An unattended
+recovery scenario and selected live-RPC qualification are Tier-1
+operations tests, not reasons to make Tier 0 depend on a paid provider.
 
 Tier 2: measured PHYSICAL acquisition and bounded I/O assistance only.
 Note 005 owns permitted RPC strategy changes, prospective receipt
@@ -1173,10 +1182,227 @@ Deployment input transport includes the declared ABI files. The installed
 catalog validates the staged volume as the worker UID on a read-only mount.
 The one-shot proof checks valid and malformed catalogs before activation.
 
+11. T0-7 — standalone Tier-0 application (decision 2026-11-11)
+----------------------------------------------------------------
+
+Status: PLANNED. T0-6, qualified in section 8.8, established an installed
+scientific/persistence core and one-block foreground operation. It did not
+establish an autonomously running indexer service. Do not relabel that
+qualification as a T0-7 success. T0-7 completes Tier 0, using the frozen
+core rather than replacing it. The implementation belongs on a focused new
+branch; the decisions recorded here are committed on main.
+
+11.1. Required operational contract
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An ordinary Tier-0 process must load the existing staged catalog and
+restricted runtime credential, establish the selected source and exclusive
+writer, ingest every available complete selected block in order, and wait
+at the chain tip. It must notice later blocks without an external driver
+and continue until explicitly stopped or an error makes continuation unsafe.
+
+The proposed public invocation is:
+
+    python -I -m conix run
+
+This entrypoint does not exist yet. Preserve the implemented diagnostic:
+
+    python -I -m conix.worker advance
+
+The diagnostic remains a single bounded advance and need not be rebuilt
+around the new CLI. The application's installed Python runner should have
+one ordinary run() operation, with a thin CLI for staging, safe diagnostics
+and exit status. There is no separate work-cycle API, task scheduler,
+driver registry, callback framework or IPC command server.
+
+Normal execution, conceptually:
+
+    load_runtime_inputs()                     # once at process startup
+    until stop requested:
+        with open_writer(...):                # core verifies source and basis
+            until stop requested:
+                progress = writer.advance_one()
+                if progress is None: break     # checked chain tip
+        if not stopping: await tip_poll_or_stop()
+
+An actual implementation must handle async contexts and process signals
+correctly; this is an execution contract, not copy-ready Python. Each
+advance calls the installed core, retaining its exact selected-log
+validation and one-transaction-per-block journal publication. Do not
+repeat ABI/RPC/source validation in the application loop. Existing core
+operation deadlines remain authoritative; add a distinct outer bound
+only if a real uncovered wait requires it, with cancellation/COMMIT
+semantics proved first.
+
+11.2. Execution design choice
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A — Fresh writer for each block:
+    The application may repeatedly call the installed one-shot advance.
+    This is a small reference design and a useful comparison, but each
+    block reacquires SQL/RPC sessions, source identity and writer lock.
+
+B — One writer while catching up (SELECTED):
+    Open one writer; call advance_one() repeatedly as long as it advances;
+    release the writer immediately on a checked at-tip result; wait;
+    reopen it and recheck when polling. The writer retains the exclusive
+    journal authority only while doing useful work. Each block still has
+    its own SQL transaction, resource limit and failure boundary. Add a
+    session-duration budget only in response to measured operational need.
+
+C — Persistent command-controlled worker:
+    Without autonomous looping this is not the required application.
+    Adding external control alongside autonomous operation would create
+    a second execution mode, IPC protocol and lifecycle. No concrete
+    need justifies that architecture in the Tier-0 baseline. Do not
+    develop or merge it as the normal indexer.
+
+Use B. At the tip, release database writer ownership before waiting;
+poll with a simple, bounded stop-aware interval, not a busy loop. The
+next poll must traverse the same core advance path so a forked retained
+tip cannot be mistaken for an uneventful chain. No new container is
+created per block and no speculative multi-block transaction is allowed.
+
+11.3. Failure, stop and restart
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Ordinary failures propagate to a nonzero process exit with bounded,
+nonsecret phase/cause diagnostics. Do not automatically retry RPC,
+reopen a failed writer, switch provider, choose a repair anchor or
+replay an uncertain COMMIT. Explicit restart is safe only because a new
+core writer checks journal progress and source identity before further
+work; the prior process must never manufacture a success receipt.
+
+SIGTERM requests termination. While idle, stop promptly; during an
+advance, let the current bounded operation finish when feasible, close
+the writer and exit. A signal handler does not run SQL. Cancellation
+or forced kill during publication does not authorize success, and the
+existing atomic journal/durable restart rules remain in force. Choose
+a container stop grace consistent with the in-flight operation budget
+or explicitly qualify forced termination when grace expires; do not
+claim every SIGTERM is graceful. SIGKILL cannot be intercepted.
+
+The runner has no independent resilience policy. Tier 1 may later
+supervise it, but Tier 0 is itself a functioning indexer on healthy
+inputs and deliberately stops on failed inputs.
+
+11.4. Retained deployment and operator repair
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The current compose/runtime.yml invokes conix.worker advance and
+deployment/config/check only validates that prospective graph. The
+maintained host operator must gain a retained service activation, with
+the proposed target:
+
+    make deployment/start DOCKER_CONTEXT=<selected-rootless-context> \
+        DEPLOYMENT=<name> INDEXER_IMAGE=sha256:<image> \
+        INPUT_VOLUME=<owned-volume> DATABASE_NETWORK=<database-network> \
+        RPC_NETWORK=<rpc-network>
+
+This target is NOT implemented. Use the existing rootless Engine,
+immutable image and role admission, owner-labelled read-only input
+volume, explicit restricted networks, resource confinement, logs and
+exact container ownership; do not add a generic Docker command runner.
+The schema owner initializes separately and is never mounted in the
+runtime. Keep deployment/status and deployment/remove as inspection
+and exact owned-container retirement; external networks, input volume
+and PostgreSQL are retained. No automatic container restart at Tier 0.
+Update the actual Compose entrypoint to conix run when this is built.
+
+Manual recovery is part of an independently operable Tier 0. The
+operator needs to inspect retained block identities even when the
+latest stored history is noncanonical or marked blocked, select one
+retained ancestor, and request the existing Writer.repair_to() through
+the exclusive writer authority. Only the core/journal performs SQL
+repair and verifies the supplied ancestor against the selected source.
+No unverified SQL edit, blind rewind, invented repair receipt or
+automatic ancestor selection. The following is illustrative, NOT yet
+available:
+
+    python -I -m conix history inspect
+    python -I -m conix history repair --ancestor 95
+
+The session-core experiment's retained-ancestry inspection may be
+reused only after a narrow review: expose stored block identity, not
+a second checkpoint/observation validator or a repair algorithm.
+Concurrency and durable basis checking remain in the current owners.
+
+11.5. Implementation sequence and release evidence
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+T0-7a — Continuous runner and thin CLI. Installed process catches up
+         through several blocks, observes the checked tip, remains alive
+         without holding the writer lock, then ingests a later block.
+         Assert durable PostgreSQL progress, not just method calls.
+
+T0-7b — Process lifetime. Cover stop while idle, acquiring evidence and
+         publishing. Restart from the same database after ordinary stop
+         and forced termination; check no omission, duplication, partial
+         block or false completion. Preserve SQL uncertainty reporting.
+
+T0-7c — Retained deployment. Activate using maintained Make/operator
+         interfaces on a real selected rootless Engine, inspect logs and
+         state, retire the exact owned container, and retain external
+         dependencies. Qualify the deployed image, not a mocked worker.
+
+T0-7d — Manual recovery. A genuine Anvil reorganization makes the
+         application detect contradiction and fail closed. Inspect
+         retained ancestry, explicitly select and repair a canonical
+         stored ancestor, restart the SAME application and index the
+         replacement branch. Check generation invalidation.
+
+T0-7e — Full acceptance. Run the actual installed continuous service
+         with Anvil, PostgreSQL and the existing dapp32 fixture contract.
+         Cover empty blocks, tip arrival, incorrect source, absent or
+         contradictory RPC evidence, lost SQL connection, uncertain
+         COMMIT, restart, reorg/repair, resource ownership and absence
+         of leaks. Demonstrate generic ERC-20, ERC-721 and PayToPlay
+         through the same scanner/reader, with no consumer-specific path.
+
+Each stage should add a testable operational capability; ordinary
+repository and qualification checks must not be weakened. Integration
+tests must exercise the real core validator and publisher rather than
+substituting mocks that only imitate an indexing result. Run actual
+environment checks before calling T0-7 qualified. The existing T0-6
+and experimental-branch green tests are not proof of this service.
+
+11.6. Tier boundaries and excluded machinery
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Tier 0 RUNS the complete ordinary indexer and offers explicit manual
+repair. Tier 1 SUPERVISES that same application on recoverable failures,
+with optional bounded recovery decisions; it must not implement another
+normal indexing loop. Revise the existing main-tier-1 supervisor only
+after standalone Tier 0 passes independent acceptance. Tier 2 assists
+physical raw-evidence acquisition underneath the SAME authoritative
+advance; Note 005 owns its possible methods and evidence restrictions.
+
+Do not add speculative transport/provider interfaces for Tier 2 in
+T0-7. Do not add duplicate catalog validators, routine internal type
+checks, synthetic result envelopes, lifecycle hooks, alternate scanners,
+redundant exception wrappers or generalized error taxonomies. Essential
+checks remain in their actual trust owners: prepare_catalog(),
+open_writer(), RPC/Writer.advance_one(), Journal and Writer.repair_to(),
+plus host admission and pre-retirement ownership checks at their
+distinct authority points. Keep exactly the protections that avert
+concrete incorrect outcomes; no extra validation for its own sake.
+
+The 2026-11-11 research branches remain isolated:
+  main-tier-0-session-core-20261111   — inspect ancestry as a possible
+                                       manual-repair building block.
+  main-tier-0-work-cycle-20261111    — borrow session-reuse lessons,
+                                       not its budgets or public cycle API.
+  main-tier-0-command-service-20261111 — no adoption without a genuine
+                                         external-control requirement.
+None alone constitutes the Tier-0 standalone application. Do not merge
+them as a substitute for T0-7, disturb main-tier-1 or create additional
+experimental branches merely to reshuffle the same designs.
+
 Last line
 ---------
 
-The generic Tier-0 program is implemented and frozen within the evidence
-and limits recorded in section 8.8. Higher tiers must delegate to its
-concrete validated operations, not resurrect the experimental prototype
-or bypass journal, scanner, reader or repair checks.
+The generic Tier-0 core is T0-6 qualified within the evidence and limits
+in section 8.8. Full standalone Tier-0 operation is the unimplemented
+T0-7 work in section 11. Higher tiers must reuse the concrete validated
+scanner, journal, reader and repair, and must not duplicate the normal
+application loop or revive the retired PayToPlay-specific prototype.
