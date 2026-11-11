@@ -550,7 +550,7 @@ class CommandSession:
             ):
                 raise ValueError
             if last is None:
-                if result["blocks"]:
+                if through is not None or result["blocks"]:
                     raise ValueError
             else:
                 selected = last if through is None else through
