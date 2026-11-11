@@ -487,9 +487,13 @@ class Docker(DockerClient):
                 or input_mounts[0].get("source") not in ("inputs", volume)
                 or input_mounts[0].get("target") != "/run/conix"
                 or input_mounts[0].get("read_only") is not True
+                or type(input_mounts[0].get("volume")) is not dict
+                or input_mounts[0]["volume"].get("nocopy") is not True
                 or len(rendered_networks) != 2
                 or rendered_networks["database"]["name"] != database
+                or rendered_networks["database"].get("external") is not True
                 or rendered_networks["rpc"]["name"] != rpc
+                or rendered_networks["rpc"].get("external") is not True
             ):
                 raise OperationError("Rendered runtime deployment violates image, input or confinement policy.")
         except (ValueError, KeyError, IndexError, TypeError) as error:
