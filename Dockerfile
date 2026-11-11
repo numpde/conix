@@ -25,11 +25,14 @@ RUN --network=none \
     --mount=type=bind,source=wheelhouse,target=/wheels,readonly \
     python -m pip install --no-cache-dir --no-index --find-links=/wheels \
     --require-hashes --only-binary=:all: -r /tmp/conix-runtime.lock
+# The package stage builds one project without dependencies. Refuse any
+# ambiguous output before installation, even if that producer changes.
 RUN --network=none \
     --mount=type=bind,from=package,source=/dist,target=/dist,readonly \
     set -eu; \
     set -- /dist/conix-*.whl; \
-    test "$#" -eq 1 && test -f "$1"; \
+    test "$#" -eq 1; \
+    test -f "$1"; \
     python -m pip install --no-cache-dir --no-index --no-deps "$1" \
     && python -m pip check
 USER 65532:65532
