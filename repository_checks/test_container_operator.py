@@ -551,6 +551,53 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertIn("confinement", result.stderr)
         self.assertFalse(any("up" in entry["args"] or "stop" in entry["args"] for entry in calls))
 
+
+    def test_primary_test_error_survives_independent_cleanup_failure(self):
+        """The original test error stays primary if project removal fails."""
+        original = operator.OperationError("Original test execution failed.")
+        cleanup = operator.OperationError("Compose project retirement failed.")
+
+        with (
+            patch.object(operator.Docker, "require_role"),
+            patch.object(operator.Docker, "require_image"),
+            patch.object(operator.Docker, "run") as invoke,
+            patch("sys.stderr", new_callable=io.StringIO) as messages,
+        ):
+            runtime = operator.Docker("unix:///tmp/selected.sock", ROOT)
+
+            # Keep real graph admission: the recording Docker model provides
+            # a reviewed fixture instead of bypassing the checks.
+            admitted = {
+                "services": {
+                    "tests": {"image": "sha256:" + "a" * 64, "user": "65532:65532", "read_only": True},
+                    "initializer": {"image": "sha256:" + "a" * 64, "user": "65532:65532", "read_only": True,
+                                    "environment": {"CONIX_TEST_OWNER_DSN": "fixture",
+                                                    "CONIX_TEST_ANVIL_OWNER_DSN": "fixture"}},
+                    "postgres": {"image": "postgres", "user": "999:999", "read_only": True},
+                    "bootstrap": {"image": "postgres", "user": "999:999", "read_only": True},
+                    "anvil": {"image": "foundry", "user": "65532:65532", "read_only": True,
+                              "networks": ["tests"]},
+                },
+                "networks": {"tests": {"internal": True}},
+            }
+
+            def run(*argv, **_options):
+                if "config" in argv:
+                    return json.dumps(admitted)
+                if "up" in argv:
+                    raise original
+                if "down" in argv:
+                    raise cleanup
+                return ""
+
+            invoke.side_effect = run
+            with self.assertRaises(operator.OperationError) as raised:
+                runtime.test("sha256:" + "a" * 64, {"postgres": "postgres", "foundry": "foundry"})
+
+        self.assertIs(raised.exception, original)
+        self.assertTrue(any("down" in call.args for call in invoke.call_args_list))
+        self.assertIn("Cleanup unconfirmed", messages.getvalue())
+
     def test_uncertain_teardown_is_reported_as_failure(self):
         completed, calls = self.run_fake(fail_down=True)
         self.assertNotEqual(completed.returncode, 0)
