@@ -594,6 +594,7 @@ def main():
         "image/indexer/build", "image/test-runner/build", "image/evm-test-runner/build",
         "image/indexer/check", "image/evm-test-runner/check",
         "test/postgres/run", "test/input-staging/run",
+        "history/advance",
         "deployment/inputs/create", "deployment/inputs/remove",
         "deployment/config/check", "deployment/status", "deployment/remove",
     ))
@@ -662,6 +663,14 @@ def main():
 
             elif options.action == "image/evm-test-runner/check":
                 docker.check_evm_test_runner(options.image)
+
+            elif options.action == "history/advance":
+                from tools.containers.history import advance_history
+
+                advance_history(
+                    docker, image=options.indexer_image, volume=options.volume,
+                    database=options.database_network, rpc=options.rpc_network,
+                )
 
             elif options.action in ("deployment/inputs/create", "test/input-staging/run"):
                 docker.stage_inputs(

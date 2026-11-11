@@ -136,11 +136,15 @@ independently. Existing retained deployments may be inspected or removed
 using ownership-constrained deployment/status and deployment/remove.
 
 T0-6 qualifies the generic core for independent operator use. The signer
-and economic policy remain external. Inside a confined container with the
-staged runtime inputs mounted read-only at `/run/conix`,
-`python -I -m conix.worker advance` advances at most one complete block
-and exits. It reports the confirmed block identity or that the source
-was at tip. The owner initializes the schema separately. Production
-deployment activation remains unavailable.
+and economic policy remain external. After the owner initializes the
+schema and you stage the runtime inputs, select two existing internal
+Docker networks with the database and RPC peers:
+
+    make history/advance DOCKER_CONTEXT=agentic INDEXER_IMAGE="$indexer" \
+      INPUT_VOLUME="$inputs" DATABASE_NETWORK="$db_network" RPC_NETWORK="$rpc_network"
+
+The command runs the installed `conix.worker advance` once and retires its
+container. It reports the confirmed block identity or that the source was
+at tip. Production deployment activation remains unavailable.
 Do not reintroduce Collection models, PayToPlay-specific decoders or
 unqualified completeness shortcuts.

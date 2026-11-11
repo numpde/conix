@@ -165,6 +165,8 @@ Tool ownership
 tools/containers/client.py owns sanitized selected Docker CLI calls and
 rootless/image admission. tools/containers/operator.py composes that client
 for Conix-specific images, private inputs, deployment and contained tests.
+tools/containers/history.py owns admission and retirement of the foreground
+history worker on the selected client.
 The client must not import application lifecycles or the test harness.
 tools/fixtures/pay_to_play.py owns the dapp32 fixture campaign using the
 selected Docker operator without changing the sibling checkout.

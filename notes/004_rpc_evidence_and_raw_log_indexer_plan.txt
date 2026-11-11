@@ -888,7 +888,13 @@ and input transport. The dapp32 campaign runs separately.
                        retired. The installed foreground worker published
                        a real Anvil log, observed tip, resumed with an empty
                        block, and refused a reader credential on fw agentic.
-                       Host workflow, egress and interruption remain open.
+                       history/advance repeated those checks on separate
+                       internal networks. A live worker reached both peers
+                       and could not reach PostgreSQL via its unselected
+                       network address. Ctrl-C retired the worker and a
+                       fresh command observed unchanged progress. Other
+                       Engine configurations and host process loss remain
+                       outside that proof.
   Packaging and core   Curated image inputs include tracked ABI fixtures.
                        Verify delivered artifacts and record the concrete
                        operations and delegation witness before the freeze.

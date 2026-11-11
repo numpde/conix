@@ -17,6 +17,7 @@ TARGETS = {
     "image/indexer/check", "image/evm-test-runner/check",
     "test/postgres/run", "test/input-staging/run",
     "test/indexer/acceptance/run", "campaign/indexer/acceptance/run",
+    "history/advance",
     "deployment/inputs/create", "deployment/inputs/remove",
 "deployment/config/check",
 "deployment/status", "deployment/remove",

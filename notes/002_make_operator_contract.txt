@@ -53,6 +53,9 @@ campaign/indexer/acceptance/run    Own a freshly created dapp32 producer,
                                    run full generic acceptance including
                                    restart and reorganization repair, and
                                    retire consumer before producer.
+history/advance                    Run one foreground block advance on the
+                                   selected rootless Engine. Retire only the
+                                   command's worker container.
 
 Selectors
 ---------
@@ -70,6 +73,7 @@ CONFIG_FILE, DSN_FILE       Absolute paths to operator-owned staged inputs.
 INPUT_VOLUME               Exact ownership-labelled staged resource ID.
 DEPLOYMENT                  Exact selected Conix deployment name.
 DATABASE_NETWORK, RPC_NETWORK  Explicit separate pre-existing networks.
+                           For history/advance select internal local bridges.
 
 The dapp32 descriptor establishes test deployment facts, not cleanup rights.
 Only the producer's verified up/info/down contract grants owned-fixture cleanup.
@@ -83,3 +87,11 @@ and DSN into one private volume. The installed catalog validates the staged
 inputs offline with the volume mounted read-only as UID/GID 65532. This
 prepares the inputs for operator use. The owner-only initializer exists as
 a Python API and has no Make action yet.
+
+history/advance uses INDEXER_IMAGE, INPUT_VOLUME, DATABASE_NETWORK and
+RPC_NETWORK. The image and runtime credential must match the selected
+owner-initialized source. A successful stdout receipt identifies the
+source and either the published block or the at-tip outcome. Cleanup
+uncertainty exits with failure and reports a known worker outcome on stderr.
+When publication is unconfirmed, inspect durable progress before running
+another advance. The two networks, input volume and database are borrowed.
