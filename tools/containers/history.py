@@ -1,10 +1,12 @@
 """Run one installed history advance on an explicitly selected Engine."""
 
+from contextlib import contextmanager
 import json
 import os
 import re
 import secrets
 import selectors
+import signal
 import subprocess
 import sys
 import time
@@ -146,7 +148,7 @@ def _retire(docker, token, name, image, known_id):
         raise OperationError("The owned history worker is still present.")
 
 
-def _attached(docker, container_id):
+def _attached(docker, container_id, cancelled=lambda: False):
     """Capture one worker result with a byte bound and a host deadline."""
     command = docker.docker_command_prefix + ["container", "start", "--attach", container_id]
     started = time.monotonic()
@@ -163,13 +165,15 @@ def _attached(docker, container_id):
             selector.register(child.stdout, selectors.EVENT_READ, stdout)
             selector.register(child.stderr, selectors.EVENT_READ, stderr)
             while selector.get_map():
+                if cancelled():
+                    raise KeyboardInterrupt
                 now = time.monotonic()
                 if now >= deadline:
                     raise TimeoutError
                 if now >= next_report:
                     print(f"[conix] History advance: running ({int(now - started)}s)", file=sys.stderr, flush=True)
                     next_report = now + 15
-                for (key, _) in selector.select(min(deadline, next_report) - now):
+                for (key, _) in selector.select(min(deadline, next_report, now + 1) - now):
                     chunk = os.read(key.fd, OUTPUT_LIMIT + 1)
                     if not chunk:
                         selector.unregister(key.fileobj)
@@ -177,7 +181,7 @@ def _attached(docker, container_id):
                     key.data.extend(chunk)
                     if len(key.data) > OUTPUT_LIMIT:
                         raise OperationError("The history worker exceeded its output bound. Inspect durable progress.")
-        return (child.wait(timeout=max(deadline - time.monotonic(), 0)), bytes(stdout), bytes(stderr))
+        return (child.wait(timeout=min(5, max(deadline - time.monotonic(), 0))), bytes(stdout), bytes(stderr))
     finally:
         primary = sys.exception()
         try:
@@ -248,7 +252,31 @@ def _failure(stderr, exit_code):
     return OperationError(f"History advance exit {exit_code} has no admitted diagnostic. Inspect durable progress.")
 
 
+@contextmanager
+def _cancellation_requests():
+    requested = False
+
+    def request(_signum, _frame):
+        nonlocal requested
+        requested = True
+
+    previous = {signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        for signum in previous:
+            signal.signal(signum, request)
+        yield lambda: requested
+    finally:
+        for (signum, handler) in previous.items():
+            signal.signal(signum, handler)
+
+
 def advance_history(docker, *, image, volume, database, rpc):
+    """Keep interruption requests inside the exact worker's ownership lifetime."""
+    with _cancellation_requests() as cancelled:
+        _advance_history(docker, image=image, volume=volume, database=database, rpc=rpc, cancelled=cancelled)
+
+
+def _advance_history(docker, *, image, volume, database, rpc, cancelled):
     """Admit the grants, run one worker, and retire only its container."""
     docker.require_rootless_engine()
     docker.require_role(image, "indexer")
@@ -264,6 +292,8 @@ def advance_history(docker, *, image, volume, database, rpc):
     failure = None
     known_id = None
     try:
+        if cancelled():
+            raise KeyboardInterrupt
         container_id = _create(docker, image, volume, (database_id, rpc_id), name, token)
         if not ENGINE_ID.fullmatch(container_id):
             raise OperationError("Cannot confirm the created history worker identity.")
@@ -275,9 +305,16 @@ def advance_history(docker, *, image, volume, database, rpc):
         # Creation attaches the named volume. Check the mounted identity
         # again before starting in case Docker replaced a missing name.
         _admit_volume(docker, volume)
+        if cancelled():
+            raise KeyboardInterrupt
 
         print(f"[conix] History advance {name}: started", file=sys.stderr, flush=True)
-        (client_exit, stdout, stderr) = _attached(docker, container_id)
+        (client_exit, stdout, stderr) = _attached(docker, container_id, cancelled)
+        if stdout:
+            try:
+                receipt = _receipt(stdout)
+            except OperationError:
+                pass  # Worker diagnostics remain primary when stdout is not a receipt.
         exit_status = docker.run("container", "wait", container_id, capture=True, timeout=15).strip()
         if not re.fullmatch(r"0|[1-9][0-9]{0,2}", exit_status) or int(exit_status) > 255:
             raise OperationError("Cannot confirm the history worker exit. Inspect durable progress.")
@@ -287,15 +324,13 @@ def advance_history(docker, *, image, volume, database, rpc):
             if type(state) is dict and state.get("Status") == "created" and state.get("Error"):
                 raise OperationError("Docker rejected the history worker start before advance began.")
         if exit_code:
-            if stdout:
-                try:
-                    receipt = _receipt(stdout)
-                except OperationError:
-                    pass  # The worker failure remains primary when there is no usable receipt.
             raise _failure(stderr, exit_code)
-        receipt = _receipt(stdout)
+        if receipt is None:
+            receipt = _receipt(stdout)
         if client_exit or stderr:
             raise OperationError(f"The attach client reported a failure after worker completion (exit {client_exit}).")
+        if cancelled():
+            raise KeyboardInterrupt
     except (KeyboardInterrupt, TimeoutError, subprocess.TimeoutExpired) as error:
         failure = OperationError(
             f"History advance {name} did not confirm completion ({type(error).__name__}). Inspect durable progress."
@@ -313,6 +348,8 @@ def advance_history(docker, *, image, volume, database, rpc):
                 failure = cleanup
             else:
                 _notice(cleanup)
+        if cancelled() and failure is None:
+            failure = OperationError("History advance was interrupted during worker retirement.")
 
     if failure is not None:
         if receipt is not None:

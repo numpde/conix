@@ -906,10 +906,13 @@ and input transport. The dapp32 campaign runs separately.
                        history/advance repeated those checks on separate
                        internal networks. A live worker reached both peers
                        and could not reach PostgreSQL via its unselected
-                       network address. Ctrl-C retired the worker and a
-                       fresh command observed unchanged progress. Other
-                       Engine configurations and host process loss remain
-                       outside that proof.
+                       network address. It had no usable IPv4 or IPv6 default
+                       route and its input mount refused writing. Ctrl-C and
+                       SIGTERM retired the worker at stalled RPC startup,
+                       and a fresh command observed unchanged progress.
+                       Process-local signal tests cover cancellation after
+                       creation and during retirement. Other Engines and
+                       hard host process loss remain outside that proof.
   Packaging and core   Curated image inputs include tracked ABI fixtures.
                        The installed foreground witness forwards raw
                        evidence through real admission and publication.

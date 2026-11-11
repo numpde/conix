@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import signal
 import sys
 import unittest
 from unittest.mock import Mock, patch
@@ -97,9 +98,10 @@ class HistoryOperatorContracts(unittest.TestCase):
         docker.run.return_value = "0\n"
         result = {"outcome": "advanced", "source_id": "a" * 64, "block_number": 1,
                   "block_hash": "0x" + "b" * 64, "revision": 1}
-        for fault in ("retirement", "stdout"):
-            stdout = io.StringIO() if fault == "retirement" else Mock(write=Mock(side_effect=BrokenPipeError))
+        for fault in ("retirement", "stdout", "wait"):
+            stdout = Mock(write=Mock(side_effect=BrokenPipeError)) if fault == "stdout" else io.StringIO()
             cleanup = OperationError("retirement fault") if fault == "retirement" else None
+            docker.run.side_effect = OperationError("wait fault") if fault == "wait" else None
             with (
                 self.subTest(fault=fault),
                 patch.multiple(
@@ -116,8 +118,70 @@ class HistoryOperatorContracts(unittest.TestCase):
                                         volume="inputs", database="database", rpc="rpc")
             self.assertIn(result["block_hash"], stderr.getvalue())
             self.assertIn(fault, str(failure.exception))
-            if fault == "retirement":
+            if fault != "stdout":
                 self.assertEqual(stdout.getvalue(), "")
+
+    def test_signal_during_retirement_is_reported_after_cleanup(self):
+        docker = Mock(endpoint="unix:///tmp/unused.sock")
+        docker.run.return_value = "0\n"
+        result = {"outcome": "at_tip", "source_id": "a" * 64}
+        retired = []
+
+        def signal_while_retiring(*_args):
+            os.kill(os.getpid(), signal.SIGTERM)
+            retired.append(True)
+
+        previous_handler = signal.signal(signal.SIGTERM, signal.default_int_handler)
+        try:
+            with (
+                patch.multiple(
+                    history, _admit_volume=Mock(), _admit_network=Mock(side_effect=("d" * 64, "e" * 64)),
+                    _create=Mock(return_value="c" * 64), _record=Mock(), _owned=Mock(return_value=True),
+                    _admit_container=Mock(), _attached=Mock(return_value=(0, json.dumps(result).encode(), b"")),
+                    _retire=Mock(side_effect=signal_while_retiring),
+                ),
+                patch("sys.stdout", new_callable=io.StringIO) as stdout,
+                patch("sys.stderr", new_callable=io.StringIO) as stderr,
+                self.assertRaises(OperationError) as failure,
+            ):
+                history.advance_history(docker, image="sha256:" + "a" * 64,
+                                        volume="inputs", database="database", rpc="rpc")
+            self.assertEqual(retired, [True])
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertIn(result["source_id"], stderr.getvalue())
+            self.assertIn("interrupted", str(failure.exception))
+            self.assertIs(signal.getsignal(signal.SIGTERM), signal.default_int_handler)
+        finally:
+            signal.signal(signal.SIGTERM, previous_handler)
+
+    def test_signal_after_creation_cannot_start_or_skip_retirement(self):
+        docker = Mock(endpoint="unix:///tmp/unused.sock")
+
+        def create_then_signal(*_args):
+            os.kill(os.getpid(), signal.SIGTERM)
+            return "c" * 64
+
+        previous_handler = signal.signal(signal.SIGTERM, signal.default_int_handler)
+        try:
+            with (
+                patch.multiple(
+                    history, _admit_volume=Mock(), _admit_network=Mock(side_effect=("d" * 64, "e" * 64)),
+                    _create=Mock(side_effect=create_then_signal), _record=Mock(), _owned=Mock(return_value=True),
+                    _admit_container=Mock(),
+                ),
+                patch.object(history, "_attached") as attached,
+                patch.object(history, "_retire") as retire,
+                patch("sys.stderr", new_callable=io.StringIO),
+                self.assertRaises(OperationError),
+            ):
+                history.advance_history(docker, image="sha256:" + "a" * 64,
+                                        volume="inputs", database="database", rpc="rpc")
+            attached.assert_not_called()
+            retire.assert_called_once()
+            self.assertEqual(retire.call_args.args[-1], "c" * 64)
+            self.assertIs(signal.getsignal(signal.SIGTERM), signal.default_int_handler)
+        finally:
+            signal.signal(signal.SIGTERM, previous_handler)
 
 
 if __name__ == "__main__":
