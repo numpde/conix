@@ -163,8 +163,8 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 [
                     sys.executable, "-m", "tools.containers.operator",
                     "--context", "science", "--origin", "command line",
-                    "--owner-dsn-file", "/tmp/retired-owner-credential",
                     "image/indexer/check", "--image", "sha256:" + "a" * 64,
+                    "--owner-dsn-file", "/tmp/retired-owner-credential",
                 ],
                 cwd=ROOT, env=environment,
                 capture_output=True, text=True, timeout=10,
