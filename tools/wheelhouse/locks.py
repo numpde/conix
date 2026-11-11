@@ -16,10 +16,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-# Modern setuptools includes the wheel build command; no extra wheel package.
-BUILD = ("setuptools==82.0.1",)
-
-
 def selected_target():
     """Refuse generating a lock for the wrong Python/platform tag set."""
     if (sys.version_info[:2] != (3, 12) or
@@ -74,15 +70,20 @@ def generate():
     with (ROOT / "pyproject.toml").open("rb") as stream:
         source = tomllib.load(stream)
 
-    roots = source["project"]["dependencies"]
-    if type(roots) is not list or any(type(item) is not str for item in roots):
-        raise ValueError("Project dependencies must be a concrete list.")
+    runtime_requirements = source["project"]["dependencies"]
+    build_requirements = source["build-system"]["requires"]
+    for (name, requirements) in (
+        ("runtime", runtime_requirements),
+        ("build", build_requirements),
+    ):
+        if type(requirements) is not list or any(type(item) is not str for item in requirements):
+            raise ValueError(f"Project {name} requirements must be a concrete list.")
 
     with tempfile.TemporaryDirectory(prefix="conix-lock-") as temp:
         working = Path(temp)
         return {
-            "runtime": inventory(roots, working, "runtime"),
-            "build": inventory(BUILD, working, "build"),
+            "runtime": inventory(runtime_requirements, working, "runtime"),
+            "build": inventory(build_requirements, working, "build"),
         }
 
 

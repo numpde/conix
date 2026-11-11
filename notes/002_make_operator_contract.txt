@@ -5,12 +5,12 @@ Public targets use <resource>[/<role-or-subject>]/<action>, with exact operator
 inputs, no Make-expression interpolation, no implicit image/wheel acquisition,
 and one explicitly chosen local Docker Engine per command.
 
-Current T0-4 state: the indexer-labelled runtime image installs the generic
-ABI codec, catalog, PostgreSQL journal, blockHash scanner and checkpoint reader.
-Owner-only schema initialization exists as an explicit Python API. A production
-worker deployment/apply command is not yet available. The old PayToPlay-specific
-scanner and test targets remain retired; a contained image smoke test does not
-prove that a production worker has been deployed.
+Current qualified T0-6 state: the indexer image installs the generic ABI
+codec, catalog, journal, scanner, checkpoint reader and one foreground
+`conix.worker advance` operation. Owner-only schema initialization remains
+an explicit Python API. A retained deployment/apply command is not installed;
+`deployment/config/check` examines a prospective one-shot worker graph but
+does not launch it. The old PayToPlay-only runtime remains retired.
 
 T0-5 real-contract acceptance is an opt-in owned dapp32 campaign outside
 ordinary CI. Note 004, section 8.8, records its qualification evidence.

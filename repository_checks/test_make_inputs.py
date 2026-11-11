@@ -28,6 +28,9 @@ PARAMETERS = {
     "image/evm-test-runner/check": "IMAGE",
     "test/postgres/run": "RUNNER_IMAGE",
     "test/input-staging/run": "DSN_FILE",
+    "test/indexer/acceptance/run": "FIXTURE_DESCRIPTOR",
+    "campaign/indexer/acceptance/run": "DAPP32_DIR",
+    "history/advance": "INPUT_VOLUME",
     "deployment/inputs/create": "CONFIG_FILE",
     "deployment/inputs/remove": "INPUT_VOLUME",
     "deployment/config/check": "DEPLOYMENT",
@@ -38,6 +41,13 @@ PARAMETERS = {
 
 class MakeInputSafety(unittest.TestCase):
     """Operator text must cross Make literally, never execute during expansion."""
+
+    def test_literal_input_campaign_covers_every_public_operator_target(self):
+        """A newly exported operator target must not silently miss injection tests."""
+        from test_make_contract import TARGETS
+
+        direct_checks = {"help", "test/repository/run", "repository/inputs/check"}
+        self.assertEqual(set(PARAMETERS), TARGETS - direct_checks)
 
     def test_default_target_is_read_only_help(self):
         with tempfile.TemporaryDirectory() as directory:

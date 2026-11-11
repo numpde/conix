@@ -375,13 +375,35 @@ class Docker(DockerClient):
 
         if operation == "remove":
             observed_ids = self.run(
-                "ps", "--all", *service_labels, "--format", "{{.ID}}",
+                "ps", "--all", "--no-trunc", *service_labels, "--format", "{{.ID}}",
                 capture=True, timeout=20,
             ).splitlines()
 
+            # Discovery labels identify candidates, not deletion authority.
+            # Inspect ALL exact immutable IDs before stopping any container.
             for container_id in observed_ids:
-                if re.fullmatch(r"[0-9a-f]{12,64}", container_id) is None:
-                    raise OperationError("Docker returned an invalid Conix container identity.")
+                if re.fullmatch(r"[0-9a-f]{64}", container_id) is None:
+                    raise OperationError("Docker returned an incomplete Conix container identity.")
+
+                try:
+                    observed = json.loads(self.run(
+                        "container", "inspect", "--format", "{{json .}}", container_id,
+                        capture=True, timeout=15,
+                    ))
+                    configuration = observed["Config"]
+                    labels = configuration["Labels"]
+                except (ValueError, KeyError, TypeError) as error:
+                    raise OperationError("Cannot establish the selected container's ownership.") from error
+
+                if (
+                    type(observed) is not dict or observed.get("Id") != container_id
+                    or type(labels) is not dict
+                    or labels.get("com.docker.compose.project") != project
+                    or labels.get("com.docker.compose.service") != "indexer"
+                ):
+                    raise OperationError(
+                        "Selected container ownership changed; no containers were retired."
+                    )
 
             for container_id in observed_ids:
                 self.run("container", "stop", "--time", "90", container_id, timeout=105)
@@ -404,6 +426,8 @@ class Docker(DockerClient):
         if not re.fullmatch(r"conix-inputs-[0-9a-f]{24}", volume or ""):
             raise OperationError("Select an explicit Conix input-volume identity.")
 
+        from tools.containers.history import COMMAND as HISTORY_ADVANCE_COMMAND
+
         compose_argv = [
             "compose", "--env-file", "/dev/null", "--project-directory", str(ROOT),
             "-p", project, "-f", str(ROOT / "compose/runtime.yml"),
@@ -425,13 +449,31 @@ class Docker(DockerClient):
             indexer_service = rendered_services["indexer"]
             input_mounts = indexer_service.get("volumes", [])
             rendered_networks = rendered_configuration["networks"]
+            logging = indexer_service.get("logging")
+            options = logging.get("options") if type(logging) is dict else None
 
             if (
                 set(rendered_services) != {"indexer"}
                 or indexer_service.get("image") != image
                 or indexer_service.get("pull_policy") != "never"
+                or indexer_service.get("entrypoint") != ["python"]
+                or indexer_service.get("command") != HISTORY_ADVANCE_COMMAND
                 or indexer_service.get("user") != "65532:65532"
                 or indexer_service.get("read_only") is not True
+                or indexer_service.get("init") is not True
+                or indexer_service.get("restart") != "no"
+                or type(indexer_service.get("tmpfs")) is not list
+                or len(indexer_service["tmpfs"]) != 1
+                or type(indexer_service["tmpfs"][0]) is not str
+                or not indexer_service["tmpfs"][0].startswith("/tmp:")
+                or "size=16m" not in indexer_service["tmpfs"][0].split(",")
+                or indexer_service.get("cpus") != 1
+                or indexer_service.get("pids_limit") != 128
+                or str(indexer_service.get("mem_limit")) not in ("536870912", "512m")
+                or str(indexer_service.get("memswap_limit")) not in ("536870912", "512m")
+                or type(logging) is not dict or logging.get("driver") != "local"
+                or type(options) is not dict
+                or options.get("max-size") != "10m" or str(options.get("max-file")) != "3"
                 or indexer_service.get("privileged", False)
                 or indexer_service.get("ports") or indexer_service.get("network_mode")
                 or set(indexer_service.get("cap_drop", [])) != {"ALL"}
@@ -445,12 +487,16 @@ class Docker(DockerClient):
                 or input_mounts[0].get("source") not in ("inputs", volume)
                 or input_mounts[0].get("target") != "/run/conix"
                 or input_mounts[0].get("read_only") is not True
+                or type(input_mounts[0].get("volume")) is not dict
+                or input_mounts[0]["volume"].get("nocopy") is not True
                 or len(rendered_networks) != 2
                 or rendered_networks["database"]["name"] != database
+                or rendered_networks["database"].get("external") is not True
                 or rendered_networks["rpc"]["name"] != rpc
+                or rendered_networks["rpc"].get("external") is not True
             ):
                 raise OperationError("Rendered runtime deployment violates image, input or confinement policy.")
-        except (ValueError, KeyError, IndexError, TypeError) as error:
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError) as error:
             raise OperationError("Cannot validate the selected runtime deployment configuration.") from error
 
         print(f"Verified constrained prospective runtime Compose graph for {project}.")
@@ -515,7 +561,7 @@ class Docker(DockerClient):
                 or not next(iter(rendered_networks.values())).get("internal")
             ):
                 raise OperationError("Rendered test services violate selected images, no-bind, network or confinement rules.")
-        except (KeyError, ValueError) as error:
+        except (KeyError, ValueError, TypeError, AttributeError) as error:
             raise OperationError("Cannot validate rendered test deployment.") from error
 
         test_failure = None
@@ -542,7 +588,9 @@ class Docker(DockerClient):
                 env=compose_environment,
                 timeout=240,
             )
-        except Exception as error:
+        except BaseException as error:
+            # Caller cancellation also owns its original failure identity.
+            # The finally block still retires the disposable Compose project.
             test_failure = error
 
             # Collect fixture-only diagnostics before disposable containers
@@ -563,19 +611,20 @@ class Docker(DockerClient):
                     "--timeout", "30", env=compose_environment, timeout=90,
                 )
             except Exception as cleanup_error:
-                print(
+                recovery = (
                     f"Cleanup unconfirmed: project={test_project}, endpoint={self.endpoint}, "
-                    f"compose={ROOT / 'compose/tests.yml'}. Inspect before removing.",
-                    file=sys.stderr,
+                    f"compose={ROOT / 'compose/tests.yml'}. Inspect before removing."
                 )
-                original_failure_note = (
-                    f" Original test failure: {test_failure}."
-                    if isinstance(test_failure, OperationError) else
-                    f" Original test failure: {type(test_failure).__name__}."
-                    if test_failure is not None else ""
-                )
+                print(recovery, file=sys.stderr)
 
-                raise OperationError(f"Test project cleanup failed: {cleanup_error}.{original_failure_note}") from cleanup_error
+                if test_failure is None:
+                    raise OperationError(
+                        f"Test project cleanup failed ({type(cleanup_error).__name__}). {recovery}"
+                    ) from cleanup_error
+
+                # The original test failure remains primary. Resource
+                # retirement is a separate, unconfirmed outcome.
+                test_failure.add_note(recovery)
 
         if test_failure is not None:
             raise test_failure
@@ -604,7 +653,6 @@ def main():
     parser.add_argument("--indexer-image")
     parser.add_argument("--config-file")
     parser.add_argument("--dsn-file")
-    parser.add_argument("--owner-dsn-file")
     parser.add_argument("--volume")
     parser.add_argument("--deployment")
     parser.add_argument("--database-network")
@@ -618,7 +666,7 @@ def main():
             make_inputs = {name: os.environ.get("CONIX_MAKE_" + name, "") for name in (
                 "DOCKER_CONTEXT", "WHEELHOUSE", "IMAGE", "RUNNER_IMAGE",
                 "INDEXER_IMAGE", "CONFIG_FILE", "DSN_FILE",
-                "OWNER_DSN_FILE", "INPUT_VOLUME", "DEPLOYMENT",
+                "INPUT_VOLUME", "DEPLOYMENT",
                 "DATABASE_NETWORK", "RPC_NETWORK",
             )}
 
@@ -629,7 +677,6 @@ def main():
             options.indexer_image = make_inputs["INDEXER_IMAGE"]
             options.config_file = make_inputs["CONFIG_FILE"]
             options.dsn_file = make_inputs["DSN_FILE"]
-            options.owner_dsn_file = make_inputs["OWNER_DSN_FILE"]
             options.volume = make_inputs["INPUT_VOLUME"]
             options.deployment = make_inputs["DEPLOYMENT"]
             options.database_network = make_inputs["DATABASE_NETWORK"]

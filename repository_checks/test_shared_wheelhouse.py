@@ -20,6 +20,63 @@ from tools.wheelhouse import policy as pool
 class SharedWheelhouseContracts(unittest.TestCase):
     """Prove admission and least privilege without a real package index."""
 
+    def test_unreapable_offline_builder_is_reported_without_throwing(self):
+        """Cleanup cannot replace the build failure or skip other child cleanup."""
+        import signal
+        import subprocess
+
+        from tools.wheelhouse import operations
+
+        class ResistantChild:
+            pid = 30017
+
+            def wait(self, *, timeout):
+                raise subprocess.TimeoutExpired("offline-builder", timeout)
+
+        forwarded = []
+        with patch.object(
+            operations.os, "killpg",
+            side_effect=lambda pid, sig: forwarded.append((pid, sig)),
+        ):
+            retired = operations._retire(ResistantChild())
+
+        self.assertFalse(retired)
+        self.assertEqual(
+            forwarded,
+            [(30017, signal.SIGTERM), (30017, signal.SIGKILL)],
+        )
+
+    def test_lock_regeneration_uses_project_build_requirements(self):
+        """A manifest change must not leave the wheel generator on old roots."""
+        from tools.wheelhouse import locks
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "pyproject.toml").write_text(
+                '[project]\ndependencies = ["demo==1.0.0"]\n'
+                '[build-system]\nrequires = ["setuptools==99.0.0"]\n',
+                encoding="utf-8",
+            )
+            admitted = []
+
+            def controlled_inventory(requirements, _directory, label):
+                admitted.append((label, tuple(requirements)))
+                return f"# {label}\n"
+
+            with (
+                patch.object(locks, "ROOT", root),
+                patch.object(locks, "selected_target"),
+                patch.object(locks, "inventory", side_effect=controlled_inventory),
+            ):
+                result = locks.generate()
+
+            self.assertEqual(set(result), {"runtime", "build"})
+            self.assertEqual(
+                admitted,
+                [("runtime", ("demo==1.0.0",)),
+                 ("build", ("setuptools==99.0.0",))],
+            )
+
     def test_explicit_existing_private_pool_and_no_symlink_ancestor(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

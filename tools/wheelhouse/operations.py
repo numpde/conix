@@ -211,14 +211,15 @@ class SharedWheelhouse:
                 "--pull=false", "--platform", "linux/amd64",
                 "--network", "none", "--target", image_role, "--file", "Dockerfile",
                 "--build-arg", "PYTHON_BASE_IMAGE=" + self.images["python_base"],
+                # BuildKit resolves all FROM tokens while parsing, including
+                # unused test stages. The reviewed manifest supplies this
+                # reference without requiring an ordinary runtime to pull it.
+                "--build-arg", "FOUNDRY_IMAGE=" + self.images["foundry"],
                 "--label", "io.conix.source-inputs=" + source_identity,
                 "--label", "io.conix.wheel-selection=" + wheel_identity,
                 "--label", "io.conix.image-role=" + image_role,
                 "--iidfile", str(image_id_path),
             ]
-
-            if image_role == "evm-test-runner":
-                build_argv.extend(("--build-arg", "FOUNDRY_IMAGE=" + self.images["foundry"]))
 
             build_argv.append("-")
 
@@ -241,8 +242,11 @@ class SharedWheelhouse:
                         env=self.docker.docker_environment,
                         start_new_session=True,
                     )
-                except BaseException:
-                    _retire(streamer_process)
+                except BaseException as error:
+                    if not _retire(streamer_process):
+                        error.add_note(
+                            "Wheel streamer retirement is unconfirmed after builder startup failure."
+                        )
                     raise
 
                 streamer_process.stdout.close()
@@ -251,16 +255,24 @@ class SharedWheelhouse:
                     builder_exit_code = builder_process.wait(timeout=600)
                     streamer_exit_code = streamer_process.wait(timeout=60)
                 except BaseException as error:
-                    _retire(builder_process)
-                    _retire(streamer_process)
+                    builder_retired = _retire(builder_process)
+                    streamer_retired = _retire(streamer_process)
+                    uncertain_retirement = not (builder_retired and streamer_retired)
 
+                    if uncertain_retirement:
+                        error.add_note(
+                            "BuildKit client or wheel streamer retirement remains unconfirmed."
+                        )
                     if isinstance(error, KeyboardInterrupt):
                         raise
 
+                    retirement = (
+                        " Child retirement is unconfirmed; inspect the selected Engine."
+                        if uncertain_retirement else ""
+                    )
                     raise PoolError(
-                        f"Offline BuildKit or wheel-stream wait failed ({type(error).__name__}); "
-                        "processes were signalled for retirement. Reconcile selected "
-                        "Engine before reusing intermediate artifacts."
+                        f"Offline BuildKit or wheel-stream wait failed ({type(error).__name__})."
+                        f"{retirement}"
                     ) from error
 
             if builder_exit_code or streamer_exit_code:
@@ -316,18 +328,30 @@ def _public_stream_diagnostic(path):
 
 
 def _retire(process):
-    """Terminate and reap an owned process group after an interrupted build."""
+    """Bound TERM/KILL/reap and report whether the child actually exited.
+
+    A resistant child cannot replace the first failure or prevent another
+    owned process from receiving cleanup. Reaping the local client does not
+    establish the final state of Docker daemon-side build work.
+    """
     try:
         os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
+    except OSError:
         pass
 
     try:
         process.wait(timeout=8)
+        return True
     except subprocess.TimeoutExpired:
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except OSError:
             pass
 
-        process.wait(timeout=5)
+        try:
+            process.wait(timeout=5)
+            return True
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+    except OSError:
+        return False

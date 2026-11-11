@@ -90,7 +90,36 @@ def _docker_operation(argv):
     return "Docker operation"
 
 
-def command(argv, *, env, working_dir, timeout=60, capture=False, progress_to_stderr=False, public_diagnostic=False):
+_PUBLIC_WORKER_LINE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.,:;()/'=+-]{0,239}\Z")
+
+
+def _public_worker_explanation(stderr):
+    """Return one bounded worker line after heuristic disclosure checks.
+
+    Acquisition uses public release/PyPI sources without intentionally supplied
+    credentials. These checks reject controls and selected credential shapes;
+    they neither authenticate source-owned prose nor redact arbitrary secrets.
+    A credentialed acquisition lane would need a validated diagnostic contract.
+    """
+    if type(stderr) is not str:
+        return None
+
+    for line in reversed(stderr.splitlines()):
+        if (
+            1 <= len(line) <= 240
+            and _PUBLIC_WORKER_LINE.fullmatch(line) is not None
+            and not any(marker in line.lower() for marker in (
+                "private", "password", "secret", "token", "authorization",
+                "cookie", "bearer", "dsn", "://",
+            ))
+            and re.search(r"(?:0x)?[0-9a-fA-F]{64}", line) is None
+        ):
+            return line
+
+    return None
+
+
+def command(argv, *, env, working_dir, timeout=60, capture=False, public_diagnostic=False):
     """Run a bounded Docker command; only explicitly admitted diagnostics are public."""
     captures_output = capture or public_diagnostic
 
@@ -103,7 +132,6 @@ def command(argv, *, env, working_dir, timeout=60, capture=False, progress_to_st
             check=False,
             text=captures_output,
             capture_output=captures_output,
-            stdout=None if captures_output else (sys.stderr if progress_to_stderr else None),
         )
     except subprocess.TimeoutExpired as error:
         # The Docker CLI timed out; its daemon may still be performing work.
@@ -123,11 +151,11 @@ def command(argv, *, env, working_dir, timeout=60, capture=False, progress_to_st
         # Ordinary Docker output can contain private fixture data. Only a
         # deliberately public worker diagnostic is eligible for display.
         if public_diagnostic:
-            safe_diagnostic = (completed_process.stderr or "")[-1200:].replace("\r", " ").replace("\x00", " ").strip()
+            admitted_explanation = _public_worker_explanation(completed_process.stderr)
 
             raise OperationError(
                 f"Contained public worker failed (exit {completed_process.returncode}): "
-                + (safe_diagnostic or "no worker diagnostic returned."),
+                + (admitted_explanation or "no admitted nonsecret diagnostic returned."),
                 exit_code=completed_process.returncode,
             )
 
@@ -223,14 +251,13 @@ class DockerClient:
         self.docker_command_prefix = ["docker", "--config", str(config_dir), "--host", endpoint]
         self.docker_environment = environment(config_dir)
 
-    def run(self, *args, timeout=60, capture=False, env=None, progress_to_stderr=False, public_diagnostic=False):
+    def run(self, *args, timeout=60, capture=False, env=None, public_diagnostic=False):
         return command(
             self.docker_command_prefix + list(args),
             env=self.docker_environment if env is None else env,
             working_dir=self.working_dir,
             timeout=timeout,
             capture=capture,
-            progress_to_stderr=progress_to_stderr,
             public_diagnostic=public_diagnostic,
         )
 

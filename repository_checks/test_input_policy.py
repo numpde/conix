@@ -6,6 +6,8 @@ bytes are independently checked by the offline --require-hashes image build.
 import json
 from pathlib import Path
 import re
+import subprocess
+import tempfile
 import tomllib
 import unittest
 
@@ -92,6 +94,57 @@ class OfflineInputChecks(unittest.TestCase):
         self.assertTrue(all(type(value) is str and IMAGE.fullmatch(value) for value in images.values()))
         self.assertEqual((ROOT / "Dockerfile").read_text().splitlines()[0],
                          "# syntax=" + images["dockerfile_frontend"])
+
+    def test_foundry_source_image_is_selected_only_from_reviewed_manifest(self):
+        """The Dockerfile must not carry a second default digest for Foundry."""
+        from tools.containers.operator import pinned_images
+
+        images = pinned_images()
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        self.assertEqual(
+            [line for line in dockerfile.splitlines() if line.startswith("ARG FOUNDRY_IMAGE")],
+            ["ARG FOUNDRY_IMAGE"],
+        )
+        self.assertNotIn(images["foundry"], dockerfile)
+
+    def test_offline_wheel_installation_is_not_tied_to_an_old_package_version(self):
+        """Install the unique built artifact, not a second hard-coded wheel name."""
+        dockerfile = (ROOT / "Dockerfile").read_text()
+
+        self.assertIsNone(
+            re.search(r"conix-[0-9]+\\.[0-9]+\\.[0-9]+-py3-none-any\\.whl", dockerfile),
+        )
+        self.assertIn("source=/dist,target=/dist,readonly", dockerfile)
+        self.assertIn("set -- /dist/conix-*.whl", dockerfile)
+        self.assertIn('test "$#" -eq 1', dockerfile)
+
+    def test_runtime_installer_requires_exactly_one_built_wheel(self):
+        """Missing or ambiguous package output must stop before pip runs."""
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        installation = dockerfile.split("from=package,source=/dist,target=/dist,readonly", 1)[1]
+        shell = installation.split("\nUSER ", 1)[0].replace("\\\n", " ").strip()
+
+        for count in (0, 1, 2):
+            with self.subTest(wheels=count), tempfile.TemporaryDirectory() as directory:
+                dist = Path(directory) / "dist"
+                dist.mkdir()
+                for number in range(count):
+                    (dist / f"conix-{number}.whl").touch()
+
+                # Execute the Dockerfile's shell with only the Python process
+                # replaced, so no host package installer receives authority.
+                completed = subprocess.run(
+                    ["/bin/sh", "-c", "python() { printf 'installer-called\\n'; };\n"
+                     + shell.replace("/dist/", str(dist) + "/")],
+                    capture_output=True, text=True, timeout=5,
+                )
+
+                if count == 1:
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    self.assertEqual(completed.stdout.count("installer-called"), 2)
+                else:
+                    self.assertNotEqual(completed.returncode, 0)
+                    self.assertEqual(completed.stdout, "")
 
     def test_duplicate_missing_and_malformed_wheel_pins_are_rejected(self):
         pin = "foo==1.0 --hash=sha256:" + "a" * 64

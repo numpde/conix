@@ -1,3 +1,3 @@
-"""Strict generic EVM ABI foundation; scanner and journal not yet installed."""
+"""Generic EVM event indexing, durable history and checkpoint-bound reading."""
 
 __version__ = "0.1.0"

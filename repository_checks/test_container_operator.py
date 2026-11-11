@@ -48,20 +48,39 @@ elif "compose" in args and "config" in args:
         item = {"image": os.environ["CONIX_INDEXER_IMAGE"], "user": "65532:65532",
                 "read_only": True, "pull_policy": "never", "cap_drop": ["ALL"],
                 "security_opt": ["no-new-privileges:true"],
+                "entrypoint": ["python"],
+                "command": ["-I", "-m", "conix.worker", "advance"],
+                "cpus": 1, "pids_limit": 128,
+                "mem_limit": 536870912, "memswap_limit": 536870912,
+                "init": True, "restart": "no",
+                "tmpfs": ["/tmp:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=16m"],
+                "logging": {"driver": "local", "options": {
+                    "max-size": "10m", "max-file": "3",
+                }},
                 "networks": {"database": None, "rpc": None},
                 "volumes": [{"source": named_volume, "type": "volume",
-                             "target": "/run/conix", "read_only": True}]}
+                             "target": "/run/conix", "read_only": True,
+                             "volume": {"nocopy": True}}]}
+        if os.getenv("CONIX_FAKE_LEGACY_RUNTIME_COMMAND"):
+            item["command"] = ["run", "--config", "/run/conix/config.toml"]
+        if name := os.getenv("CONIX_FAKE_MISSING_RUNTIME_LIMIT"):
+            item.pop(name)
         if os.getenv("CONIX_FAKE_BAD_RUNTIME_CAP"):
             item["cap_add"] = ["SYS_ADMIN"]
         if os.getenv("CONIX_FAKE_BAD_RUNTIME_PRIVILEGES"):
             item["security_opt"] = []
         if os.getenv("CONIX_FAKE_BAD_RUNTIME_NETWORK"):
             item["networks"] = {"database": None}
+        if os.getenv("CONIX_FAKE_ALLOW_VOLUME_COPY"):
+            item["volumes"][0]["volume"]["nocopy"] = False
         if os.getenv("CONIX_FAKE_BAD_RUNTIME_BIND"):
             item["volumes"].append({"type": "bind", "source": "/tmp", "target": "/tmp"})
+        external = not bool(os.getenv("CONIX_FAKE_ALLOW_NETWORK_CREATION"))
+        if os.getenv("CONIX_FAKE_MALFORMED_RUNTIME"):
+            item = None
         print(json.dumps({"services": {"indexer": item}, "networks": {
-            "database": {"name": os.environ["CONIX_DATABASE_NETWORK"]},
-            "rpc": {"name": os.environ["CONIX_RPC_NETWORK"]}}}))
+            "database": {"name": os.environ["CONIX_DATABASE_NETWORK"], "external": external},
+            "rpc": {"name": os.environ["CONIX_RPC_NETWORK"], "external": external}}}))
     else:
         print(json.dumps({"services": {
             "tests": {"image": os.environ["CONIX_TEST_RUNNER_IMAGE"],
@@ -93,10 +112,19 @@ elif "run" in args and "compose" not in args and args[args.index("run") + 1:]:
         sys.exit(97)
 elif "ps" in args and "compose" not in args:
     if "--format" in args:
-        print("0123456789ab")
+        print("0123456789abcdef" * 4)
 elif "container" in args and "compose" not in args:
     action = args[args.index("container") + 1]
-    if action not in ("stop", "rm"):
+    if action == "inspect":
+        print(json.dumps({
+            "Id": "0123456789abcdef" * 4,
+            "Name": "/conix-pilot-indexer-1",
+            "Config": {"Labels": {
+                "com.docker.compose.project": "conix-pilot",
+                "com.docker.compose.service": "indexer",
+            }},
+        }))
+    elif action not in ("stop", "rm"):
         print("Unknown container mutation.", file=sys.stderr)
         sys.exit(97)
 elif "compose" in args:
@@ -143,6 +171,59 @@ class LocalDockerOperatorTests(unittest.TestCase):
                     )
                     self.assertNotEqual(completed.returncode, 0,
                         "Unknown Docker command was silently accepted by the fake.")
+
+    def test_retired_owner_dsn_selector_is_rejected_before_docker(self):
+        """Schema-owner credentials have no general-purpose container CLI flag."""
+        with tempfile.TemporaryDirectory() as directory:
+            fake = Path(directory) / "docker"
+            fake.write_text(FAKE, encoding="utf-8")
+            fake.chmod(0o755)
+            log = Path(directory) / "docker.jsonl"
+            environment = os.environ.copy()
+            environment["PATH"] = directory + os.pathsep + environment["PATH"]
+            environment["CONIX_FAKE_LOG"] = str(log)
+
+            completed = subprocess.run(
+                [
+                    sys.executable, "-m", "tools.containers.operator",
+                    "--context", "science", "--origin", "command line",
+                    "image/indexer/check", "--image", "sha256:" + "a" * 64,
+                    "--owner-dsn-file", "/tmp/retired-owner-credential",
+                ],
+                cwd=ROOT, env=environment,
+                capture_output=True, text=True, timeout=10,
+            )
+
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("unrecognized arguments: --owner-dsn-file", completed.stderr)
+            self.assertFalse(log.exists(), "Retired credentials reached Docker selection.")
+
+    def test_public_acquisition_worker_cannot_echo_private_stderr(self):
+        """A privileged network worker's stderr remains an untrusted string."""
+        from types import SimpleNamespace
+
+        credential = "0x" + "ab" * 32
+        response = SimpleNamespace(
+            returncode=17,
+            stdout="",
+            stderr=(
+                f"Shared acquisition rejected privateKey={credential} on upstream.\n"
+                "Shared acquisition failed after a refused response.\n"
+            ),
+        )
+        with patch.object(client.subprocess, "run", return_value=response):
+            with self.assertRaises(client.OperationError) as raised:
+                client.command(
+                    ["docker", "run", "checked-acquisition-worker"],
+                    env={}, working_dir=ROOT,
+                    public_diagnostic=True,
+                )
+
+        explanation = str(raised.exception)
+        self.assertIn("exit 17", explanation)
+        self.assertIn("Shared acquisition failed after a refused response", explanation)
+        self.assertNotIn("privateKey", explanation)
+        self.assertNotIn(credential, explanation)
 
     def test_staging_diagnostics_admit_fixed_causes_but_not_secrets(self):
         admitted = operator._staging_failure(
@@ -347,6 +428,34 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertNotEqual(pg.returncode, 0)
         self.assertFalse(any("up" in x["args"] or "down" in x["args"] for x in sql_calls))
 
+    def test_malformed_test_compose_observation_is_bounded_and_read_only(self):
+        """A null service in rendered JSON is a refusal, not a traceback."""
+        runtime = operator.Docker("unix:///tmp/selected.sock", ROOT)
+        services = {
+            "tests": {},
+            "postgres": {},
+            "bootstrap": {},
+            "initializer": {},
+            "anvil": None,
+        }
+        selected_graph = json.dumps({
+            "services": services,
+            "networks": {"tests": {"internal": True}},
+        })
+        with (
+            patch.object(runtime, "require_role"),
+            patch.object(runtime, "require_image"),
+            patch.object(runtime, "run", return_value=selected_graph) as invoked,
+        ):
+            with self.assertRaisesRegex(operator.OperationError, "Cannot validate"):
+                runtime.test(
+                    "sha256:" + "a" * 64,
+                    {"postgres": "postgres", "foundry": "foundry"},
+                )
+
+        self.assertEqual(len(invoked.call_args_list), 1)
+        self.assertIn("config", invoked.call_args.args)
+
     def test_failed_test_still_tears_down(self):
         completed, calls = self.run_fake(fail_up=True)
         self.assertNotEqual(completed.returncode, 0)
@@ -363,7 +472,9 @@ class LocalDockerOperatorTests(unittest.TestCase):
     def run_runtime_fake(self, *, bad_bind=False, operation="config/check", missing_resources=False,
                          role="indexer",
                          bad_cap=False, bad_privileges=False, bad_runtime_network=False,
-                         rootful=False, fail_up=False):
+                         legacy_command=False, missing_limit=None,
+                         allow_network_creation=False, allow_volume_copy=False,
+                         malformed_runtime=False, rootful=False, fail_up=False):
         """Prove deployment confinement before start and recovery after failure."""
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)
@@ -377,6 +488,16 @@ class LocalDockerOperatorTests(unittest.TestCase):
             env["CONIX_FAKE_ROLE"] = role
             env["DOCKER_HOST"] = "tcp://malicious.invalid:2375"
             env["COMPOSE_FILE"] = "/tmp/foreign.yml"
+            if legacy_command:
+                env["CONIX_FAKE_LEGACY_RUNTIME_COMMAND"] = "1"
+            if missing_limit:
+                env["CONIX_FAKE_MISSING_RUNTIME_LIMIT"] = missing_limit
+            if allow_network_creation:
+                env["CONIX_FAKE_ALLOW_NETWORK_CREATION"] = "1"
+            if allow_volume_copy:
+                env["CONIX_FAKE_ALLOW_VOLUME_COPY"] = "1"
+            if malformed_runtime:
+                env["CONIX_FAKE_MALFORMED_RUNTIME"] = "1"
             if bad_bind:
                 env["CONIX_FAKE_BAD_RUNTIME_BIND"] = "1"
             if bad_cap:
@@ -414,6 +535,95 @@ class LocalDockerOperatorTests(unittest.TestCase):
         for record in calls:
             if "context" not in record["args"]:
                 self.assertIn("unix:///tmp/science-docker.sock", record["args"])
+
+    def test_runtime_configuration_rejects_deleted_cli_entrypoint(self):
+        """A safe container with an obsolete worker command is not deployable."""
+        result, calls = self.run_runtime_fake(legacy_command=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("confinement", result.stderr)
+        self.assertFalse(any("up" in call["args"] for call in calls))
+
+    def test_remove_rechecks_selected_container_ownership_before_mutation(self):
+        """A matching Compose project selector is not a deletion credential."""
+        selected_id = "a" * 64
+        calls = []
+        docker = operator.Docker("unix:///tmp/selected.sock", ROOT)
+
+        def observed(*arguments, **_kwargs):
+            calls.append(arguments)
+            if arguments[0] == "ps":
+                return selected_id + "\n"
+            if arguments[:2] == ("container", "inspect"):
+                return json.dumps({
+                    "Id": selected_id,
+                    "Name": "/conix-pilot-indexer-1",
+                    "Config": {"Labels": {
+                        "com.docker.compose.project": "unrelated-project",
+                        "com.docker.compose.service": "indexer",
+                    }},
+                })
+            if arguments[:2] == ("container", "stop"):
+                self.fail("A foreign container was stopped without ownership admission.")
+            return None
+
+        with patch.object(docker, "run", side_effect=observed):
+            with self.assertRaises(operator.OperationError):
+                docker.deployment(
+                    operation="remove", name="pilot", image=None,
+                    volume=None, database=None, rpc=None,
+                )
+
+        self.assertTrue(any(item[:2] == ("container", "inspect") for item in calls))
+        self.assertFalse(any(item[:2] in (("container", "stop"), ("container", "rm"))
+                             for item in calls))
+
+    def test_removal_admits_every_candidate_before_retiring_any(self):
+        """A later foreign candidate must not cause partial project deletion."""
+        candidates = ("a" * 64, "b" * 64)
+        observed = []
+        docker = operator.Docker("unix:///tmp/selected.sock", ROOT)
+
+        def selected(*arguments, **_kwargs):
+            observed.append(arguments)
+            if arguments[0] == "ps":
+                return "\n".join(candidates) + "\n"
+            if arguments[:2] == ("container", "inspect"):
+                identity = arguments[-1]
+                return json.dumps({
+                    "Id": identity,
+                    "Config": {"Labels": {
+                        "com.docker.compose.project": (
+                            "conix-pilot" if identity == candidates[0] else "foreign"
+                        ),
+                        "com.docker.compose.service": "indexer",
+                    }},
+                })
+            if arguments[:2] in (("container", "stop"), ("container", "rm")):
+                self.fail("The first candidate was retired before every owner was checked.")
+            return ""
+
+        with patch.object(docker, "run", side_effect=selected):
+            with self.assertRaises(operator.OperationError):
+                docker.deployment(
+                    operation="remove", name="pilot", image=None,
+                    volume=None, database=None, rpc=None,
+                )
+
+        inspected = [
+            arguments[-1] for arguments in observed
+            if arguments[:2] == ("container", "inspect")
+        ]
+        self.assertEqual(inspected, list(candidates))
+
+    def test_runtime_removal_checks_full_id_and_labels_before_stopping(self):
+        result, calls = self.run_runtime_fake(operation="remove")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        queries = [record["args"] for record in calls]
+        self.assertTrue(any("ps" in query and "--no-trunc" in query for query in queries))
+        self.assertTrue(any("container" in query and "inspect" in query for query in queries))
+        inspect_position = next(i for (i, query) in enumerate(queries) if "inspect" in query and "container" in query)
+        stop_position = next(i for (i, query) in enumerate(queries) if "stop" in query and "container" in query)
+        self.assertLess(inspect_position, stop_position)
 
     def test_runtime_stop_does_not_need_removed_external_resources(self):
         result, calls = self.run_runtime_fake(operation="remove", missing_resources=True)
@@ -461,11 +671,46 @@ class LocalDockerOperatorTests(unittest.TestCase):
             self.assertFalse(any("up" in args for args in arguments))
             self.assertFalse(any("image" in args and "inspect" in args for args in arguments))
 
+    def test_prospective_runtime_never_creates_borrowed_networks_or_copies_inputs(self):
+        """The external network and no-copy volume promises are ownership facts."""
+        for scenario in ("network", "volume"):
+            with self.subTest(scenario=scenario):
+                result, calls = self.run_runtime_fake(
+                    allow_network_creation=scenario == "network",
+                    allow_volume_copy=scenario == "volume",
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("confinement", result.stderr)
+                self.assertFalse(any(
+                    "up" in record["args"] or "stop" in record["args"]
+                    for record in calls
+                ))
+
+    def test_malformed_rendered_runtime_fails_with_a_bounded_diagnostic(self):
+        """Invalid Docker JSON is rejected as input, not a raw traceback."""
+        result, calls = self.run_runtime_fake(malformed_runtime=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Cannot validate", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(any("up" in call["args"] for call in calls))
+
     def test_runtime_bind_mount_rejected_before_start(self):
         run, calls = self.run_runtime_fake(bad_bind=True)
         self.assertNotEqual(run.returncode, 0)
         self.assertFalse(any("stop" in item["args"] or "up" in item["args"] for item in calls))
         self.assertIn("confinement", run.stderr)
+
+    def test_prospective_runtime_requires_declared_resource_limits(self):
+        """Each independent resource boundary is mandatory before activation."""
+        for limit in (
+            "cpus", "pids_limit", "mem_limit", "memswap_limit",
+            "logging", "init", "restart", "tmpfs",
+        ):
+            with self.subTest(limit=limit):
+                result, calls = self.run_runtime_fake(missing_limit=limit)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("confinement", result.stderr)
+                self.assertFalse(any("up" in call["args"] for call in calls))
 
     def test_rendered_runtime_cannot_reintroduce_capabilities(self):
         result, calls = self.run_runtime_fake(bad_cap=True)
@@ -484,6 +729,59 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("confinement", result.stderr)
         self.assertFalse(any("up" in entry["args"] or "stop" in entry["args"] for entry in calls))
+
+
+    def test_primary_test_error_survives_independent_cleanup_failure(self):
+        """The original test error stays primary if project removal fails."""
+        cleanup = operator.OperationError("Compose project retirement failed.")
+        for original in (
+            operator.OperationError("Original test execution failed."),
+            KeyboardInterrupt(),
+        ):
+            with self.subTest(primary=type(original).__name__):
+                self._verify_primary_test_failure_survives_cleanup(original, cleanup)
+
+    def _verify_primary_test_failure_survives_cleanup(self, original, cleanup):
+        with (
+            patch.object(operator.Docker, "require_role"),
+            patch.object(operator.Docker, "require_image"),
+            patch.object(operator.Docker, "run") as invoke,
+            patch("sys.stderr", new_callable=io.StringIO) as messages,
+        ):
+            runtime = operator.Docker("unix:///tmp/selected.sock", ROOT)
+
+            # Keep real graph admission: the recording Docker model provides
+            # a reviewed fixture instead of bypassing the checks.
+            admitted = {
+                "services": {
+                    "tests": {"image": "sha256:" + "a" * 64, "user": "65532:65532", "read_only": True},
+                    "initializer": {"image": "sha256:" + "a" * 64, "user": "65532:65532", "read_only": True,
+                                    "environment": {"CONIX_TEST_OWNER_DSN": "fixture",
+                                                    "CONIX_TEST_ANVIL_OWNER_DSN": "fixture"}},
+                    "postgres": {"image": "postgres", "user": "999:999", "read_only": True},
+                    "bootstrap": {"image": "postgres", "user": "999:999", "read_only": True},
+                    "anvil": {"image": "foundry", "user": "65532:65532", "read_only": True,
+                              "networks": ["tests"]},
+                },
+                "networks": {"tests": {"internal": True}},
+            }
+
+            def run(*argv, **_options):
+                if "config" in argv:
+                    return json.dumps(admitted)
+                if "up" in argv:
+                    raise original
+                if "down" in argv:
+                    raise cleanup
+                return ""
+
+            invoke.side_effect = run
+            with self.assertRaises(type(original)) as raised:
+                runtime.test("sha256:" + "a" * 64, {"postgres": "postgres", "foundry": "foundry"})
+
+        self.assertIs(raised.exception, original)
+        self.assertTrue(any("down" in call.args for call in invoke.call_args_list))
+        self.assertIn("Cleanup unconfirmed", messages.getvalue())
 
     def test_uncertain_teardown_is_reported_as_failure(self):
         completed, calls = self.run_fake(fail_down=True)
