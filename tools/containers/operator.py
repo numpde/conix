@@ -438,6 +438,13 @@ class Docker(DockerClient):
                 or indexer_service.get("command") != HISTORY_ADVANCE_COMMAND
                 or indexer_service.get("user") != "65532:65532"
                 or indexer_service.get("read_only") is not True
+                or indexer_service.get("init") is not True
+                or indexer_service.get("restart") != "no"
+                or type(indexer_service.get("tmpfs")) is not list
+                or len(indexer_service["tmpfs"]) != 1
+                or type(indexer_service["tmpfs"][0]) is not str
+                or not indexer_service["tmpfs"][0].startswith("/tmp:")
+                or "size=16m" not in indexer_service["tmpfs"][0].split(",")
                 or indexer_service.get("cpus") != 1
                 or indexer_service.get("pids_limit") != 128
                 or str(indexer_service.get("mem_limit")) not in ("536870912", "512m")
