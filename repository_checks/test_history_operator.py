@@ -88,6 +88,24 @@ class HistoryOperatorContracts(unittest.TestCase):
         self.assertIn("request deadline", description)
         self.assertIn("3", description)
 
+    def test_known_worker_failure_does_not_forward_secret_shaped_cause(self):
+        """Trusted exception category does not authenticate arbitrary stderr."""
+        key = "0x" + "af" * 32
+        unsafe_causes = (
+            f"RPC eth_getLogs failed because privateKey={key}.",
+            f"RPC eth_getLogs failed for http://secret.example/{key}.",
+            "RPC eth_getLogs failed\x1b[2J and erased the screen.",
+        )
+        for cause in unsafe_causes:
+            with self.subTest(cause_type=cause.split()[2]):
+                stderr = f"Index advance failed (RpcUnavailable). {cause}\n".encode()
+                diagnostic = str(history._failure(stderr, 5))
+                self.assertIn("RpcUnavailable", diagnostic)
+                self.assertIn("5", diagnostic)
+                self.assertNotIn(key, diagnostic)
+                self.assertNotIn("secret.example", diagnostic)
+                self.assertNotIn("\x1b", diagnostic)
+
     def test_worker_diagnostics_admit_category_without_arbitrary_text(self):
         secret = "private producer output"
         diagnostic = history._failure(f"Index advance failed (RpcUnavailable). {secret}\n".encode(), 1)
