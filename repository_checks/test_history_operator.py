@@ -233,6 +233,19 @@ class HistoryOperatorContracts(unittest.TestCase):
         finally:
             session.retire_client()
 
+    def test_command_inspect_rejects_missing_history_for_selected_height(self):
+        """A missing prefix cannot confirm a specifically requested ancestor."""
+        session = object.__new__(history.CommandSession)
+        reply = {
+            "version": 1, "outcome": "inspected", "source_id": "a" * 64,
+            "revision": 0, "generation": "00000000-0000-0000-0000-000000000001",
+            "history_start": 1, "blocked": False,
+            "last_block_number": None, "blocks": [],
+        }
+        with patch.object(session, "_reply", return_value=reply):
+            with self.assertRaises(OperationError):
+                session.inspect(limit=1, through=1)
+
     def test_persistent_session_retires_owned_container_after_caller_failure(self):
         """The session never converts a caller failure into successful cleanup."""
         docker = Mock(endpoint="unix:///tmp/selected.sock")
