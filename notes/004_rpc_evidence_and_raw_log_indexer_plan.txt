@@ -911,8 +911,12 @@ and input transport. The dapp32 campaign runs separately.
                        Engine configurations and host process loss remain
                        outside that proof.
   Packaging and core   Curated image inputs include tracked ABI fixtures.
-                       Verify delivered artifacts and record the concrete
-                       operations and delegation witness before the freeze.
+                       The installed foreground witness forwards raw
+                       evidence through real admission and publication.
+                       Invalid raw evidence leaves no block or checkpoint
+                       change. Repeated reads execute Reader.events, and
+                       only checked repair reaches Journal.repair_to.
+                       Note 000, section 8, lists the protected operations.
 
 PostgreSQL baseline (2026-11-11)
 ................................

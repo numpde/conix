@@ -225,9 +225,23 @@ not merely because an eventual extension might need an interface.
 
 Before freezing Tier 0, test that wrappers can repeat a real read, invoke the
 real repair and supply raw inputs without bypassing the real validator. Use
-small probes, not premature production extensions. Record the protected module
-and operation list when the implementation exists; do not invent a frozen SHA
-or pretend that these notes are executable qualification.
+small probes with the installed core. The protected concrete operations are:
+
+  conix.catalog.prepare_catalog and conix.schema.initialize
+      admit the selected source and establish owner-only durable history.
+  conix.abi.compile_contract, decode_event, encode_indexed_filter,
+      encode_call and decode_return implement the selected ABI contract.
+  conix.core.open_writer, Writer.advance_one, its selected-log admission
+      in _event, and Writer.repair_to own checked chain evidence and repair.
+  conix.journal.open_journal, Journal.publish_block and Journal.repair_to
+      own exclusive sessions and atomic durable mutations.
+  conix.reader.open_reader and Reader.checkpoint, events, call and evidence
+      own checkpoint-bound observations.
+
+The installed Anvil/PostgreSQL suite exercises the foreground worker's
+advance composition and the public reader and repair calls. Note 004,
+section 8.8, owns qualification evidence. Each later composition must prove
+that its own authoritative execution traverses these implementations.
 
 Later feature changes should touch extension, composition and extension-test
 code. Review every protected-core edit explicitly. Fix genuine correctness

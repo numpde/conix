@@ -6,6 +6,7 @@ the same atomic journal validated by ordinary PostgreSQL tests.
 """
 
 import asyncio
+from dataclasses import replace
 import os
 import unittest
 from unittest.mock import patch
@@ -15,10 +16,12 @@ from psycopg import AsyncConnection, AsyncServerCursor
 
 from abi_golden_vectors import ERC20, FROM, TO, TRANSFER_SIGNATURE, padded, signature_topic, signed_word, word
 from anvil_catalog import SCALARS_ADDRESS, SCALARS_EVENT, catalog_for_anvil
-from conix.core import BranchConflict, open_writer
-from conix.journal import HistoryConflict
-from conix.reader import CursorInvalid, HistoricalCallUnavailable, HistoryUnavailable, open_reader
-from conix.rpc import RpcUnavailable
+from conix import core
+from conix.core import BranchConflict, Writer, open_writer
+from conix.journal import HistoryConflict, Journal
+from conix.reader import CursorInvalid, HistoricalCallUnavailable, HistoryUnavailable, Reader, open_reader
+from conix.rpc import RPC, RpcProtocolError, RpcUnavailable
+from conix.worker import advance
 
 
 CONTRACT = b"\x11" * 20
@@ -519,15 +522,11 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
         (log,) = receipt["logs"]
         self.assertEqual(log["topics"], [hex_bytes(topic) for topic in topics])
 
-        async with open_writer(
-            catalog=source, database_dsn=os.environ["CONIX_TEST_ANVIL_DSN"], rpc_url=url,
-        ) as writer:
-            published = await writer.advance_one()
-        self.assertEqual(published.last_block.hash, bytes.fromhex(receipt["blockHash"][2:]))
-
         async with open_reader(
             catalog=source, database_dsn=os.environ["CONIX_TEST_ANVIL_READ_DSN"], rpc_url=url,
         ) as reader:
+            published = await self.check_delegated_advance(source, reader, call, receipt)
+            self.assertEqual(published.last_block.hash, bytes.fromhex(receipt["blockHash"][2:]))
             checkpoint = await reader.checkpoint()
             for (field, selected, absent) in (("signed", -128, -127), ("flag", True, False), ("tag", tag, b"\x00" * 4)):
                 with self.subTest(field=field):
@@ -538,10 +537,56 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(event.values, (-128, True, tag))
                     self.assertIs(event.values[1], True)
                     self.assertEqual(event.topics, topics)
+                    self.assertEqual(event.transaction_hash, bytes.fromhex(log["transactionHash"][2:]))
+                    self.assertEqual(event.transaction_index, int(log["transactionIndex"], 16))
+                    self.assertEqual(event.log_index, int(log["logIndex"], 16))
+                    self.assertEqual(event.address.lower(), log["address"].lower())
+                    self.assertEqual(event.data, bytes.fromhex(log["data"][2:]))
                     empty = await reader.events(checkpoint=checkpoint, contract="scalars", event=SCALARS_EVENT,
                                                 where={field: absent})
                     self.assertTrue(empty.complete)
                     self.assertEqual(empty.events, ())
+
+    async def check_delegated_advance(self, source, reader, call, receipt):
+        """Exercise one concrete worker through valid and invalid raw log input."""
+        filter_ = {"blockHash": receipt["blockHash"], "address": SCALARS_ADDRESS,
+                   "topics": [receipt["logs"][0]["topics"][0]]}
+        (log,) = await call("eth_getLogs", [filter_])
+        self.assertEqual(log["transactionHash"], receipt["transactionHash"])
+        # All arguments are indexed, so the nonindexed payload must be empty.
+        selected = [{**log, "data": "0x01"}]
+        rpc_call = RPC.call
+
+        async def provide_log(rpc, method, params, *, deadline):
+            if method == "eth_getLogs" and params == [filter_]:
+                return selected
+            return await rpc_call(rpc, method, params, deadline=deadline)
+
+        before = await reader.checkpoint()
+        runtime_dsn = os.environ["CONIX_TEST_ANVIL_DSN"]
+        with (
+            patch.object(RPC, "call", provide_log),
+            patch.object(Writer, "advance_one", autospec=True, side_effect=Writer.advance_one) as advancing,
+            patch.object(core, "_event", wraps=core._event) as admit,
+            patch.object(Journal, "publish_block", autospec=True, side_effect=Journal.publish_block) as publish,
+        ):
+            with self.assertRaises(RpcProtocolError):
+                await advance(source, runtime_dsn)
+            admit.assert_called_once()
+            publish.assert_not_awaited()
+            self.assertEqual(await reader.checkpoint(), before)
+            retained_candidate = await (await reader.connection.execute(
+                "SELECT number FROM conix.blocks WHERE number = %s",
+                (int(receipt["blockNumber"], 16),),
+            )).fetchone()
+            self.assertIsNone(retained_candidate)
+
+            selected = [log]
+            published = await advance(source, runtime_dsn)
+            self.assertEqual(admit.call_count, 2)
+            self.assertEqual(advancing.await_count, 2)
+            publish.assert_awaited_once()
+            return published
 
     async def repair_during_event_page(self, reader, writer, checkpoint, ancestor, first_page):
         """Keep a real page snapshot open across an independent read and repair."""
@@ -570,13 +615,24 @@ class AnvilScannerContracts(unittest.IsolatedAsyncioTestCase):
             catalog=reader.catalog, database_dsn=os.environ["CONIX_TEST_ANVIL_READ_DSN"],
             rpc_url=os.environ["CONIX_TEST_ANVIL_URL"],
         ) as independent_reader:
-            with patch.object(AsyncServerCursor, "execute", pause_page):
+            with (
+                patch.object(AsyncServerCursor, "execute", pause_page),
+                patch.object(Reader, "events", autospec=True, side_effect=Reader.events) as observe,
+                patch.object(Journal, "repair_to", autospec=True, side_effect=Journal.repair_to) as repair,
+            ):
                 async with asyncio.TaskGroup() as tasks:
                     tasks.create_task(expect_invalidated_page())
                     await cursor_opened.wait()
                     self.assertEqual(await read_page(independent_reader), first_page)
+                    self.assertEqual(await read_page(independent_reader), first_page)
+
+                    with self.assertRaises(BranchConflict):
+                        await writer.repair_to(ancestor=replace(ancestor, hash=bytes(32)))
+                    repair.assert_not_awaited()
                     repaired = await writer.repair_to(ancestor=ancestor)
+                    repair.assert_awaited_once()
                     repair_finished.set()
+                self.assertEqual(observe.await_count, 3)
         return repaired
 
 
