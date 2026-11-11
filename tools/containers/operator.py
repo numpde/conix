@@ -567,19 +567,20 @@ class Docker(DockerClient):
                     "--timeout", "30", env=compose_environment, timeout=90,
                 )
             except Exception as cleanup_error:
-                print(
+                recovery = (
                     f"Cleanup unconfirmed: project={test_project}, endpoint={self.endpoint}, "
-                    f"compose={ROOT / 'compose/tests.yml'}. Inspect before removing.",
-                    file=sys.stderr,
+                    f"compose={ROOT / 'compose/tests.yml'}. Inspect before removing."
                 )
-                original_failure_note = (
-                    f" Original test failure: {test_failure}."
-                    if isinstance(test_failure, OperationError) else
-                    f" Original test failure: {type(test_failure).__name__}."
-                    if test_failure is not None else ""
-                )
+                print(recovery, file=sys.stderr)
 
-                raise OperationError(f"Test project cleanup failed: {cleanup_error}.{original_failure_note}") from cleanup_error
+                if test_failure is None:
+                    raise OperationError(
+                        f"Test project cleanup failed ({type(cleanup_error).__name__}). {recovery}"
+                    ) from cleanup_error
+
+                # The original test failure remains primary. Resource
+                # retirement is a separate, unconfirmed outcome.
+                test_failure.add_note(recovery)
 
         if test_failure is not None:
             raise test_failure
