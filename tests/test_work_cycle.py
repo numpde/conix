@@ -114,6 +114,48 @@ class CycleSchedulingContracts(unittest.IsolatedAsyncioTestCase):
                     opened.assert_not_called()
 
 
+class CycleCommandContracts(unittest.TestCase):
+    """The installed CLI reports only completed cycles, not planned work."""
+
+    def test_cli_emits_confirmed_cycle_receipt(self):
+        import io
+        import json
+        import sys
+        from conix.work_cycle import CycleResult, main
+
+        catalog = Mock()
+        catalog.source_id = bytes.fromhex("a" * 64)
+        last = Mock()
+        last.last_block.number = 17
+        last.last_block.hash = bytes.fromhex("b" * 64)
+        last.revision = 4
+
+        with (
+            patch.object(sys, "argv", [
+                "conix.work_cycle", "run", "--max-blocks", "2",
+                "--max-seconds", "20",
+            ]),
+            patch("conix.work_cycle.load_runtime_inputs", return_value=(catalog, "dsn")),
+            patch("conix.work_cycle.run_cycle", return_value=CycleResult(
+                "budget_exhausted", 2, last,
+            )) as cycled,
+            patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            main()
+
+        cycled.assert_awaited_once_with(
+            catalog, "dsn", max_blocks=2, max_duration=20.0,
+        )
+        self.assertEqual(json.loads(stdout.getvalue()), {
+            "source_id": "a" * 64,
+            "outcome": "budget_exhausted",
+            "advanced_blocks": 2,
+            "block_number": 17,
+            "block_hash": "0x" + "b" * 64,
+            "revision": 4,
+        })
+
+
 @unittest.skipUnless(
     os.getenv("CONIX_TEST_ANVIL_URL") and os.getenv("CONIX_TEST_ANVIL_DSN")
     and os.getenv("CONIX_TEST_ANVIL_READ_DSN"),
