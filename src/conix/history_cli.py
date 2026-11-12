@@ -1,12 +1,12 @@
 """Operator inspection and checked manual recovery of retained raw history.
 
-Inspection deliberately reads the durable journal without demanding that
-stored blocks are still canonical. Only the existing Writer.repair_to can
-change that history and it independently verifies the chosen ancestor.
+Retained headers are database facts, not assertions about the live RPC
+branch. Only the existing Writer.repair_to() checks canonical ancestry
+and changes the journal.
 """
 
 from conix.core import open_writer
-from conix.journal import HistoryConflict, open_journal
+from conix.journal import inspect_retained_ancestry
 
 
 def _block(block):
@@ -17,40 +17,30 @@ def _block(block):
 
 
 async def inspect_history(catalog, database_dsn, *, ancestor=None):
-    """Report stored identities even if the chain has reorganized or gone away."""
-    async with open_journal(catalog=catalog, database_dsn=database_dsn) as journal:
-        if ancestor is None:
-            blocks = await journal.retained_blocks(limit=65)
-            truncated = len(blocks) > 64
-            blocks = blocks[:64]
-        else:
-            stored = await journal.retained_block(ancestor)
-            if stored is None:
-                raise HistoryConflict("Selected ancestor is not retained.")
-            blocks, truncated = (stored,), False
-
-        return {
-            "source_id": catalog.source_id.hex(),
-            "generation": str(journal.basis.generation),
-            "revision": journal.basis.revision,
-            "blocked": journal.basis.blocked_reason is not None,
-            "checkpoint": (
-                journal.basis.last_block.number if journal.basis.last_block else None
-            ),
-            "blocks": [_block(block) for block in blocks],
-            "more_older_blocks": truncated,
-        }
+    """Inspect a bounded, continuous stored prefix under writer exclusion."""
+    limit = 1 if ancestor is not None else min(64, catalog.limits.max_evidence_blocks)
+    result = await inspect_retained_ancestry(
+        catalog=catalog, database_dsn=database_dsn, limit=limit, through=ancestor,
+    )
+    progress, blocks = result.progress, result.blocks
+    return {
+        "source_id": progress.source_id.hex(),
+        "generation": str(progress.generation),
+        "revision": progress.revision,
+        "blocked": progress.blocked_reason is not None,
+        "checkpoint": progress.last_block.number if progress.last_block else None,
+        "blocks": [_block(block) for block in blocks],
+        "more_older_blocks": bool(blocks and blocks[-1].number > progress.history_start),
+    }
 
 
 async def repair_history(catalog, database_dsn, *, ancestor):
-    """Repair through the same RPC-checked writer and fenced journal as Tier 0."""
+    """Use a stored identity only through the original canonicality-checked core."""
     async with open_writer(
         catalog=catalog, database_dsn=database_dsn, rpc_url=catalog.chain.rpc_url,
     ) as writer:
-        stored = await writer.journal.retained_block(ancestor)
-        if stored is None:
-            raise HistoryConflict("Selected repair ancestor is not retained.")
-        progress = await writer.repair_to(ancestor=stored)
+        ancestry = await writer.journal.retained_ancestry(limit=1, through=ancestor)
+        progress = await writer.repair_to(ancestor=ancestry.blocks[0])
     return {
         "outcome": "repaired",
         "source_id": catalog.source_id.hex(),

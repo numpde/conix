@@ -31,6 +31,7 @@ class StandaloneLoopContracts(unittest.IsolatedAsyncioTestCase):
         self.catalog = SimpleNamespace(
             source_id=b"x" * 32,
             chain=SimpleNamespace(rpc_url="http://test-source.invalid"),
+            limits=SimpleNamespace(operation_timeout_seconds=0.05),
         )
 
     async def exercise(self, sequence, *, failure=None):
@@ -107,3 +108,31 @@ class StandaloneLoopContracts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(opened), 1)
         self.assertFalse(seen)
         self.assertNotIn('"outcome": "advanced"', output)
+
+    async def test_operation_deadline_releases_writer_without_success(self):
+        stopped = asyncio.Event()
+        released = asyncio.Event()
+
+        @asynccontextmanager
+        async def opened(**_kwargs):
+            class Hung:
+                async def advance_one(self):
+                    await asyncio.Event().wait()
+            try:
+                yield Hung()
+            finally:
+                released.set()
+
+        with tempfile.TemporaryDirectory() as directory:
+            kwargs = {"poll_interval": 0.005}
+            if "socket_path" in inspect.signature(app.run).parameters:
+                kwargs["socket_path"] = Path(directory) / "control.sock"
+
+            with patch.object(app, "open_writer", opened), redirect_stdout(io.StringIO()) as output:
+                with self.assertRaises(TimeoutError):
+                    await asyncio.wait_for(
+                        app.run(self.catalog, "secret-dsn", stopped, **kwargs),
+                        timeout=1.0,
+                    )
+            self.assertTrue(released.is_set())
+            self.assertNotIn('"outcome": "advanced"', output.getvalue())

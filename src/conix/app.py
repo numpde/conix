@@ -61,7 +61,8 @@ async def run(catalog, database_dsn, stop, *, poll_interval=2.0, socket_path=SOC
                             break
                         controls.step_requested = False
 
-                    progress = await writer.advance_one()
+                    async with asyncio.timeout(catalog.limits.operation_timeout_seconds):
+                        progress = await writer.advance_one()
                     if progress is None:
                         at_tip = True
                         break
