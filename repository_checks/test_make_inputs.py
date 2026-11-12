@@ -34,7 +34,7 @@ PARAMETERS = {
     "history/advance": "INPUT_VOLUME",
     "deployment/inputs/create": "CONFIG_FILE",
     "deployment/inputs/remove": "INPUT_VOLUME",
-    "deployment/init": "OWNER_DSN_FILE",
+    "deployment/init": "DOCKER_CONTEXT",
     "deployment/prepare": "DEPLOYMENT",
     "deployment/database/init": "DEPLOYMENT",
     "deployment/config/check": "DEPLOYMENT",

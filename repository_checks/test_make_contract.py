@@ -61,7 +61,6 @@ class MakeContractTests(unittest.TestCase):
             "DOCKER_CONTEXT", "WHEELHOUSE", "IMAGE", "RUNNER_IMAGE",
             "INDEXER_IMAGE", "FIXTURE_DESCRIPTOR", "DAPP32_DIR",
             "DEPLOYMENT", "INPUT_VOLUME", "CONFIG_FILE", "DSN_FILE",
-            "OWNER_DSN_FILE",
             "DATABASE_NETWORK", "RPC_NETWORK",
         ):
             with self.subTest(name=name):

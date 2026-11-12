@@ -196,7 +196,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
             )
 
             self.assertNotEqual(completed.returncode, 0)
-            self.assertIn("Owner DSN path selection is allowed only", completed.stderr)
+            self.assertIn("unrecognized arguments: --owner-dsn-file", completed.stderr)
             self.assertFalse(log.exists(), "Retired credentials reached Docker selection.")
 
     def test_public_acquisition_worker_cannot_echo_private_stderr(self):

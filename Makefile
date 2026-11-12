@@ -5,7 +5,7 @@ override SHELL := /bin/sh
 
 # Never export GNU Make's recursively expanded command-line variables.
 unexport DOCKER_CONTEXT WHEELHOUSE IMAGE RUNNER_IMAGE INDEXER_IMAGE DAPP32_DIR FIXTURE_DESCRIPTOR
-unexport CONFIG_FILE DSN_FILE OWNER_DSN_FILE INPUT_VOLUME DEPLOYMENT DATABASE_NETWORK RPC_NETWORK
+unexport CONFIG_FILE DSN_FILE INPUT_VOLUME DEPLOYMENT DATABASE_NETWORK RPC_NETWORK
 override export CONIX_MAKE_DOCKER_CONTEXT := $(value DOCKER_CONTEXT)
 override export CONIX_MAKE_WHEELHOUSE := $(value WHEELHOUSE)
 override export CONIX_MAKE_IMAGE := $(value IMAGE)
@@ -15,7 +15,6 @@ override export CONIX_MAKE_DAPP32_DIR := $(value DAPP32_DIR)
 override export CONIX_MAKE_FIXTURE_DESCRIPTOR := $(value FIXTURE_DESCRIPTOR)
 override export CONIX_MAKE_CONFIG_FILE := $(value CONFIG_FILE)
 override export CONIX_MAKE_DSN_FILE := $(value DSN_FILE)
-override export CONIX_MAKE_OWNER_DSN_FILE := $(value OWNER_DSN_FILE)
 override export CONIX_MAKE_INPUT_VOLUME := $(value INPUT_VOLUME)
 override export CONIX_MAKE_DEPLOYMENT := $(value DEPLOYMENT)
 override export CONIX_MAKE_DATABASE_NETWORK := $(value DATABASE_NETWORK)
@@ -96,7 +95,7 @@ deployment/inputs/create: ## Stage private inputs; INDEXER_IMAGE=<id> CONFIG_FIL
 deployment/inputs/remove: ## Remove selected input volume; INPUT_VOLUME=<owned volume>
 	$(RUN_OPERATOR)
 
-deployment/init: ## Create one saved named deployment; DEPLOYMENT=<name> DOCKER_CONTEXT=<name> (prompt for missing first-time settings)
+deployment/init: ## Create editable source skeleton and private ABI/credential directories; DEPLOYMENT=<name> DOCKER_CONTEXT=<name>
 	$(RUN_OPERATOR)
 
 deployment/prepare: ## Build offline and stage checked runtime inputs for saved DEPLOYMENT=<name>
