@@ -325,7 +325,8 @@ def dispatch(action, options, *, client_cls, pinned_images):
             raise
         # Only a MISSING declaration permits explicit recovery; corrupted or
         # foreign-owned declarations must not silently redirect operation.
-        if (_directory(name) / "deployment.toml").exists():
+        declaration_path = _directory(name) / "deployment.toml"
+        if declaration_path.exists() or declaration_path.is_symlink():
             raise
         if options.origin != "command line" or not CONTEXT_NAME.fullmatch(options.context or ""):
             raise
@@ -358,10 +359,13 @@ def dispatch(action, options, *, client_cls, pinned_images):
         return
 
     if action in ("deployment/database/init", "deployment/up"):
-        receipt = _prepared(decl)
         docker, directory = _docker(decl, client_cls)
         try:
             with _locked(name):
+                # Prepare and activate use the same deployment lock. Read the
+                # receipt under it so a newer input volume cannot replace the
+                # selected snapshot before the service is created.
+                receipt = _prepared(decl)
                 if action == "deployment/database/init":
                     if _inspect_existing(docker, name):
                         raise OperationError("Stop the selected deployment before schema initialization.")

@@ -174,6 +174,39 @@ class NamedDeploymentContracts(unittest.TestCase):
         self.assertIn(("staging", "/project/private/runtime.dsn"), RecordingDocker.seen[-1].calls)
         self.assertNotIn(("rootless", ""), RecordingDocker.seen[-1].calls)
 
+    def test_up_reads_prepared_receipt_under_deployment_lock(self):
+        self.prepared()
+        from contextlib import contextmanager
+
+        inside_lock = [False]
+        original_receipt = named._prepared
+
+        @contextmanager
+        def locked(_name):
+            inside_lock[0] = True
+            try:
+                yield
+            finally:
+                inside_lock[0] = False
+
+        def receipt(decl):
+            self.assertTrue(inside_lock[0], "Prepared state was selected without the deployment lock.")
+            return original_receipt(decl)
+
+        with patch.object(named, "_locked", locked), patch.object(named, "_prepared", receipt):
+            self.execute("deployment/up")
+        self.assertFalse(inside_lock[0])
+
+    def test_broken_configuration_symlink_cannot_be_ignored_for_recovery(self):
+        folder = self.configure()
+        source = folder / "deployment.toml"
+        source.unlink()
+        source.symlink_to(folder / "missing.toml")
+        self.options.origin = "command line"
+        with self.assertRaises(OperationError):
+            self.execute("deployment/down")
+        self.assertFalse(RecordingDocker.seen)
+
     def test_database_initializer_uses_owner_stdin_only(self):
         self.prepared()
         from types import SimpleNamespace
