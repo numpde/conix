@@ -281,7 +281,7 @@ def _read(name, *, complete=True):
 
     # This path projection is a transport constraint; semantic ABI/event/chain
     # admission remains exclusively in the installed Tier-0 catalog.
-    from tools.containers.operator import _declared_abi_names
+    from tools.containers.input_staging import _declared_abi_names
 
     selected_paths = _declared_abi_names(_project_catalog(decl).encode("utf-8"))
     _owned_directory(decl.abi_dir)

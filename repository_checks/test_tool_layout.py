@@ -17,6 +17,7 @@ TOOL_FILES = {
     "tools/containers/diagnostics.py",
     "tools/containers/deployment.py",
     "tools/containers/history.py",
+    "tools/containers/input_staging.py",
     "tools/containers/named.py",
     "tools/containers/operator.py",
     "tools/containers/resources.py",

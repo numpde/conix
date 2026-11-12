@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
-from tools.containers import client, operator
+from tools.containers import client, input_staging, operator
 
 FAKE = r'''#!/usr/bin/env python3
 import json, os, sys
@@ -233,10 +233,10 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertIn("cause=InputError", admitted)
         self.assertIn("phase=staging", admitted)
         self.assertIn("effect=durable outcome unconfirmed", admitted)
-        self.assertIsNone(operator._staging_failure(
+        self.assertIsNone(input_staging._staging_failure(
             b"Conix input staging failed (InputError): password=0x" + b"ab" * 32 + b"\n"
         ))
-        self.assertIsNone(operator._staging_failure(
+        self.assertIsNone(input_staging._staging_failure(
             b'database password in upstream stderr only\n'
         ))
 
