@@ -1,0 +1,36 @@
+# Test infrastructure only. The indexer is started through deployment/up.
+services:
+  postgres:
+    extends:
+      file: compose/tests.yml
+      service: postgres
+    labels:
+      io.conix.acceptance-owner: ${CONIX_ACCEPTANCE_OWNER:?acceptance owner is required}
+  anvil:
+    extends:
+      file: compose/tests.yml
+      service: anvil
+    labels:
+      io.conix.acceptance-owner: ${CONIX_ACCEPTANCE_OWNER:?acceptance owner is required}
+    # A fixed genesis timestamp makes the committed chain identity repeatable.
+    command: ["--host", "0.0.0.0", "--chain-id", "31337", "--timestamp", "0"]
+    networks: [tests, rpc]
+  bootstrap:
+    extends:
+      file: compose/tests.yml
+      service: bootstrap
+    labels:
+      io.conix.acceptance-owner: ${CONIX_ACCEPTANCE_OWNER:?acceptance owner is required}
+networks:
+  tests:
+    internal: true
+    labels:
+      io.conix.acceptance-owner: ${CONIX_ACCEPTANCE_OWNER:?acceptance owner is required}
+  rpc:
+    internal: true
+    labels:
+      io.conix.acceptance-owner: ${CONIX_ACCEPTANCE_OWNER:?acceptance owner is required}
+volumes:
+  pgdata:
+    labels:
+      io.conix.acceptance-owner: ${CONIX_ACCEPTANCE_OWNER:?acceptance owner is required}

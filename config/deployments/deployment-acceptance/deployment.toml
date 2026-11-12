@@ -1,0 +1,29 @@
+# Disposable deployment acceptance profile. These credentials have no use outside its test database.
+version = 1
+docker_context = "agentic"
+wheelhouse = "/home/ra/Downloads/wheelhouse"
+database_network = "conix-deployment-acceptance-fixture_tests"
+rpc_network = "conix-deployment-acceptance-fixture_rpc"
+
+[chain]
+chain_id = 31337
+genesis_hash = "0x053651de1bc19978a3cbb4d999a67e40c667942f9bacd899d30b77120013f5ca"
+start_block = 1
+rpc_url = "http://anvil:8545"
+
+[limits]
+rpc_timeout_seconds = 5
+operation_timeout_seconds = 30
+max_response_bytes = 1048576
+max_connections = 4
+max_page_size = 100
+max_evidence_blocks = 64
+max_logs_per_block = 10000
+max_abi_bytes = 1048576
+max_abi_nesting = 8
+max_abi_elements = 4096
+
+[contracts.token]
+address = "0x1111111111111111111111111111111111111111"
+abi_file = "abi/erc20.json"
+events = ["Transfer(address,address,uint256)"]
