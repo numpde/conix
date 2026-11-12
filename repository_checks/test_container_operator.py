@@ -282,7 +282,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
             timeout = subprocess.TimeoutExpired(["docker", private_value], 40)
             with (
                 patch.object(operator.secrets, "token_hex", return_value=token),
-                patch.object(operator.subprocess, "run", side_effect=timeout),
+                patch.object(input_staging.subprocess, "run", side_effect=timeout),
                 patch.object(docker, "require_role"),
                 patch.object(docker, "catalog_snapshot", return_value=(b"settings", {"a.json": b"[]"})),
                 patch.object(docker, "private_bytes", return_value=private_value.encode()),
@@ -323,7 +323,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
     def test_docker_client_errors_retain_cause_without_private_arguments(self):
         private_argument = "postgresql://private:password@secret.example"
         with patch.object(
-            operator.subprocess,
+            input_staging.subprocess,
             "run",
             side_effect=subprocess.TimeoutExpired(["docker", private_argument], 5),
         ):
@@ -335,7 +335,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertNotIn(private_argument, str(timed_out.exception))
 
         with patch.object(
-            operator.subprocess,
+            input_staging.subprocess,
             "run",
             side_effect=PermissionError(errno.EACCES, "denied"),
         ):
