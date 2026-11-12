@@ -220,6 +220,24 @@ class NamedDeploymentContracts(unittest.TestCase):
             self.dispatch("deployment/prepare")
         self.assertFalse(RecordingDocker.seen)
 
+    def test_non_string_wheelhouse_is_refused_before_engine_selection(self):
+        """False-like TOML values must produce a bounded configuration error."""
+        folder = self.configured()
+        config = folder / "deployment.toml"
+        source = config.read_text()
+        setting = "wheelhouse = " + json.dumps(SOURCE["wheelhouse"])
+
+        with patch.object(named, "select_endpoint") as select_endpoint:
+            for value in ("0", "false", "[]"):
+                with self.subTest(toml_value=value):
+                    config.write_text(source.replace(setting, "wheelhouse = " + value))
+                    with self.assertRaises(OperationError) as failure:
+                        self.dispatch("deployment/prepare")
+                    self.assertIn("wheelhouse", str(failure.exception))
+
+            select_endpoint.assert_not_called()
+        self.assertFalse(RecordingDocker.seen)
+
     def test_no_old_path_based_deployment_settings_are_accepted(self):
         folder = self.configured()
         source = (folder / "deployment.toml").read_text()

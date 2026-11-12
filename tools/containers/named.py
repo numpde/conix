@@ -188,7 +188,7 @@ def _read(name, *, complete=True):
     selections = {}
     for key in ("wheelhouse", "database_network", "rpc_network"):
         value = document.get(key, "")
-        if value and type(value) is not str:
+        if type(value) is not str:
             raise OperationError(f"deployment.toml {key} must be a string.")
         selections[key] = value
 
