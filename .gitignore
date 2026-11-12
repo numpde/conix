@@ -14,3 +14,6 @@ dist/
 secrets/
 out/
 *.log
+
+# Operator-owned named deployment definitions and preparation receipts.
+config/deployments/

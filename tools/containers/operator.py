@@ -562,6 +562,13 @@ class Docker(DockerClient):
                 or rendered_services["tests"].get("image") != image
                 or rendered_services["tests"].get("read_only") is not True
                 or rendered_services["tests"].get("user") != "65532:65532"
+                or not any(
+                    type(item) is str and item.startswith("/run/conix:")
+                    and "uid=65532" in item.split(",")
+                    and "gid=65532" in item.split(",")
+                    and "mode=0700" in item.split(",")
+                    for item in rendered_services["tests"].get("tmpfs", [])
+                )
                 or rendered_services["postgres"].get("image") != images["postgres"]
                 or rendered_services["postgres"].get("user") != "999:999"
                 or rendered_services["postgres"].get("read_only") is not True

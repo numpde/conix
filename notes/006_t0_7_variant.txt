@@ -19,19 +19,22 @@ Shared T0-7 components
 - Manual `history inspect [--ancestor N]` reads retained identities even
   after a reorganization. `history repair --ancestor N` invokes the same
   RPC-checked Writer.repair_to() and journal; no automatic ancestor search.
-- Retained deployment activation via `deployment/start` creates a STOPPED
-  Compose-defined container, checks its actual confinement and exact
-  ownership, then starts it. `deployment/status`, `deployment/logs` and
-  `deployment/remove` are distinct operator operations. No automatic
-  container restart.
+- The named deployment interface initializes nonsecret settings once,
+  prepares the pinned image/private input snapshot offline, and performs
+  owner-only database initialization separately. `deployment/up` then creates
+  a stopped container, checks its actual confinement and ownership, and
+  starts it. `deployment/status`, `deployment/logs`, and `deployment/down`
+  are repeat operations requiring only the saved deployment name. No
+  automatic container restart.
 - The generic selected-log scanner, writer publication, reader, API and
   source identity are shared unchanged from T0-6; no alternate publisher.
 
 Evidence and limits
 -------------------
 The T0-6 core evidence is documented in note 004 §8.8. Added tests cover
-orchestration behavior, explicit recovery delegation, runtime ownership
-admission and a real Anvil/PostgreSQL tip-following scenario. These tests
+orchestration behavior, named deployment selection, explicit recovery
+delegation, runtime ownership admission, a real installed CLI process,
+and a PostgreSQL/Anvil tip-following scenario. These tests
 are source-level candidate gates until they are executed and recorded
 against a selected rootless Engine and the real dapp32 acceptance fixture.
 No production deployment or full T0-7 qualification is claimed here.

@@ -16,6 +16,7 @@ TOOL_FILES = {
     "tools/containers/client.py",
     "tools/containers/deployment.py",
     "tools/containers/history.py",
+    "tools/containers/named.py",
     "tools/containers/operator.py",
     "tools/fixtures/__init__.py",
     "tools/fixtures/pay_to_play.py",

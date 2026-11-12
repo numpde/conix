@@ -5,7 +5,7 @@ override SHELL := /bin/sh
 
 # Never export GNU Make's recursively expanded command-line variables.
 unexport DOCKER_CONTEXT WHEELHOUSE IMAGE RUNNER_IMAGE INDEXER_IMAGE DAPP32_DIR FIXTURE_DESCRIPTOR
-unexport CONFIG_FILE DSN_FILE INPUT_VOLUME DEPLOYMENT DATABASE_NETWORK RPC_NETWORK
+unexport CONFIG_FILE DSN_FILE OWNER_DSN_FILE INPUT_VOLUME DEPLOYMENT DATABASE_NETWORK RPC_NETWORK
 override export CONIX_MAKE_DOCKER_CONTEXT := $(value DOCKER_CONTEXT)
 override export CONIX_MAKE_WHEELHOUSE := $(value WHEELHOUSE)
 override export CONIX_MAKE_IMAGE := $(value IMAGE)
@@ -15,12 +15,13 @@ override export CONIX_MAKE_DAPP32_DIR := $(value DAPP32_DIR)
 override export CONIX_MAKE_FIXTURE_DESCRIPTOR := $(value FIXTURE_DESCRIPTOR)
 override export CONIX_MAKE_CONFIG_FILE := $(value CONFIG_FILE)
 override export CONIX_MAKE_DSN_FILE := $(value DSN_FILE)
+override export CONIX_MAKE_OWNER_DSN_FILE := $(value OWNER_DSN_FILE)
 override export CONIX_MAKE_INPUT_VOLUME := $(value INPUT_VOLUME)
 override export CONIX_MAKE_DEPLOYMENT := $(value DEPLOYMENT)
 override export CONIX_MAKE_DATABASE_NETWORK := $(value DATABASE_NETWORK)
 override export CONIX_MAKE_RPC_NETWORK := $(value RPC_NETWORK)
 
-.PHONY: test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/postgres/run test/input-staging/run test/indexer/acceptance/run campaign/indexer/acceptance/run history/advance deployment/inputs/create deployment/inputs/remove deployment/config/check deployment/start deployment/status deployment/logs deployment/remove help
+.PHONY: test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/postgres/run test/standalone/run test/input-staging/run test/indexer/acceptance/run campaign/indexer/acceptance/run history/advance deployment/inputs/create deployment/inputs/remove deployment/init deployment/prepare deployment/database/init deployment/config/check deployment/up deployment/status deployment/logs deployment/down help
 
 # Each action's declaration is also the help authority. Recipes share the
 # literal-value dispatchers; no Make target aliases or duplicate help list.
@@ -74,6 +75,9 @@ image/evm-test-runner/check: ## Check EVM test image; DOCKER_CONTEXT=<name> IMAG
 test/postgres/run: ## Run disposable PostgreSQL suite; DOCKER_CONTEXT=<name> RUNNER_IMAGE=<id>
 	$(RUN_OPERATOR)
 
+test/standalone/run: ## Build and qualify installed standalone CLI in disposable PostgreSQL/Anvil; DOCKER_CONTEXT=<name> WHEELHOUSE=<pool>
+	$(RUN_OPERATOR)
+
 test/input-staging/run: ## Prove confined input staging; INDEXER_IMAGE=<id> CONFIG_FILE=<path> DSN_FILE=<path>
 	$(RUN_OPERATOR)
 
@@ -92,18 +96,27 @@ deployment/inputs/create: ## Stage private inputs; INDEXER_IMAGE=<id> CONFIG_FIL
 deployment/inputs/remove: ## Remove selected input volume; INPUT_VOLUME=<owned volume>
 	$(RUN_OPERATOR)
 
-deployment/config/check: ## Check prospective Compose confinement; DEPLOYMENT=<name> INDEXER_IMAGE=<id> INPUT_VOLUME=<volume> DATABASE_NETWORK=<name> RPC_NETWORK=<name>
+deployment/init: ## Create one saved named deployment; DEPLOYMENT=<name> DOCKER_CONTEXT=<name> (prompt for missing first-time settings)
 	$(RUN_OPERATOR)
 
-deployment/start: ## Start admitted standalone indexer; DEPLOYMENT=<name> INDEXER_IMAGE=<id> INPUT_VOLUME=<volume> DATABASE_NETWORK=<name> RPC_NETWORK=<name>
+deployment/prepare: ## Build offline and stage checked runtime inputs for saved DEPLOYMENT=<name>
 	$(RUN_OPERATOR)
 
-deployment/status: ## Inspect selected existing deployment; DEPLOYMENT=<name>
+deployment/database/init: ## Run owner-only schema initialization once for prepared DEPLOYMENT=<name>
 	$(RUN_OPERATOR)
 
-deployment/logs: ## Show bounded logs for owned deployment; DEPLOYMENT=<name>
+deployment/config/check: ## Inspect prepared service configuration without creating resources; DEPLOYMENT=<name>
 	$(RUN_OPERATOR)
 
-deployment/remove: ## Retire selected existing indexer containers; DEPLOYMENT=<name>
+deployment/up: ## Start only the prepared, owner-initialized standalone service; DEPLOYMENT=<name>
+	$(RUN_OPERATOR)
+
+deployment/status: ## Show selected existing deployment without requiring prepared image; DEPLOYMENT=<name>
+	$(RUN_OPERATOR)
+
+deployment/logs: ## Show bounded logs from owned deployment; DEPLOYMENT=<name>
+	$(RUN_OPERATOR)
+
+deployment/down: ## Retire owned indexer containers, keeping database/networks/inputs; DEPLOYMENT=<name>
 	$(RUN_OPERATOR)
 

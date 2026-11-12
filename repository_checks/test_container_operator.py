@@ -84,7 +84,8 @@ elif "compose" in args and "config" in args:
     else:
         print(json.dumps({"services": {
             "tests": {"image": os.environ["CONIX_TEST_RUNNER_IMAGE"],
-                      "read_only": True, "user": "65532:65532"},
+                      "read_only": True, "user": "65532:65532",
+                      "tmpfs": ["/run/conix:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=16m"]},
             "postgres": {"read_only": True, "user": "999:999", "image": os.environ["CONIX_POSTGRES_IMAGE"]},
             "bootstrap": {"read_only": True, "user": "999:999", "image": os.environ["CONIX_POSTGRES_IMAGE"]},
             "anvil": {"image": os.environ["CONIX_FOUNDRY_IMAGE"], "user": "65532:65532",

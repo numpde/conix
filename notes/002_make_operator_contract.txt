@@ -1,119 +1,97 @@
-Conix Make operator interface — 10 November 2026
-=================================================
+Conix — named deployment Make contract (Tier-0-7 B)
+================================================
+12 November 2026
 
-Public targets use <resource>[/<role-or-subject>]/<action>, with exact operator
-inputs, no Make-expression interpolation, no implicit image/wheel acquisition,
-and one explicitly chosen local Docker Engine per command.
+Normal operator interface
+-------------------------
+Each saved deployment has exactly one identity and one retained nonsecret
+selection under ignored config/deployments/<name>/deployment.toml. Creation
+is exclusive; no command overwrites an existing deployment definition.
+No default deployment or implicit Docker context is allowed.
 
-The qualified T0-6 state installs the generic ABI codec, catalog, journal,
-scanner, checkpoint reader and one `conix.worker advance` operation.
-The T0-7 variant on this branch additionally implements a standalone
-`python -I -m conix run` candidate and explicit history inspection/repair.
-Owner-only schema initialization remains an explicit Python API.
-`deployment/start` is the proposed retained activation and needs actual
-rootless Engine qualification; `deployment/config/check` checks its graph
-without creating resources. The old PayToPlay-only runtime stays retired.
+Make targets use <resource>[/<subject>]/<action>. Public application lifecycle:
 
-T0-5 real-contract acceptance is an opt-in owned dapp32 campaign outside
-ordinary CI. Note 004, section 8.8, records its qualification evidence.
+  deployment/init              Save one named definition (first-time interactive
+                               prompts for missing nonsecret paths/selectors).
+  deployment/prepare           Offline image build/admission and private input
+                               snapshot, with an exact prepared receipt.
+  deployment/database/init     Owner-authorized one-shot schema initialization
+                               against separately provisioned SQL roles/schema.
+  deployment/config/check      Check a prepared Compose graph without mutation.
+  deployment/up                Admit and start only the prepared service.
+  deployment/status            Inspect selected project's owned containers.
+  deployment/logs              Display a bounded tail from one owned container.
+  deployment/down              Retire selected owned indexer containers only.
 
-Available operations
---------------------
-test/repository/run                Offline host tests, no Docker or secrets.
-repository/inputs/check            Offline lock and build-context admission.
-image/{python-base,postgres,dockerfile-frontend,foundry}/acquire
-                                   Explicitly pull reviewed pinned images.
-wheelhouse/{check,acquire}         Existing shared pool inspection or
-                                   explicitly authorized missing acquisition.
-image/{indexer,test-runner,evm-test-runner}/build
-                                   Build offline from exact streamed inputs
-                                   and locked wheels; return immutable image ID.
-image/{indexer,evm-test-runner}/check
-                                   Confined networkless installed-code smoke;
-                                   NOT a running indexer qualification.
-test/postgres/run                  Disposable PostgreSQL plus isolated
-                                   Anvil: two owner-initialized sources,
-                                   real raw-log scanner/journal tests and
-                                   restricted runtime/reader privileges.
-test/input-staging/run             Private TOML/ABI/DSN envelope staging,
-                                   installed catalog admission under the
-                                   runtime UID and owned cleanup.
-deployment/inputs/create           Retain one ownership-labelled private
-                                   input volume after catalog admission.
-deployment/inputs/remove           Remove only an explicitly selected
-                                   ownership-verified private input volume.
-deployment/config/check            Read-only inspection of a constrained
-                                   prospective standalone service graph.
-deployment/start                   Create, verify, then start one retained
-                                   standalone indexer on a rootless Engine.
-deployment/logs                    Read a bounded tail of owned service logs.
-deployment/status                  Inspect a previously owned Conix project.
-deployment/remove                  Retire selected labelled Conix indexer
-                                   containers, retaining external DB, networks
-                                   and private input volumes.
-test/indexer/acceptance/run        Borrow an externally prepared dapp32
-                                   PayToPlay fixture under strict source and
-                                   network verification; own only Conix SQL.
-campaign/indexer/acceptance/run    Own a freshly created dapp32 producer,
-                                   run full generic acceptance including
-                                   restart and reorganization repair, and
-                                   retire consumer before producer.
-history/advance                    Run one foreground block advance on the
-                                   selected rootless Engine. Retire only the
-                                   command's worker container.
+  test/standalone/run          Build cached runner and execute the actual
+                               installed CLI in an owned disposable Anvil/PG
+                               stack; retire it and preserve failure causes.
 
-Selectors
----------
-DOCKER_CONTEXT             Explicit local Docker context (no ambient fallback).
-WHEELHOUSE                 Explicit existing host-local pinned wheel pool.
-IMAGE                      Exact immutable image ID for one-image check.
-RUNNER_IMAGE               Exact immutable test-runner image ID.
-INDEXER_IMAGE              Exact immutable installed core library image ID.
-FIXTURE_DESCRIPTOR          Existing private owner-owned mode-0600 descriptor.
-DAPP32_DIR                  Explicit absolute dapp32 checkout (owned campaign).
-CONFIG_FILE, DSN_FILE       Absolute paths to operator-owned staged inputs.
-                           Each staged abi_file is abi/<name>.json beside
-                           CONFIG_FILE. Keep the DSN source mode 0600. A
-                           final LF or CRLF terminates the credential line.
-INPUT_VOLUME               Exact ownership-labelled staged resource ID.
-DEPLOYMENT                  Exact selected Conix deployment name.
-DATABASE_NETWORK, RPC_NETWORK  Explicit separate pre-existing networks.
-                           For history/advance select internal local bridges.
+After initialization, only DEPLOYMENT=<name> is needed for ordinary repeated
+operations. The saved Docker context is the sole authority; a conflicting
+explicit override fails. Missing declarations may be recovered only for
+status/logs/down with an explicit DOCKER_CONTEXT. The saved declaration
+may not be used to supply credentials via argv or environment.
 
-The dapp32 descriptor establishes test deployment facts, not cleanup rights.
-Only the producer's verified up/info/down contract grants owned-fixture cleanup.
-The host admits the private producer descriptor; test consumers receive only
-the public PayToPlay ABI and role addresses, while the owner receives a
-narrower source record. No child receives producer wallet keys. The test-only
-Foundry Cast binary stays in the EVM runner image, not the product wheel.
+First-time init:
+  make deployment/init DEPLOYMENT=local DOCKER_CONTEXT=agentic
 
-The host copies the exact declared ABI files alongside the configuration
-and DSN into one private volume. The installed catalog validates the staged
-inputs offline with the volume mounted read-only as UID/GID 65532. This
-prepares the inputs for operator use. The owner-only initializer exists as
-a Python API and has no Make action yet.
+The init command requires the following selections, prompting from /dev/tty
+only when interactive and absent: CONFIG_FILE, DSN_FILE, OWNER_DSN_FILE,
+DATABASE_NETWORK, RPC_NETWORK, WHEELHOUSE. All host paths are absolute.
+The source config and adjacent declared ABIs are immutable after staging.
+The runtime and owner DSN are separate operator-owned mode-0600 files.
+The owner DSN is never staged in the indexer volume.
 
-history/advance uses INDEXER_IMAGE, INPUT_VOLUME, DATABASE_NETWORK and
-RPC_NETWORK. The image and runtime credential must match the selected
-owner-initialized source. A successful stdout receipt identifies the
-source and either the published block or the at-tip outcome. Cleanup
-uncertainty exits with failure and reports a known worker outcome on stderr.
-When publication is unconfirmed, inspect durable progress before running
-another advance. The two networks, input volume and database are borrowed.
+Ordered operational commands:
+  make deployment/prepare DEPLOYMENT=local
+  make deployment/database/init DEPLOYMENT=local
+  make deployment/config/check DEPLOYMENT=local
+  make deployment/up DEPLOYMENT=local
+  make deployment/status DEPLOYMENT=local
+  make deployment/logs DEPLOYMENT=local
+  make deployment/down DEPLOYMENT=local
 
-T0-7 retained service and operator recovery (branch candidate)
-------------------------------------------------------------
-Run `deployment/config/check` before `deployment/start`. Activation admits
-the actual immutable image and input volume, both distinct internal local
-bridge networks, and the selected rootless Engine. It creates a stopped
-Compose-defined container, checks its actual confined identity, then starts
-that exact container. It refuses an existing deployment rather than silently
-recreating it. Uncertain partial creation is retained for explicit
-`deployment/status`/`deployment/remove` recovery, not blindly deleted.
+Preparation uses the checked wheelhouse and pinned base images available on
+the saved local rootless Engine; missing artifacts require explicit separate
+acquisition. Successful image/staging admission produces an owner-only
+prepared receipt naming the exact immutable image ID and private volume ID.
+Failed preparation does not publish a candidate. Repreparing refuses a live
+service; old input state is retired only after a replacement was prepared.
+No second generic Docker orchestration framework is installed.
 
-Inside the runtime image, `python -I -m conix history inspect` lists up to
-64 retained block identities even if the provider's chain has diverged;
-`history inspect --ancestor N` looks up any exact retained height. Run
-`history repair --ancestor N` only after selecting a retained canonical
-ancestor; the installed core and journal alone validate and mutate history.
-No automatic reorg repair or crash restart is performed in Tier 0.
+Schema initialization assumes precreated database/schema roles from the
+existing owner-only contract. Only the selected conix_owner role may create
+tables and grant runtime/read privileges. A short-lived confined networked
+initializer reads the owner credential via private stdin and calls the
+installed conix.schema.initialize(). The normal service never gets the
+owner credential or DDL authority. No migration, implicit DB provisioning
+or automatic replay of an uncertain initialization.
+
+Up may use only the prepared image/input and two separately admitted existing
+internal bridges. The maintained operator creates the container stopped,
+checks the actual image, UID, mounts, capabilities, networks and resource
+limits, then starts it. Status/logs/down work without the prepared receipt
+and do not delete external SQL, networks, private volume or images.
+No implicit acquisition, rebuild, schema installation, retry or reorg repair.
+
+Legacy low-level operations remain for explicit diagnostics/maintenance:
+history/advance, deployment/inputs/create, deployment/inputs/remove,
+test/postgres/run, the separate image and wheelhouse targets, and
+campaign/indexer/acceptance/run. They are not alternate normal deployment
+flows. deployment/start and deployment/remove are NOT exported aliases.
+
+Trust and tests
+---------------
+The operator alone constructs Docker subprocess argument arrays; Make captures
+literal command-line values without evaluating them. Credentials never enter
+container argv, image layers, labels or ordinary logs. Owner and runtime
+identities stay separate. The existing checked scanner/publisher/reader and
+explicit repair remain the single source of truth. Avoid duplicate validators
+or generic lifecycle registries.
+
+Test the real Make surface, saved configuration and privilege selection,
+failure boundaries, Docker admission and cleanup, installed process and
+its SIGTERM behavior, durable SQL checkpoints, tip release and later arrival.
+The disposable suite and repository checks do not establish retained-service
+production readiness or all dapp32 consumer behavior.

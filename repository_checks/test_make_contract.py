@@ -15,12 +15,13 @@ TARGETS = {
     "wheelhouse/check", "wheelhouse/acquire",
     "image/indexer/build", "image/test-runner/build", "image/evm-test-runner/build",
     "image/indexer/check", "image/evm-test-runner/check",
-    "test/postgres/run", "test/input-staging/run",
+    "test/postgres/run", "test/standalone/run", "test/input-staging/run",
     "test/indexer/acceptance/run", "campaign/indexer/acceptance/run",
     "history/advance",
     "deployment/inputs/create", "deployment/inputs/remove",
-"deployment/config/check", "deployment/start",
-"deployment/status", "deployment/logs", "deployment/remove",
+    "deployment/init", "deployment/prepare", "deployment/database/init",
+    "deployment/config/check", "deployment/up",
+    "deployment/status", "deployment/logs", "deployment/down",
 }
 
 
@@ -60,6 +61,7 @@ class MakeContractTests(unittest.TestCase):
             "DOCKER_CONTEXT", "WHEELHOUSE", "IMAGE", "RUNNER_IMAGE",
             "INDEXER_IMAGE", "FIXTURE_DESCRIPTOR", "DAPP32_DIR",
             "DEPLOYMENT", "INPUT_VOLUME", "CONFIG_FILE", "DSN_FILE",
+            "OWNER_DSN_FILE",
             "DATABASE_NETWORK", "RPC_NETWORK",
         ):
             with self.subTest(name=name):

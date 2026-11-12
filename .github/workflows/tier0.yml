@@ -40,6 +40,9 @@ jobs:
           make image/indexer/check DOCKER_CONTEXT=default IMAGE="$runtime"
           test_image="$(make -s image/test-runner/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
           make test/postgres/run DOCKER_CONTEXT=default RUNNER_IMAGE="$test_image"
+          # The named disposable lane independently builds and starts the
+          # actual installed CLI, then retires its owned PostgreSQL/Anvil stack.
+          make test/standalone/run DOCKER_CONTEXT=default WHEELHOUSE="$pool"
           fixture_image="$(make -s image/evm-test-runner/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
           make image/evm-test-runner/check DOCKER_CONTEXT=default IMAGE="$fixture_image"
           # Stage the real distribution's fixed inputs in a private engine volume.
@@ -54,8 +57,13 @@ jobs:
           printf '%s\n' 'postgresql://fixture:disposable@postgres:5432/conix_test' > "$dsn"
           make test/input-staging/run DOCKER_CONTEXT=default INDEXER_IMAGE="$runtime" \
             CONFIG_FILE="$candidate/config.toml" DSN_FILE="$dsn"
-          # Render the actual production profile without creating resources.
-          make deployment/config/check DOCKER_CONTEXT=default \
-            DEPLOYMENT=ci INDEXER_IMAGE="$runtime" \
-            INPUT_VOLUME="conix-inputs-aaaaaaaaaaaaaaaaaaaaaaaa" \
-            DATABASE_NETWORK="payment-db" RPC_NETWORK="payment-rpc"
+          # A real named configuration contains only paths/names; preparation
+          # checks and stages private inputs. No SQL or application is started.
+          owner="$candidate/owner.dsn"
+          (umask 077; printf '%s\n' 'postgresql://owner:disposable@postgres:5432/conix_test' > "$owner")
+          make deployment/init DEPLOYMENT=ci DOCKER_CONTEXT=default \
+            CONFIG_FILE="$candidate/config.toml" DSN_FILE="$dsn" \
+            OWNER_DSN_FILE="$owner" DATABASE_NETWORK=payment-db \
+            RPC_NETWORK=payment-rpc WHEELHOUSE="$pool"
+          make deployment/prepare DEPLOYMENT=ci
+          make deployment/config/check DEPLOYMENT=ci

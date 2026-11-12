@@ -16,8 +16,8 @@ SCALARS_ADDRESS = "0x" + "33" * 20
 SCALARS_EVENT = "IndexedScalars(int8,bool,bytes4)"
 
 
-def catalog_for_anvil(*, genesis_hash: str, rpc_url: str) -> Catalog:
-    """Compile the same selected event source for the owner and both consumers."""
+def source_toml_for_anvil(*, genesis_hash: str, rpc_url: str) -> str:
+    """Produce the exact selected source TOML used by owner and runtime."""
     template = (FIXTURES / "catalog.toml").read_text(encoding="utf-8")
     template = template.replace(
         'genesis_hash = "0x' + "00" * 32 + '"',
@@ -31,6 +31,12 @@ def catalog_for_anvil(*, genesis_hash: str, rpc_url: str) -> Catalog:
         f'\n[contracts.scalars]\naddress = "{SCALARS_ADDRESS}"\n'
         f'abi_file = "abi/indexed_scalars.json"\nevents = ["{SCALARS_EVENT}"]\n'
     )
+    return template
+
+
+def catalog_for_anvil(*, genesis_hash: str, rpc_url: str) -> Catalog:
+    """Compile the exact source selected by the owner and both consumers."""
+    template = source_toml_for_anvil(genesis_hash=genesis_hash, rpc_url=rpc_url)
 
     with tempfile.TemporaryDirectory() as folder:
         directory = Path(folder)

@@ -129,44 +129,84 @@ Conix SQL project; on uncertain cleanup, inspect the reported ownership IDs.
 Note 004, section 8.8, records the tested revisions and environment, the scope
 of ordinary CI, and the open Tier-0 release gates.
 
-Security and next step
-----------------------
-Private DB credentials are never embedded in images or public logs.
-Container operators preserve the first failure and report uncertain cleanup
-independently. Existing retained deployments may be inspected or removed
-using ownership-constrained deployment/status and deployment/remove.
+Named T0-7 B deployment (candidate)
+----------------------------------
+T0-7 B is the standalone continuous indexer. Its normal lifecycle follows
+the saved-deployment model used by Agent Mail and the prepare/run separation
+used by NMR provider tools. The schema, scanner, journal, reader and
+one-shot history/advance command retain their existing owners.
 
-The signer and economic policy remain external. After the owner initializes the
-schema and you stage the runtime inputs, select two existing internal
-Docker networks with the database and RPC peers:
+A fresh deployment first records one nonsecret selection. The init command
+prompts once for any omitted settings when attached to a terminal; in CI or
+another unattended shell all values must be supplied explicitly:
 
-    make history/advance DOCKER_CONTEXT=agentic INDEXER_IMAGE="$indexer" \
-      INPUT_VOLUME="$inputs" DATABASE_NETWORK="$db_network" RPC_NETWORK="$rpc_network"
+    make deployment/init DEPLOYMENT=local DOCKER_CONTEXT=agentic
 
-The command runs the installed `conix.worker advance` once and retires its
-container. It reports the confirmed block identity or that the source was
-at tip. This branch also provides a T0-7 standalone service candidate:
+One-time settings are CONFIG_FILE (absolute Conix source TOML, with adjacent
+abi/ files), DSN_FILE (mode-0600 runtime database credential), OWNER_DSN_FILE
+(mode-0600 schema-owner database credential), DATABASE_NETWORK, RPC_NETWORK,
+and WHEELHOUSE (existing shared offline wheel pool). Initialization stores
+only their *paths/names*, not credential contents, under ignored
+config/deployments/local/deployment.toml (mode 0600, parent mode 0700).
+There is no implicit Docker context, network, database or source.
 
-    make deployment/config/check DOCKER_CONTEXT=agentic DEPLOYMENT=payments \
-      INDEXER_IMAGE="$indexer" INPUT_VOLUME="$inputs" \
-      DATABASE_NETWORK="$db_network" RPC_NETWORK="$rpc_network"
-    make deployment/start DOCKER_CONTEXT=agentic DEPLOYMENT=payments \
-      INDEXER_IMAGE="$indexer" INPUT_VOLUME="$inputs" \
-      DATABASE_NETWORK="$db_network" RPC_NETWORK="$rpc_network"
-    make deployment/status DOCKER_CONTEXT=agentic DEPLOYMENT=payments
-    make deployment/logs DOCKER_CONTEXT=agentic DEPLOYMENT=payments
+Then run the named operations without repeating the underlying resources:
 
-The standalone image runs `python -I -m conix run` until stopped or a
-nonrecoverable error exits the process. Tier 0 does not automatically
-restart. To inspect stored block identities or repair an explicitly chosen
-canonical ancestor, invoke `python -I -m conix history inspect` or
-`python -I -m conix history repair --ancestor N` inside an appropriately
-confined runtime container with staged inputs. Retire the owned service via
-`deployment/remove` while retaining external resources. T0-7 must be
-qualified in an actual selected environment before production use.
-Schema initialization uses the owner-only `conix.schema.initialize()` API
-in a separate process. Readers use `open_reader()` with the SELECT-only
-credential. An operator chooses a retained canonical ancestor and invokes
-`Writer.repair_to()` explicitly when repair is required.
-Do not reintroduce Collection models, PayToPlay-specific decoders or
-unqualified completeness shortcuts.
+    make deployment/prepare DEPLOYMENT=local
+    make deployment/database/init DEPLOYMENT=local
+    make deployment/config/check DEPLOYMENT=local
+    make deployment/up DEPLOYMENT=local
+    make deployment/status DEPLOYMENT=local
+    make deployment/logs DEPLOYMENT=local
+    make deployment/down DEPLOYMENT=local
+
+Prepare checks the pinned cached wheelhouse, builds the selected image
+offline, checks the image, stages and verifies a private input volume, then
+records the exact image/volume IDs in a private prepared receipt. No missing
+base image or wheel is automatically downloaded. Use the separate explicit
+image/*/acquire and wheelhouse/acquire operations if inputs are missing.
+Preparing an upgrade requires the selected standalone service to be down.
+An old input volume is retired only after replacement preparation succeeds.
+
+The PostgreSQL service and roles/schema must ALREADY exist on the selected
+internal database network: conix_owner owns schema conix, while the distinct
+conix_runtime and conix_reader roles have their ordinary restricted grants.
+The separately authorized deployment/database/init sends the private owner
+credential to a short-lived non-root container through stdin only and
+calls the owner-only conix.schema.initialize() API. It never makes the
+ordinary indexer a schema owner. It is create-only and refuses initialized
+or incompatible history. Its outcome is unknown if transport fails; inspect
+the database before retrying.
+
+Up starts only a previously prepared candidate. It does NOT prepare an
+image, pull dependencies, initialize the schema, create Docker networks or
+change source identity. The actual container runs `python -I -m conix run`.
+The host command exits once the contained service starts. Tier 0 does not
+automatically retry transient RPC failures, repair a reorganization or
+restart a failed service. Status/logs/down inspect or retire only owned
+indexer containers and preserve the external database, networks, image
+and staged inputs. If the saved declaration has been lost, recovery may
+use an explicit DOCKER_CONTEXT=<name> with DEPLOYMENT=<name> for those three
+commands only. A conflicting context is rejected while the saved file exists.
+
+For a complete disposable demonstration and installed-process qualification:
+
+    make test/standalone/run DOCKER_CONTEXT=agentic WHEELHOUSE="$HOME/Downloads/wheelhouse"
+
+That command builds a test runner offline from selected cached inputs,
+creates an isolated Anvil/PostgreSQL stack, initializes the schema under
+its separate owner, runs the contained tests (including a real launched
+`python -I -m conix run` process), and retires owned resources. It is NOT
+a deployed instance and cannot alter the saved named deployment.
+
+Manual repair stays explicit. Inside an appropriately confined container
+with the selected staged inputs, `python -I -m conix history inspect`
+reads bounded retained ancestry; `python -I -m conix history repair
+--ancestor N` uses the existing core's canonicality-checked repair.
+Do not treat a stored identity alone as a canonical-chain proof.
+
+Remaining qualification: a dedicated retained-deployment campaign on
+the selected rootless Engine and the full dapp32 end-to-end scenario.
+Existing GitHub CI and the disposable Anvil/PostgreSQL tests are evidence
+only for the paths they actually execute. No runtime production readiness
+or automatic recovery guarantee follows from a green repository check.
