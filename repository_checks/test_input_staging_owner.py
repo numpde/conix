@@ -22,6 +22,9 @@ class InputStagingOwnershipContracts(unittest.TestCase):
             definition.write_bytes(
                 b'[contracts.token]\nabi_file = "abi/selected.json"\n'
             )
+            # The admission contract requires non-writable sources under any host umask.
+            selected.chmod(0o644)
+            definition.chmod(0o644)
             stager = InputStaging()
             configuration, members = stager.catalog_snapshot(definition)
             self.assertIn(b"abi/selected.json", configuration)
