@@ -19,6 +19,7 @@ TOOL_FILES = {
     "tools/containers/history.py",
     "tools/containers/named.py",
     "tools/containers/operator.py",
+    "tools/containers/resources.py",
     "tools/fixtures/__init__.py",
     "tools/fixtures/pay_to_play.py",
     "tools/fixtures/protocol.py",

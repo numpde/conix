@@ -20,7 +20,7 @@ import tempfile
 import tomllib
 
 from tools.containers.client import CONTEXT_NAME, IMAGE_ID, OperationError, select_endpoint
-from tools.containers.history import VOLUME_NAME, _admit_network, _admit_volume
+from tools.containers.resources import VOLUME_NAME, _admit_network, _admit_volume
 
 
 ROOT = Path(__file__).resolve().parents[2]
