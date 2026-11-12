@@ -6,16 +6,19 @@ attempted redaction or copying source exception prose.
 """
 
 import json
+import re
 
 PREFIX = b"CONIX-FAILURE-V1 "
 PHASES = frozenset({"staging", "verification", "staged_inputs", "advance"})
 CAUSES = frozenset({
-    "InputError", "OSError", "UnexpectedError", "CommitOutcomeUnknown",
+    "InputError", "OSError", "CommitOutcomeUnknown",
     "BranchConflict", "HistoryConflict", "StorageUnavailable", "WriterBusy",
     "RpcProtocolError", "RpcUnavailable", "MalformedABIData",
     "ResourceExceeded", "TimeoutError", "KeyboardInterrupt",
 })
 EFFECTS = frozenset({"not_started", "unconfirmed", "commit_unknown"})
+CAUSE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}\Z")
+SOURCE_LOCATION = re.compile(r"(?:[A-Za-z_][A-Za-z0-9_]{0,63}\.py:[1-9][0-9]{0,5}|unavailable)\Z")
 
 
 def _unique_pairs(pairs):
@@ -36,12 +39,25 @@ def admitted(stderr):
         fields = json.loads(payload, object_pairs_hook=_unique_pairs)
     except (UnicodeError, ValueError):
         return None
-    if (type(fields) is not dict or set(fields) != {"phase", "cause", "effect"}
-            or any(type(value) is not str for value in fields.values())
-            or fields["phase"] not in PHASES
-            or fields["cause"] not in CAUSES
-            or fields["effect"] not in EFFECTS
-            or (fields["effect"] == "commit_unknown") != (fields["cause"] == "CommitOutcomeUnknown")):
+    if type(fields) is not dict or set(fields) not in (
+        {"phase", "cause", "effect"},
+        {"phase", "cause", "effect", "location"},
+    ):
+        return None
+    if any(type(value) is not str for value in fields.values()):
+        return None
+
+    location = fields.get("location")
+    if (
+        fields["phase"] not in PHASES
+        or fields["effect"] not in EFFECTS
+        or (fields["effect"] == "commit_unknown") != (fields["cause"] == "CommitOutcomeUnknown")
+        or (location is None and fields["cause"] not in CAUSES)
+        or (location is not None and (
+            SOURCE_LOCATION.fullmatch(location) is None
+            or CAUSE_NAME.fullmatch(fields["cause"]) is None
+        ))
+    ):
         return None
     return fields
 
@@ -57,4 +73,5 @@ def explanation(stderr, exit_code, *, phases):
         "unconfirmed": "durable outcome unconfirmed",
         "commit_unknown": "PostgreSQL COMMIT outcome unknown",
     }[fields["effect"]]
-    return f"phase={phase}; cause={fields['cause']}; effect={effect}; exit={exit_code}"
+    location = f"; location={fields['location']}" if "location" in fields else ""
+    return f"phase={phase}; cause={fields['cause']}; effect={effect}{location}; exit={exit_code}"

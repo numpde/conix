@@ -7,7 +7,7 @@ import sys
 from conix.abi import MalformedABIData, ResourceExceeded
 from conix.core import BranchConflict, open_writer
 from conix.input_staging import InputError, load_runtime_inputs
-from conix.process_diagnostic import emit
+from conix.process_diagnostic import emit, emit_unexpected
 from conix.journal import CommitOutcomeUnknown, HistoryConflict, StorageUnavailable, WriterBusy
 from conix.rpc import RpcProtocolError, RpcUnavailable
 
@@ -25,7 +25,7 @@ def main():
     if sys.argv[1:] != ["advance"]:
         raise SystemExit("Use python -I -m conix.worker advance with staged inputs.")
 
-    phase = "staged inputs"
+    phase = "staged_inputs"
     try:
         (catalog, database_dsn) = load_runtime_inputs()
         phase = "advance"
@@ -37,14 +37,23 @@ def main():
         emit(phase="advance", cause="CommitOutcomeUnknown", effect="commit_unknown")
         raise SystemExit(2) from None
     except (TimeoutError, KeyboardInterrupt) as error:
-        emit(phase=phase, cause=type(error).__name__, effect="unconfirmed")
+        emit(
+            phase=phase, cause=type(error).__name__,
+            effect="not_started" if phase == "staged_inputs" else "unconfirmed",
+        )
         raise SystemExit(2) from None
     except (BranchConflict, HistoryConflict, StorageUnavailable, WriterBusy,
             RpcProtocolError, RpcUnavailable, MalformedABIData, ResourceExceeded) as error:
-        emit(phase=phase, cause=type(error).__name__, effect="unconfirmed")
+        emit(
+            phase=phase, cause=type(error).__name__,
+            effect="not_started" if phase == "staged_inputs" else "unconfirmed",
+        )
         raise SystemExit(2) from None
-    except Exception:
-        emit(phase=phase, cause="UnexpectedError", effect="unconfirmed")
+    except Exception as error:
+        emit_unexpected(
+            phase=phase, error=error,
+            effect="not_started" if phase == "staged_inputs" else "unconfirmed",
+        )
         raise SystemExit(2) from None
 
     receipt = {"outcome": "at_tip", "source_id": catalog.source_id.hex()}

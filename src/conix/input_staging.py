@@ -11,7 +11,7 @@ import stat
 import struct
 import sys
 import traceback
-from conix.process_diagnostic import emit
+from conix.process_diagnostic import emit, emit_unexpected
 from itertools import islice
 from pathlib import Path
 
@@ -242,10 +242,10 @@ def main(argv: list[str] | None = None) -> None:
             effect="unconfirmed" if operation == ["stage"] else "not_started",
         )
         raise SystemExit(2) from None
-    except Exception:
-        emit(
+    except Exception as error:
+        emit_unexpected(
             phase="staging" if operation == ["stage"] else "verification",
-            cause="UnexpectedError",
+            error=error,
             effect="unconfirmed" if operation == ["stage"] else "not_started",
         )
         raise SystemExit(2) from None

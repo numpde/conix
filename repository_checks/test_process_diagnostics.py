@@ -35,6 +35,23 @@ class ProcessDiagnosticContracts(unittest.TestCase):
             with self.subTest(payload=input_bytes[:40]):
                 self.assertIsNone(admitted(input_bytes))
 
+    def test_unexpected_type_requires_safe_source_location(self):
+        case = b'CONIX-FAILURE-V1 {"phase":"staged_inputs","cause":"ValueError","effect":"not_started","location":"input_staging.py:233"}'
+        self.assertEqual(admitted(case)["cause"], "ValueError")
+        self.assertIn("location=input_staging.py:233", explanation(
+            case, 2, phases={"staged_inputs"},
+        ))
+        for payload in (
+            case.replace(b',"location":"input_staging.py:233"', b""),
+            case.replace(b"input_staging.py:233", b"/etc/shadow:5"),
+            case.replace(b"input_staging.py:233", b"secret\\nname.py:5"),
+            case.replace(b"input_staging.py:233", b"input_staging.py:0"),
+            case.replace(b"ValueError", b"Private/Password"),
+            case.replace(b"input_staging.py:233", b"input_staging.py:1234567890"),
+        ):
+            with self.subTest(payload=payload):
+                self.assertIsNone(admitted(payload))
+
     def test_staging_diagnostic_cannot_impersonate_history_worker(self):
         payload = b'CONIX-FAILURE-V1 {"phase":"staging","cause":"InputError","effect":"unconfirmed"}'
         self.assertIsNone(explanation(payload, 2, phases={"advance", "staged_inputs"}))
