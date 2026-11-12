@@ -130,6 +130,73 @@ class InstalledFailurePipeline(unittest.TestCase):
         self.assertIn("location=test_process_failure_pipeline.py:", report)
         self.assertNotIn(PRIVATE, report)
 
+    def test_worker_timeout_before_writer_start_reports_no_durable_effect(self):
+        def fail_loading():
+            raise TimeoutError(PRIVATE)
+
+        with (
+            patch.object(worker.sys, "argv", ["conix.worker", "advance"]),
+            patch.object(worker, "load_runtime_inputs", side_effect=fail_loading),
+        ):
+            output = failure_from(worker.main)
+        self.assertEqual(admitted(output), {
+            "phase": "staged_inputs", "cause": "TimeoutError", "effect": "not_started",
+        })
+        self.assertNotIn(PRIVATE.encode(), output)
+
+    def test_worker_timeout_after_writer_start_reports_uncertain_effect(self):
+        async def timed_out(*_args):
+            raise TimeoutError(PRIVATE)
+
+        with (
+            patch.object(worker.sys, "argv", ["conix.worker", "advance"]),
+            patch.object(worker, "load_runtime_inputs", return_value=(SimpleNamespace(), PRIVATE)),
+            patch.object(worker, "advance", side_effect=timed_out),
+        ):
+            output = failure_from(worker.main)
+        self.assertEqual(admitted(output), {
+            "phase": "advance", "cause": "TimeoutError", "effect": "unconfirmed",
+        })
+        self.assertNotIn(PRIVATE.encode(), output)
+
+    def test_unknown_commit_retains_dedicated_effect_without_transaction_details(self):
+        async def unknown_commit(*_args):
+            raise worker.CommitOutcomeUnknown(PRIVATE)
+
+        with (
+            patch.object(worker.sys, "argv", ["conix.worker", "advance"]),
+            patch.object(worker, "load_runtime_inputs", return_value=(SimpleNamespace(), PRIVATE)),
+            patch.object(worker, "advance", side_effect=unknown_commit),
+        ):
+            output = failure_from(worker.main)
+        self.assertEqual(admitted(output), {
+            "phase": "advance", "cause": "CommitOutcomeUnknown", "effect": "commit_unknown",
+        })
+        report = explanation(output, 2, phases={"advance"})
+        self.assertIn("PostgreSQL COMMIT outcome unknown", report)
+        self.assertNotIn(PRIVATE, report)
+        self.assertNotIn(PRIVATE.encode(), output)
+
+    def test_unexpected_exception_is_not_stringified_to_build_its_diagnostic(self):
+        class NoStringError(RuntimeError):
+            def __str__(self):
+                raise AssertionError("Exception text must not be read")
+
+        def explode():
+            raise NoStringError(PRIVATE)
+
+        with (
+            patch.object(worker.sys, "argv", ["conix.worker", "advance"]),
+            patch.object(worker, "load_runtime_inputs", side_effect=explode),
+        ):
+            output = failure_from(worker.main)
+        fields = admitted(output)
+        self.assertEqual(fields["cause"], "NoStringError")
+        self.assertIn("location=test_process_failure_pipeline.py:", explanation(
+            output, 2, phases={"staged_inputs"},
+        ))
+        self.assertNotIn(PRIVATE.encode(), output)
+
     def test_worker_known_input_error_does_not_gain_untrusted_details(self):
         with (
             patch.object(worker.sys, "argv", ["conix.worker", "advance"]),
