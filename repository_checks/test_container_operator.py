@@ -513,14 +513,24 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 env["CONIX_FAKE_MISSING_RESOURCE"] = "1"
             if fail_up:
                 env["CONIX_FAKE_UP_FAIL"] = "1"
+            # Keep the actual confinement/security tests on the low-level
+            # operator. The named public interface no longer takes these
+            # image, volume or network arguments on every invocation.
+            program = "\n".join((
+                "from pathlib import Path",
+                "import sys",
+                "from tools.containers.operator import Docker, OperationError",
+                "try:",
+                "  Docker('unix:///tmp/science-docker.sock', Path('/tmp')).deployment("
+                "operation=" + repr(operation) + ", name='pilot', "
+                "image='sha256:' + 'a'*64, volume='conix-inputs-' + 'b'*24, "
+                "database='db-conix', rpc='rpc-conix')",
+                "except OperationError as e:",
+                "  sys.exit('Conix container operation failed (OperationError): ' + str(e))",
+            ))
             result = subprocess.run([
-                sys.executable, "-m", "tools.containers.operator",
-                "--context", "science", "--origin", "command line",
-                "deployment/" + operation, "--deployment", "pilot",
-                "--indexer-image", "sha256:" + "a" * 64,
-                "--volume", "conix-inputs-" + "b" * 24,
-                "--database-network", "db-conix", "--rpc-network", "rpc-conix",
-            ], env=env, capture_output=True, text=True, timeout=15)
+                sys.executable, "-c", program,
+            ], cwd=ROOT, env=env, capture_output=True, text=True, timeout=15)
             return result, [
                 json.loads(line) for line in log.read_text().splitlines()
             ] if log.exists() else []
