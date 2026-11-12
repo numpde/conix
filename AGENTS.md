@@ -130,7 +130,7 @@ or container tests are green.
 
 Sibling-fixture campaign
 ------------------------
-The explicit campaign/indexer/acceptance/run lane consumes the public dapp32 repository's
+The explicit test/indexer/acceptance/owned/run lane consumes the public dapp32 repository's
 supported fixture/up, fixture/info and fixture/down contract, never changes its
 source or starts a replacement Anvil implementation. The host admits the bounded private producer descriptor, but projects a
 keyless public source for all child phases. Producer test keys never enter
@@ -183,7 +183,7 @@ selected Docker operator without changing the sibling checkout.
 tools/fixtures/protocol.py owns the test-only JSON fixture admission and
 phase records; its source is copied into EVM/test images but never packaged
 in the installed Conix runtime. Host operators must not import from tests/.
-tools/fixtures/deployment.py owns test/deployment/run and its external test
+tools/fixtures/deployment.py owns test/deployment/acceptance/run and its external test
 services. It boots the committed deployment-acceptance profile through the
 ordinary named Make lifecycle. tools/fixtures/process.py owns bounded child
 processes for both campaigns. The two committed deployment-acceptance DSNs
@@ -210,9 +210,9 @@ operations do not make the scientific scanner or journal a host operator.
 Deployment/down retires only the selected labelled Conix indexer containers,
 not external networks, SQL or inputs.
 
-The borrowed test/indexer/acceptance/run accepts a mode-0600 private JSON
+The borrowed test/indexer/acceptance/borrowed/run accepts a mode-0600 private JSON
 fixture descriptor and has NO producer lifecycle rights.
-campaign/indexer/acceptance/run creates, verifies and owns one producer
+test/indexer/acceptance/owned/run creates, verifies and owns one producer
 fixture, then retires its own consumers before calling the producer's
 fixture/down. Do not reintroduce the old PayToPlay-only test command.
 

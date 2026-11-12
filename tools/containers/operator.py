@@ -664,7 +664,7 @@ def main():
         "wheelhouse/check", "wheelhouse/acquire",
         "image/indexer/build", "image/test-runner/build", "image/evm-test-runner/build",
         "image/indexer/check", "image/evm-test-runner/check",
-        "test/indexer/run", "test/deployment/run", "test/input-staging/run",
+        "test/indexer/run", "test/deployment/acceptance/run", "test/input-staging/run",
         "history/advance",
         "deployment/inputs/create", "deployment/inputs/remove",
         "deployment/init", "deployment/prepare", "deployment/database/init",
@@ -706,7 +706,7 @@ def main():
             options.database_network = make_inputs["DATABASE_NETWORK"]
             options.rpc_network = make_inputs["RPC_NETWORK"]
 
-        if options.action == "test/deployment/run":
+        if options.action == "test/deployment/acceptance/run":
             from tools.fixtures.deployment import run_acceptance
 
             run_acceptance(options, client_cls=Docker, pinned_images=pinned_images)

@@ -27,4 +27,4 @@ class PrototypeRemovalContracts(unittest.TestCase):
             with self.subTest(target=obsolete):
                 self.assertNotIn(obsolete, make)
         self.assertNotIn("conix.commands", make)
-        self.assertIn("test/indexer/acceptance/run", make)
+        self.assertIn("test/indexer/acceptance/borrowed/run", make)

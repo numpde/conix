@@ -129,7 +129,7 @@ Docker sockets or owner credentials in the runtime.
 
 Retained deployment acceptance
 -----------------------------
-test/deployment/run owns the stable deployment-acceptance test identity. Its
+test/deployment/acceptance/run owns the stable deployment-acceptance test identity. Its
 complete definition, ABI and disposable DSNs are tracked under
 config/deployments/deployment-acceptance/. They are test credentials only;
 never install real deployment credentials in that directory. Git cannot

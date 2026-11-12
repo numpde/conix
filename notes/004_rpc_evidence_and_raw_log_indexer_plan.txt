@@ -884,8 +884,8 @@ Conix and checked by a separately maintained eth_abi codec. A fixture test
 passing proves only the fixture oracle, NOT generic Conix support.
 
 Executable acceptance entrypoints:
-  test/indexer/acceptance/run         (borrowed validated dapp32 fixture)
-  campaign/indexer/acceptance/run     (owned dapp32 fixture lifecycle)
+  test/indexer/acceptance/borrowed/run         (borrowed validated dapp32 fixture)
+  test/indexer/acceptance/owned/run     (owned dapp32 fixture lifecycle)
   tests/generic_acceptance.py        (installed-image phases)
 
 The opt-in gate obtains public genesis via a genuine RPC-connected Anvil

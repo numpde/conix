@@ -563,7 +563,7 @@ def main():
     parser.add_argument("--from-make", action="store_true")
     parser.add_argument("--origin", required=True)
     parser.add_argument("action", choices=(
-        "test/indexer/acceptance/run", "campaign/indexer/acceptance/run",
+        "test/indexer/acceptance/borrowed/run", "test/indexer/acceptance/owned/run",
     ))
     parser.add_argument("--context")
     parser.add_argument("--dapp32-dir")
@@ -581,7 +581,7 @@ def main():
         if not IMAGE_ID.fullmatch(options.runner_image or ""):
             raise CampaignError("Select a prebuilt immutable RUNNER_IMAGE=sha256:<id> with role evm-test-runner.")
 
-        owns_producer = options.action.startswith("campaign/")
+        owns_producer = options.action == "test/indexer/acceptance/owned/run"
 
         if owns_producer:
             sibling_checkout_path = sibling_checkout(options.dapp32_dir)

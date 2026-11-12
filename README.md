@@ -95,9 +95,9 @@ retires its volume. Worker activation is a separate operation.
 
 Real-chain acceptance
 ---------------------
-The opt-in test/indexer/acceptance/run consumes a user-owned, mode-0600
+The opt-in test/indexer/acceptance/borrowed/run consumes a user-owned, mode-0600
 dapp32 PayToPlay fixture descriptor and MUST NOT start or retire producer
-resources. The opt-in campaign/indexer/acceptance/run uses dapp32's
+resources. The opt-in test/indexer/acceptance/owned/run uses dapp32's
 fixture/up, fixture/info and fixture/down, confirms the selected network,
 and owns only the freshly created producer fixture and disposable Conix SQL
 project. The dapp32 deployment and contract are external test evidence,
@@ -120,7 +120,7 @@ build the EVM test runner from the already selected wheelhouse, then run:
 
     evm_runner="$(make -s image/evm-test-runner/build DOCKER_CONTEXT=agentic WHEELHOUSE="$HOME/Downloads/wheelhouse")"
     make image/evm-test-runner/check DOCKER_CONTEXT=agentic IMAGE="$evm_runner"
-    make campaign/indexer/acceptance/run DOCKER_CONTEXT=agentic RUNNER_IMAGE="$evm_runner" DAPP32_DIR="$HOME/repos/dapp32"
+    make test/indexer/acceptance/owned/run DOCKER_CONTEXT=agentic RUNNER_IMAGE="$evm_runner" DAPP32_DIR="$HOME/repos/dapp32"
 
 Select the actual local Docker context and prepared dapp32 checkout. The
 campaign creates and retires an isolated producer fixture and a separate
@@ -245,7 +245,7 @@ Retained deployment acceptance
 -----------------------------
 Run the repository-owned acceptance lane on the selected rootless Engine:
 
-    make test/deployment/run
+    make test/deployment/acceptance/run
 
 It uses `config/deployments/deployment-acceptance/` in place. The complete
 deployment TOML, ERC-20 ABI and two disposable test DSNs are tracked, including

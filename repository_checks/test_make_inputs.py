@@ -27,10 +27,10 @@ PARAMETERS = {
     "image/indexer/check": "IMAGE",
     "image/evm-test-runner/check": "IMAGE",
     "test/indexer/run": "RUNNER_IMAGE",
-    "test/deployment/run": "DEPLOYMENT",
+    "test/deployment/acceptance/run": "DEPLOYMENT",
     "test/input-staging/run": "DSN_FILE",
-    "test/indexer/acceptance/run": "FIXTURE_DESCRIPTOR",
-    "campaign/indexer/acceptance/run": "DAPP32_DIR",
+    "test/indexer/acceptance/borrowed/run": "FIXTURE_DESCRIPTOR",
+    "test/indexer/acceptance/owned/run": "DAPP32_DIR",
     "history/advance": "INPUT_VOLUME",
     "deployment/inputs/create": "CONFIG_FILE",
     "deployment/inputs/remove": "INPUT_VOLUME",
@@ -115,11 +115,11 @@ class MakeInputSafety(unittest.TestCase):
                         record = json.loads(trace.read_text(encoding="utf-8"))
                         self.assertEqual(record["vars"]["CONIX_MAKE_" + key], value)
                         expected = (
-                            "tools.fixtures.pay_to_play" if target in ("test/indexer/acceptance/run", "campaign/indexer/acceptance/run")
+                            "tools.fixtures.pay_to_play" if target in ("test/indexer/acceptance/borrowed/run", "test/indexer/acceptance/owned/run")
                             else "tools.containers.operator"
                         )
                         self.assertEqual(record["argv"][:2], ["-m", expected])
-                        if target in ("test/indexer/acceptance/run", "campaign/indexer/acceptance/run"):
+                        if target in ("test/indexer/acceptance/borrowed/run", "test/indexer/acceptance/owned/run"):
                             self.assertIn("--from-make", record["argv"])
                         else:
                             self.assertIn(target, record["argv"])

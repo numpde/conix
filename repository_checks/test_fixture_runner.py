@@ -406,7 +406,7 @@ class FixtureRunnerTests(unittest.TestCase):
             image = "sha256:" + "a" * 64
             arguments = [
                 "pay_to_play", "--origin", "command line",
-                "--context", "agentic", "test/indexer/acceptance/run",
+                "--context", "agentic", "test/indexer/acceptance/borrowed/run",
                 "--runner-image", image, "--fixture-descriptor", str(path),
             ]
             with patch.object(sys, "argv", arguments), patch.object(
@@ -479,7 +479,7 @@ class FixtureRunnerTests(unittest.TestCase):
             image = "sha256:" + "a" * 64
             args = [
                 "pay_to_play", "--origin", "command line",
-                "--context", "agentic", "test/indexer/acceptance/run",
+                "--context", "agentic", "test/indexer/acceptance/borrowed/run",
                 "--runner-image", image, "--fixture-descriptor", str(descriptor),
             ]
             terminal = io.StringIO()
