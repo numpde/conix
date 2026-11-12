@@ -5,12 +5,14 @@ Public targets use <resource>[/<role-or-subject>]/<action>, with exact operator
 inputs, no Make-expression interpolation, no implicit image/wheel acquisition,
 and one explicitly chosen local Docker Engine per command.
 
-Current qualified T0-6 state: the indexer image installs the generic ABI
-codec, catalog, journal, scanner, checkpoint reader and one foreground
-`conix.worker advance` operation. Owner-only schema initialization remains
-an explicit Python API. A retained deployment/apply command is not installed;
-`deployment/config/check` examines a prospective one-shot worker graph but
-does not launch it. The old PayToPlay-only runtime remains retired.
+The qualified T0-6 state installs the generic ABI codec, catalog, journal,
+scanner, checkpoint reader and one `conix.worker advance` operation.
+The T0-7 variant on this branch additionally implements a standalone
+`python -I -m conix run` candidate and explicit history inspection/repair.
+Owner-only schema initialization remains an explicit Python API.
+`deployment/start` is the proposed retained activation and needs actual
+rootless Engine qualification; `deployment/config/check` checks its graph
+without creating resources. The old PayToPlay-only runtime stays retired.
 
 T0-5 real-contract acceptance is an opt-in owned dapp32 campaign outside
 ordinary CI. Note 004, section 8.8, records its qualification evidence.
@@ -41,7 +43,10 @@ deployment/inputs/create           Retain one ownership-labelled private
 deployment/inputs/remove           Remove only an explicitly selected
                                    ownership-verified private input volume.
 deployment/config/check            Read-only inspection of a constrained
-                                   *prospective* Compose graph; no worker.
+                                   prospective standalone service graph.
+deployment/start                   Create, verify, then start one retained
+                                   standalone indexer on a rootless Engine.
+deployment/logs                    Read a bounded tail of owned service logs.
 deployment/status                  Inspect a previously owned Conix project.
 deployment/remove                  Retire selected labelled Conix indexer
                                    containers, retaining external DB, networks
@@ -95,3 +100,20 @@ source and either the published block or the at-tip outcome. Cleanup
 uncertainty exits with failure and reports a known worker outcome on stderr.
 When publication is unconfirmed, inspect durable progress before running
 another advance. The two networks, input volume and database are borrowed.
+
+T0-7 retained service and operator recovery (branch candidate)
+------------------------------------------------------------
+Run `deployment/config/check` before `deployment/start`. Activation admits
+the actual immutable image and input volume, both distinct internal local
+bridge networks, and the selected rootless Engine. It creates a stopped
+Compose-defined container, checks its actual confined identity, then starts
+that exact container. It refuses an existing deployment rather than silently
+recreating it. Uncertain partial creation is retained for explicit
+`deployment/status`/`deployment/remove` recovery, not blindly deleted.
+
+Inside the runtime image, `python -I -m conix history inspect` lists up to
+64 retained block identities even if the provider's chain has diverged;
+`history inspect --ancestor N` looks up any exact retained height. Run
+`history repair --ancestor N` only after selecting a retained canonical
+ancestor; the installed core and journal alone validate and mutate history.
+No automatic reorg repair or crash restart is performed in Tier 0.

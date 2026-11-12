@@ -145,7 +145,25 @@ Docker networks with the database and RPC peers:
 
 The command runs the installed `conix.worker advance` once and retires its
 container. It reports the confirmed block identity or that the source was
-at tip. Production deployment activation remains unavailable.
+at tip. This branch also provides a T0-7 standalone service candidate:
+
+    make deployment/config/check DOCKER_CONTEXT=agentic DEPLOYMENT=payments \
+      INDEXER_IMAGE="$indexer" INPUT_VOLUME="$inputs" \
+      DATABASE_NETWORK="$db_network" RPC_NETWORK="$rpc_network"
+    make deployment/start DOCKER_CONTEXT=agentic DEPLOYMENT=payments \
+      INDEXER_IMAGE="$indexer" INPUT_VOLUME="$inputs" \
+      DATABASE_NETWORK="$db_network" RPC_NETWORK="$rpc_network"
+    make deployment/status DOCKER_CONTEXT=agentic DEPLOYMENT=payments
+    make deployment/logs DOCKER_CONTEXT=agentic DEPLOYMENT=payments
+
+The standalone image runs `python -I -m conix run` until stopped or a
+nonrecoverable error exits the process. Tier 0 does not automatically
+restart. To inspect stored block identities or repair an explicitly chosen
+canonical ancestor, invoke `python -I -m conix history inspect` or
+`python -I -m conix history repair --ancestor N` inside an appropriately
+confined runtime container with staged inputs. Retire the owned service via
+`deployment/remove` while retaining external resources. T0-7 must be
+qualified in an actual selected environment before production use.
 Schema initialization uses the owner-only `conix.schema.initialize()` API
 in a separate process. Readers use `open_reader()` with the SELECT-only
 credential. An operator chooses a retained canonical ancestor and invokes
