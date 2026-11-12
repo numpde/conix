@@ -310,6 +310,29 @@ class NamedDeploymentContracts(unittest.TestCase):
                 with self.assertRaises(OperationError):
                     self.dispatch("deployment/up")
 
+    def test_actual_rename_failure_preserves_previous_toml_and_cleans_temporary(self):
+        folder = self.locked()
+        lock = folder / "deployment.lock.toml"
+        before = lock.read_bytes()
+        with patch.object(named.os, "replace", side_effect=OSError("atomic rename unavailable")):
+            with self.assertRaises(OSError):
+                named._write_lock(folder, {
+                    "version": 1, "image": IMAGE, "volume": VOLUME_NEW,
+                })
+        self.assertEqual(lock.read_bytes(), before)
+        self.assertFalse(list(folder.glob(".deployment-lock-*")))
+
+    def test_named_actions_refuse_legacy_per_operation_resource_overrides(self):
+        for key in ("config_file", "dsn_file", "indexer_image", "volume",
+                    "database_network", "rpc_network", "wheelhouse"):
+            with self.subTest(selector=key):
+                self.options.__dict__[key] = "other-resource"
+                with self.assertRaisesRegex(OperationError, "deployment.toml"):
+                    self.dispatch("deployment/init")
+                self.options.__dict__[key] = ""
+        self.assertFalse(self.folder().exists())
+        self.assertFalse(RecordingDocker.seen)
+
     def test_up_revalidates_exact_prepared_selection_under_operator_lock(self):
         folder = self.locked()
         inside = [False]
