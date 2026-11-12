@@ -112,7 +112,7 @@ class InstalledFailurePipeline(unittest.TestCase):
 
     def test_stager_unexpected_failure_preserves_actual_type_and_uncertain_effect(self):
         def explode(_payload):
-            raise PermissionError(PRIVATE)
+            raise RuntimeError(PRIVATE)
 
         stdin = SimpleNamespace(buffer=io.BytesIO(b"fake"))
         with (
@@ -123,10 +123,10 @@ class InstalledFailurePipeline(unittest.TestCase):
 
         fields = admitted(output)
         self.assertEqual(fields["phase"], "staging")
-        self.assertEqual(fields["cause"], "PermissionError")
+        self.assertEqual(fields["cause"], "RuntimeError")
         self.assertEqual(fields["effect"], "unconfirmed")
         report = explanation(output, 2, phases={"staging"})
-        self.assertIn("cause=PermissionError", report)
+        self.assertIn("cause=RuntimeError", report)
         self.assertIn("location=test_process_failure_pipeline.py:", report)
         self.assertNotIn(PRIVATE, report)
 
