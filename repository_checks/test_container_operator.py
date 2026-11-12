@@ -755,7 +755,10 @@ class LocalDockerOperatorTests(unittest.TestCase):
             # a reviewed fixture instead of bypassing the checks.
             admitted = {
                 "services": {
-                    "tests": {"image": "sha256:" + "a" * 64, "user": "65532:65532", "read_only": True},
+                    "tests": {
+                        "image": "sha256:" + "a" * 64, "user": "65532:65532", "read_only": True,
+                        "tmpfs": ["/run/conix:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=16m"],
+                    },
                     "initializer": {"image": "sha256:" + "a" * 64, "user": "65532:65532", "read_only": True,
                                     "environment": {"CONIX_TEST_OWNER_DSN": "fixture",
                                                     "CONIX_TEST_ANVIL_OWNER_DSN": "fixture"}},
