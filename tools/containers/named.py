@@ -285,9 +285,10 @@ def init(name, options):
 
 @contextmanager
 def _locked(name):
-    """Serialize preparation, schema creation and start on one named resource."""
-    path = _directory(name) / ".operator.lock"
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    """Serialize named mutations by locking their existing private directory."""
+    folder = _directory(name)
+    _owned_directory(folder)
+    fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

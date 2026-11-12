@@ -188,6 +188,16 @@ class NamedDeploymentContracts(unittest.TestCase):
         with self.assertRaises(OperationError):
             self.init()
 
+    def test_named_operator_lock_serializes_without_creating_extra_files(self):
+        folder = self.configured()
+        expected = {path.name for path in folder.iterdir()}
+        with named._locked("pilot"):
+            with self.assertRaises(OperationError):
+                with named._locked("pilot"):
+                    self.fail("Nested mutable operations must not overlap.")
+        self.assertEqual({path.name for path in folder.iterdir()}, expected)
+        self.assertFalse((folder / ".operator.lock").exists())
+
     def test_projection_uses_authoritative_catalog_shape_and_derived_paths(self):
         folder = self.configured()
         decl = named._read("pilot")
