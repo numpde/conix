@@ -1,50 +1,78 @@
-Conix — named deployment Make contract (Tier-0-7 B)
-================================================
+Conix — Named Tier-0-7 B deployment operator contract
+====================================================
 12 November 2026
 
-Normal operator interface
--------------------------
-Each saved deployment has exactly one identity and one retained nonsecret
-selection under ignored config/deployments/<name>/deployment.toml. Creation
-is exclusive; no command overwrites an existing deployment definition.
-No default deployment or implicit Docker context is allowed.
+Purpose and boundary
+--------------------
+A named deployment selects its Docker Engine, source and borrowed resources
+once. One editable file owns all nonsecret selections:
 
-Make targets use <resource>[/<subject>]/<action>. Public application lifecycle:
+    config/deployments/<name>/deployment.toml
 
-  deployment/init              Save one named definition (first-time interactive
-                               prompts for missing nonsecret paths/selectors).
-  deployment/prepare           Offline image build/admission and private input
-                               snapshot, with an exact prepared receipt.
-  deployment/database/init     Owner-authorized one-shot schema initialization
-                               against separately provisioned SQL roles/schema.
-  deployment/config/check      Check a prepared Compose graph without mutation.
-  deployment/up                Admit and start only the prepared service.
-  deployment/status            Inspect selected project's owned containers.
-  deployment/logs              Display a bounded tail from one owned container.
-  deployment/down              Retire selected owned indexer containers only.
+Other paths derive exclusively from that directory:
 
-  test/standalone/run          Build cached runner and execute the actual
-                               installed CLI in an owned disposable Anvil/PG
-                               stack; retire it and preserve failure causes.
+    config/deployments/<name>/deployment.lock.toml   generated, mode 0600
+    config/deployments/<name>/abi/<selected>.json     selected ABI files
+    config/deployments/<name>/secrets/runtime.dsn     runtime credential, 0600
+    config/deployments/<name>/secrets/owner.dsn       schema-owner credential, 0600
 
-After initialization, only DEPLOYMENT=<name> is needed for ordinary repeated
-operations. The saved Docker context is the sole authority; a conflicting
-explicit override fails. Missing declarations may be recovered only for
-status/logs/down with an explicit DOCKER_CONTEXT. The saved declaration
-may not be used to supply credentials via argv or environment.
+The named directory and abi/ and secrets/ subdirectories are owner-owned
+mode 0700. Deployment.toml is owner-only mode 0600. No other editable source
+configuration, path-selector settings, redundant lock or host credentials
+registry exists. Existing older prepared.json files convey no authority.
 
-First-time init:
+Initialization and source configuration
+---------------------------------------
   make deployment/init DEPLOYMENT=local DOCKER_CONTEXT=agentic
 
-The init command requires the following selections, prompting from /dev/tty
-only when interactive and absent: CONFIG_FILE, DSN_FILE, OWNER_DSN_FILE,
-DATABASE_NETWORK, RPC_NETWORK, WHEELHOUSE. All host paths are absolute.
-The source config and adjacent declared ABIs are immutable after staging.
-The runtime and owner DSN are separate operator-owned mode-0600 files.
-The owner DSN is never staged in the indexer volume.
+Init requires an explicit named local context. It creates an owner-only
+deployment skeleton and both private directories, without trying Docker,
+creating credentials, inventing source coordinates, installing database roles,
+or selecting network names. After init, edit the one deployment.toml and
+supply the selected ABI and DSN files. Init never overwrites existing config.
 
-Ordered operational commands:
+deployment.toml version 1 requires docker_context, wheelhouse (absolute
+directory), database_network, rpc_network (distinct existing local internal
+bridges), [chain] (chain_id, genesis_hash, start_block, rpc_url), [contracts.<alias>]
+(address, abi_file, selected events), and [limits] (the authoritative Tier 0
+limit fields). A selected ABI path has form abi/<name>.json. See
+examples/deployment.toml.example for the structure; all chain addresses and
+identities in examples are illustrative, NOT selected for the user.
+
+Missing source/resource settings fail before Docker work. Source coordinates
+are explicitly provided; no fallback to an example, current RPC head or
+ambient database credential is allowed. The saved Docker context is used on
+all later named operations, and a conflicting command-line selection fails.
+
+Preparation and generated lock
+------------------------------
   make deployment/prepare DEPLOYMENT=local
+
+Prepare owns host composition only. It reads the editable definition and
+projects its [chain], [contracts] and [limits] to a temporary plain Tier 0
+catalog, adding only [database] with dsn_file=/run/conix/connection.dsn and
+runtime_role=conix_runtime. The projection resides only for input staging in
+the named directory, adjacent to the selected ABI directory, then is retired.
+The installed catalog alone interprets source/event/ABI semantics.
+
+The existing staging protocol copies only the projected catalog, selected
+declared ABI members, and runtime.dsn into a private Engine volume. It does
+not mount the host deployment directory or read owner.dsn. The wheelhouse
+and pinned base images must already be acquired; prepare builds offline
+and verifies the exact image and staged installed input snapshot.
+
+Only after successful build, image verification and input staging does
+preparation atomically publish deployment.lock.toml (version=1, image=exact
+sha256 ID, volume=exact Conix-owned input volume). It writes a private
+temporary file, fsyncs it and replaces the lock atomically. A failed build,
+image check, staging or pre-publication write preserves the prior lock.
+If lock publication fails, the new input volume is retired best effort.
+The former prepared.json writer/reader is gone; there is no fallback.
+A completed replacement may retire the old input volume, but never an
+in-use deployment: preparation refuses an existing service.
+
+Startup and administration
+--------------------------
   make deployment/database/init DEPLOYMENT=local
   make deployment/config/check DEPLOYMENT=local
   make deployment/up DEPLOYMENT=local
@@ -52,47 +80,48 @@ Ordered operational commands:
   make deployment/logs DEPLOYMENT=local
   make deployment/down DEPLOYMENT=local
 
-Preparation uses the checked wheelhouse and pinned base images on the
-selected local Engine; offline CI can prepare on a rootful Engine, but actual
-deployment/up and database/init require a verified rootless Engine. Missing
-artifacts require explicit separate acquisition. Successful image/staging admission produces an owner-only
-prepared receipt naming the exact immutable image ID and private volume ID.
-Failed preparation does not publish a candidate. Repreparing refuses a live
-service; old input state is retired only after a replacement was prepared.
-No second generic Docker orchestration framework is installed.
+Owner schema initialization assumes externally provisioned PostgreSQL and
+conix_owner/conix_runtime/conix_reader roles and schema. Its dedicated
+initializer reads only secrets/owner.dsn through private stdin to a one-shot
+non-root container, never argv, logs, staged runtime inputs or a host mount.
+It executes the installed conix.schema.initialize() and is not a migration.
+On an unknown result, inspect durable history rather than replaying blindly.
 
-Schema initialization assumes precreated database/schema roles from the
-existing owner-only contract. Only the selected conix_owner role may create
-tables and grant runtime/read privileges. A short-lived confined networked
-initializer reads the owner credential via private stdin and calls the
-installed conix.schema.initialize(). The normal service never gets the
-owner credential or DDL authority. No migration, implicit DB provisioning
-or automatic replay of an uncertain initialization.
+Startup admits only one prepared TOML lock under the same deployment
+operator lock as preparation, before Docker client selection. It verifies
+the exact image role, private volume ownership and runtime readability,
+two selected internal network identities, and the actual stopped container
+confinement. No downloads, rebuilds, database initialization, automatic
+reorganization repair, or transient RPC retries occur at startup.
+The container runs the unchanged variant-B catch-up/tip-following loop.
 
-Up may use only the prepared image/input and two separately admitted existing
-internal bridges. The maintained operator creates the container stopped,
-checks the actual image, UID, mounts, capabilities, networks and resource
-limits, then starts it. Status/logs/down work without the prepared receipt
-and do not delete external SQL, networks, private volume or images.
-No implicit acquisition, rebuild, schema installation, retry or reorg repair.
+Status, logs and down use the saved engine and exact project ownership;
+they work without the prepared image/lock and do not delete external
+networks, PostgreSQL history or the selected input volume. An absent
+deployment.toml permits explicit-context recovery for those read/retire
+operations only. A corrupt file or broken symlink is not equivalent to
+an absent configuration. No deployment is selected by default.
 
-Legacy low-level operations remain for explicit diagnostics/maintenance:
-history/advance, deployment/inputs/create, deployment/inputs/remove,
-test/postgres/run, the separate image and wheelhouse targets, and
-campaign/indexer/acceptance/run. They are not alternate normal deployment
-flows. deployment/start and deployment/remove are NOT exported aliases.
+Tests and legacy diagnostics
+----------------------------
+  make test/repository/run
+  make repository/inputs/check
+  make test/standalone/run DOCKER_CONTEXT=agentic WHEELHOUSE=<acquired-pool>
 
-Trust and tests
----------------
-The operator alone constructs Docker subprocess argument arrays; Make captures
-literal command-line values without evaluating them. Credentials never enter
-container argv, image layers, labels or ordinary logs. Owner and runtime
-identities stay separate. The existing checked scanner/publisher/reader and
-explicit repair remain the single source of truth. Avoid duplicate validators
-or generic lifecycle registries.
+The standalone lane owns a disposable PostgreSQL/Anvil graph, initializes
+the owner-only schema and launches the real installed conix run process,
+including SIGTERM and durable-tip behavior. It is not retained deployment
+qualification. The separately triggered dapp32 campaign qualifies real
+token/payment/restart/reorg scenarios on the selected host. The actual
+retained-service lifecycle still requires separate verification on a
+rootless Engine with explicitly provisioned external inputs.
 
-Test the real Make surface, saved configuration and privilege selection,
-failure boundaries, Docker admission and cleanup, installed process and
-its SIGTERM behavior, durable SQL checkpoints, tip release and later arrival.
-The disposable suite and repository checks do not establish retained-service
-production readiness or all dapp32 consumer behavior.
+Low-level history/advance, deployment/inputs/create/remove and image/
+wheelhouse commands remain explicit diagnostic/build primitives. They are
+not alternate normal deployment flows. The public deployment/start and
+deployment/remove aliases remain retired.
+
+Make values are captured literally, never interpreted as shell syntax.
+Public checks remain fail-closed. Follow the original trusted input
+policies; do not add duplicate catalog validation or permit secrets,
+Docker sockets or owner credentials in the runtime.

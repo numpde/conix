@@ -1,0 +1,34 @@
+# ILLUSTRATIVE ONLY: replace every chain/network/address before deployment.
+# Copy the SOURCE VALUES into config/deployments/<name>/deployment.toml
+# created by make deployment/init. Do not copy this file over an initialized
+# deployment without reviewing its saved docker_context.
+version = 1
+docker_context = "agentic"
+wheelhouse = "/absolute/path/to/existing/wheelhouse"
+database_network = "your-db-network"
+rpc_network = "your-rpc-network"
+
+[chain]
+# The following fields are examples, not a discovered or trusted chain.
+chain_id = 31337
+genesis_hash = "0x0000000000000000000000000000000000000000000000000000000000000000"
+start_block = 1
+rpc_url = "http://anvil:8545"
+
+[contracts.payment]
+# The selected ABI file must exist at abi/pay_to_play.json IN THE DEPLOYMENT.
+address = "0x0000000000000000000000000000000000000000"
+abi_file = "abi/pay_to_play.json"
+events = ["VoucherCollected(address,uint256,address,uint256,uint256,bytes32)"]
+
+[limits]
+rpc_timeout_seconds = 5
+operation_timeout_seconds = 30
+max_response_bytes = 1048576
+max_connections = 4
+max_page_size = 100
+max_evidence_blocks = 64
+max_logs_per_block = 10000
+max_abi_bytes = 1048576
+max_abi_nesting = 8
+max_abi_elements = 4096

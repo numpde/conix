@@ -136,21 +136,38 @@ the saved-deployment model used by Agent Mail and the prepare/run separation
 used by NMR provider tools. The schema, scanner, journal, reader and
 one-shot history/advance command retain their existing owners.
 
-A fresh deployment first records one nonsecret selection. The init command
-prompts once for any omitted settings when attached to a terminal; in CI or
-another unattended shell all values must be supplied explicitly:
+Initialize the named deployment once. This creates an editable source
+configuration and private directories, but does not guess chain coordinates,
+download dependencies, generate credentials or provision external services:
 
     make deployment/init DEPLOYMENT=local DOCKER_CONTEXT=agentic
 
-One-time settings are CONFIG_FILE (absolute Conix source TOML, with adjacent
-abi/ files), DSN_FILE (mode-0600 runtime database credential), OWNER_DSN_FILE
-(mode-0600 schema-owner database credential), DATABASE_NETWORK, RPC_NETWORK,
-and WHEELHOUSE (existing shared offline wheel pool). Initialization stores
-only their *paths/names*, not credential contents, under ignored
-config/deployments/local/deployment.toml (mode 0600, parent mode 0700).
-There is no implicit Docker context, network, database or source.
+The only editable deployment configuration is
+`config/deployments/local/deployment.toml`. Complete its required fields
+before preparation: the saved Docker context, absolute wheelhouse directory,
+existing database/RPC Docker network names, chain identity/RPC URL, selected
+contracts/events with ABI files, and every Tier-0 limit. See
+`examples/deployment.toml.example` and `examples/conix.toml`.
 
-Then run the named operations without repeating the underlying resources:
+The directory structure is fixed; no source path or credential path is supplied
+on subsequent Make commands:
+
+    config/deployments/local/
+        deployment.toml             # editable, owner-only
+        deployment.lock.toml        # generated; never edit
+        abi/<selected-contract>.json
+        secrets/runtime.dsn         # owner-only, 0600
+        secrets/owner.dsn           # owner-only, 0600
+
+Place the selected JSON ABI files in `abi/`, using the exact relative
+`abi_file` names from deployment.toml. Write the runtime and owner PostgreSQL
+DSNs as separate mode-0600 files under `secrets/`; their directory and the ABI
+directory are created mode 0700. No credential bytes enter deployment.toml.
+The owner credential is read only by `deployment/database/init`. It is not
+staged into the running service.
+
+Example first-time sequence, after installing those files and provisioning
+the PostgreSQL service/roles and distinct internal networks:
 
     make deployment/prepare DEPLOYMENT=local
     make deployment/database/init DEPLOYMENT=local
@@ -160,15 +177,30 @@ Then run the named operations without repeating the underlying resources:
     make deployment/logs DEPLOYMENT=local
     make deployment/down DEPLOYMENT=local
 
-Prepare checks the pinned cached wheelhouse, builds the selected image
-offline, checks the image, stages and verifies a private input volume, then
-records the exact image/volume IDs in a private prepared receipt. No missing
-base image or wheel is automatically downloaded. Use the separate explicit
-image/*/acquire and wheelhouse/acquire operations if inputs are missing.
-Preparing an upgrade requires the selected standalone service to be down.
-Preparation alone can be qualified on a rootful CI Engine, using the same
-existing offline build and staging rules. Actual retained startup and
-schema-owner operations still require a verified rootless Engine.
+During preparation, the host projects deployment.toml into the **existing**
+Tier-0 catalog shape, substituting only the fixed contained DSN location and
+runtime role. The normal staged private input volume receives the projected
+catalog, only its selected ABI files and runtime.dsn. The full host deployment
+directory is never mounted.
+
+Once the image has been built offline, verified, and the private volume staged
+successfully, preparation atomically replaces deployment.lock.toml with:
+
+    version = 1
+    image = "sha256:<immutable-image-id>"
+    volume = "conix-inputs-<owned-volume-id>"
+
+The generated TOML lock is the **only** prepared-resource authority.
+No prepared.json fallback or parallel JSON writer exists. A failure before
+publication retains the previous lock. Startup rechecks the exact image,
+input volume and selected networks through the existing Docker admission.
+Changed source/ABI inputs require an explicit new preparation while the
+service is down.
+
+No missing base image or wheel is automatically downloaded. Use explicit
+image/*/acquire and wheelhouse/acquire operations where needed. A rootful
+CI Engine may qualify offline preparation; owner-only schema initialization
+and actual retained startup still require a verified rootless Engine.
 An old input volume is retired only after replacement preparation succeeds.
 
 The PostgreSQL service and roles/schema must ALREADY exist on the selected
@@ -192,7 +224,7 @@ and staged inputs. If the saved declaration has been lost, recovery may
 use an explicit DOCKER_CONTEXT=<name> with DEPLOYMENT=<name> for those three
 commands only. A conflicting context is rejected while the saved file exists.
 
-For a complete disposable demonstration and installed-process qualification:
+For a disposable installed-process demonstration (not a retained deployment):
 
     make test/standalone/run DOCKER_CONTEXT=agentic WHEELHOUSE="$HOME/Downloads/wheelhouse"
 
@@ -208,8 +240,8 @@ reads bounded retained ancestry; `python -I -m conix history repair
 --ancestor N` uses the existing core's canonicality-checked repair.
 Do not treat a stored identity alone as a canonical-chain proof.
 
-Remaining qualification: a dedicated retained-deployment campaign on
-the selected rootless Engine and the full dapp32 end-to-end scenario.
+Remaining qualification for this revision: a dedicated retained-deployment
+campaign on the selected rootless Engine and a fresh dapp32 acceptance run.
 Existing GitHub CI and the disposable Anvil/PostgreSQL tests are evidence
 only for the paths they actually execute. No runtime production readiness
 or automatic recovery guarantee follows from a green repository check.

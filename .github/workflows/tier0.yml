@@ -23,6 +23,8 @@ jobs:
         run: python -m compileall -q src tests tools repository_checks
       - name: Qualify host-side Docker context and teardown contracts
         run: make test/repository/run
+      - name: Verify locked input declarations without Docker
+        run: make repository/inputs/check
       - name: Acquire pinned images and hashed wheelhouse; build and test offline
         run: |
           make image/python-base/acquire DOCKER_CONTEXT=default
@@ -57,13 +59,33 @@ jobs:
           printf '%s\n' 'postgresql://fixture:disposable@postgres:5432/conix_test' > "$dsn"
           make test/input-staging/run DOCKER_CONTEXT=default INDEXER_IMAGE="$runtime" \
             CONFIG_FILE="$candidate/config.toml" DSN_FILE="$dsn"
-          # A real named configuration contains only paths/names; preparation
-          # checks and stages private inputs. No SQL or application is started.
+          # CI uses the SAME named deployment boundary: init a skeleton,
+          # fill its one editable TOML, then install the derived input paths.
+          # Rootful CI may prepare offline; startup still requires rootless.
+          make deployment/init DEPLOYMENT=ci DOCKER_CONTEXT=default
+          python3 - "$pool" <<'PY'
+          import sys
+          from pathlib import Path
+          import tomllib
+          from tools.containers.named import _render_deployment
+
+          source = tomllib.loads(Path("examples/conix.toml").read_text())
+          saved = {
+              "version": 1, "docker_context": "default",
+              "wheelhouse": sys.argv[1],
+              "database_network": "payment-db",
+              "rpc_network": "payment-rpc",
+              "chain": source["chain"], "contracts": source["contracts"],
+              "limits": source["limits"],
+          }
+          config = Path("config/deployments/ci/deployment.toml")
+          config.write_text(_render_deployment(saved), encoding="utf-8")
+          config.chmod(0o600)
+          PY
+          install -m 600 tests/fixtures/abi/pay_to_play.json             config/deployments/ci/abi/pay_to_play.json
+          install -m 600 "$dsn" config/deployments/ci/secrets/runtime.dsn
           owner="$candidate/owner.dsn"
           (umask 077; printf '%s\n' 'postgresql://owner:disposable@postgres:5432/conix_test' > "$owner")
-          make deployment/init DEPLOYMENT=ci DOCKER_CONTEXT=default \
-            CONFIG_FILE="$candidate/config.toml" DSN_FILE="$dsn" \
-            OWNER_DSN_FILE="$owner" DATABASE_NETWORK=payment-db \
-            RPC_NETWORK=payment-rpc WHEELHOUSE="$pool"
+          install -m 600 "$owner" config/deployments/ci/secrets/owner.dsn
           make deployment/prepare DEPLOYMENT=ci
           make deployment/config/check DEPLOYMENT=ci

@@ -171,9 +171,11 @@ for Conix-specific images, private inputs, deployment and contained tests.
 tools/containers/history.py owns admission and retirement of the foreground
 history worker on the selected client. tools/containers/deployment.py owns
 pre-start admission of a retained standalone service and its bounded logs.
-tools/containers/named.py owns named deployment selection, preparation
-receipts and composition; it reuses the existing Docker operator without
-creating a second client or scanner. conix.schema_cli is a one-shot
+tools/containers/named.py owns one editable deployment.toml, the derived
+ABI and credential paths, temporary catalog projection, and the generated
+deployment.lock.toml. It reuses the existing Docker operator without creating
+a second client or scanner. There is no prepared.json authority or fallback.
+conix.schema_cli is a one-shot
 owner-credential stdin boundary, never an application startup hook.
 The client must not import application lifecycles or the test harness.
 tools/fixtures/pay_to_play.py owns the dapp32 fixture campaign using the
@@ -198,8 +200,9 @@ initialization is now a separate named deployment/database/init operation
 in this T0-7 branch; legacy deployment/apply remains absent. The T0-7 branch
 exports named deployment/init, prepare, database/init, config/check,
 up/status/logs/down, and disposable test/standalone/run. These named
-operations do not make the scientific scanner or journal a host operator. Deployment/remove retires only the selected
-labelled Conix indexer containers, not external networks, SQL or inputs.
+operations do not make the scientific scanner or journal a host operator.
+Deployment/down retires only the selected labelled Conix indexer containers,
+not external networks, SQL or inputs.
 
 The borrowed test/indexer/acceptance/run accepts a mode-0600 private JSON
 fixture descriptor and has NO producer lifecycle rights.
