@@ -255,6 +255,19 @@ class NamedDeploymentContracts(unittest.TestCase):
         self.assertFalse((folder / "prepared.json").exists())
         self.assertEqual(stat.S_IMODE((folder / "deployment.lock.toml").stat().st_mode), 0o600)
 
+    def test_temporary_projection_cleanup_failure_retires_new_volume_before_lock(self):
+        folder = self.locked()
+        old = (folder / "deployment.lock.toml").read_bytes()
+        with (
+            patch("tools.wheelhouse.operations.SharedWheelhouse") as wheelhouse,
+            patch.object(named.Path, "unlink", side_effect=OSError("staged catalog locked")),
+        ):
+            wheelhouse.return_value.build.return_value = IMAGE
+            with self.assertRaises(OperationError):
+                self.dispatch("deployment/prepare")
+        self.assertEqual((folder / "deployment.lock.toml").read_bytes(), old)
+        self.assertIn(("remove_volume", VOLUME), RecordingDocker.seen[-1].calls)
+
     def test_failed_staging_does_not_replace_previous_lock(self):
         self.locked()
         old = (self.folder() / "deployment.lock.toml").read_bytes()

@@ -360,19 +360,38 @@ def _inspect_existing(docker, name):
 
 
 def _stage_projected(decl, docker, image):
-    """Project into the deployment's ABI directory; never mount the host tree."""
+    """Project beside the selected ABIs, retiring the temporary source."""
     fd, temporary = tempfile.mkstemp(prefix=".projected-", suffix=".toml", dir=decl.folder)
+    volume = None
+    failure = None
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             os.fchmod(stream.fileno(), 0o600)
             stream.write(_project_catalog(decl))
             stream.flush()
             os.fsync(stream.fileno())
-        return docker.stage_inputs(
+        volume = docker.stage_inputs(
             image, temporary, decl.runtime_dsn_file, announce=False,
         )
+    except BaseException as error:
+        failure = error
+        raise
     finally:
-        Path(temporary).unlink(missing_ok=True)
+        try:
+            Path(temporary).unlink(missing_ok=True)
+        except OSError as error:
+            if volume is not None:
+                try:
+                    docker.remove_inputs(volume)
+                except Exception:
+                    print(f"Unconfirmed cleanup of private input volume {volume}.", file=sys.stderr)
+            if failure is not None:
+                print("Temporary projected catalog cleanup is unconfirmed.", file=sys.stderr)
+            else:
+                raise OperationError(
+                    "Cannot retire temporary projected catalog; prepared state was not published."
+                ) from error
+    return volume
 
 
 def prepare(decl, docker, images):
