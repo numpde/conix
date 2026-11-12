@@ -14,3 +14,5 @@
 !tools/
 !tools/fixtures/
 !tools/fixtures/protocol.py
+!tools/containers/
+!tools/containers/diagnostics.py

@@ -109,6 +109,9 @@ def source_allowlist(root=ROOT):
         # Test-only wire protocol shared by the host fixture operator and
         # installed EVM images; never included in the product wheel.
         "tools/fixtures/protocol.py",
+        # Exact host decoder in the confined test runner for real producer ->
+        # operator diagnostic tests. Never part of the installed wheel.
+        "tools/containers/diagnostics.py",
     )
 
     # Both the installed package AND its entire Python test suite are the

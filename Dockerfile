@@ -43,6 +43,8 @@ FROM indexer AS test-runner
 LABEL io.conix.image-role=test-runner
 COPY tests /tests
 COPY tools/fixtures/protocol.py /tests/fixture_protocol.py
+# Installed-producer tests exercise the exact host decoder; test image only.
+COPY tools/containers/diagnostics.py /tests/host_diagnostics.py
 ENTRYPOINT ["python", "-m", "unittest", "discover", "-s", "/tests", "-v"]
 
 # Optional test-only Foundry signature verifier; absent from the runtime.
