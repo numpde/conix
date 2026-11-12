@@ -9,9 +9,11 @@ supporting PayToPlay, ERC-20 and ERC-721 without contract-specific source code.
 T0-1 ABI, T0-2 offline catalog/owner-only journal, T0-3 blockHash-pinned
 scanner and T0-4 checkpoint-bound reader are implemented. The owned dapp32
 campaign passed T0-5, and T0-6 qualification closed for the selected baseline.
-Note 004, section 8.8, owns evidence and qualification scope. Note 000 lists
-the protected operations that later tiers must execute. The experimental
-PayToPlay-only runtime was deleted without migration or adapters.
+Note 004, section 8.8, owns T0-6 evidence and qualification scope.
+Section 11 now plans T0-7 as a complete standalone application. This variant
+branch implements a candidate, not yet a qualified retained deployment.
+Note 000 lists the protected operations that later tiers must execute.
+The experimental PayToPlay-only runtime was deleted without migration or adapters.
 
 notes/004_rpc_evidence_and_raw_log_indexer_plan.txt governs the new Tier-0
 implementation and qualification. notes/005_rpc_history_acquisition_and_optimization.txt
@@ -167,7 +169,8 @@ tools/containers/client.py owns sanitized selected Docker CLI calls and
 rootless/image admission. tools/containers/operator.py composes that client
 for Conix-specific images, private inputs, deployment and contained tests.
 tools/containers/history.py owns admission and retirement of the foreground
-history worker on the selected client.
+history worker on the selected client. tools/containers/deployment.py owns
+pre-start admission of a retained standalone service and its bounded logs.
 The client must not import application lifecycles or the test harness.
 tools/fixtures/pay_to_play.py owns the dapp32 fixture campaign using the
 selected Docker operator without changing the sibling checkout.
@@ -187,8 +190,9 @@ name a stable resource, role or subject, and precise action, not Python
 locations, implementation tiers or test mechanisms. Do not introduce aliases
 for retired names. Distinguish read-only check, explicit acquire, offline
 build, test run, retained resource create, status and remove. Owner schema
-initialization and deployment apply are absent until implemented generically. Config/check validates the concrete Compose graph but does
-not produce a rendered document. Deployment/remove retires only the selected
+initialization and legacy deployment/apply remain absent. The T0-7 branch
+adds deployment/start and deployment/logs; config/check validates the
+standalone service Compose graph but does not launch it. Deployment/remove retires only the selected
 labelled Conix indexer containers, not external networks, SQL or inputs.
 
 The borrowed test/indexer/acceptance/run accepts a mode-0600 private JSON

@@ -2,7 +2,7 @@ name: conix Tier 0 checks
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'main-tier-0-7-*-20261112']
   pull_request:
 
 permissions:

@@ -373,6 +373,12 @@ class Docker(DockerClient):
             self.run("ps", "--all", *service_labels, timeout=20)
             return
 
+        if operation == "logs":
+            from tools.containers.deployment import show_logs
+
+            show_logs(self, project)
+            return
+
         if operation == "remove":
             observed_ids = self.run(
                 "ps", "--all", "--no-trunc", *service_labels, "--format", "{{.ID}}",
@@ -406,15 +412,15 @@ class Docker(DockerClient):
                     )
 
             for container_id in observed_ids:
-                self.run("container", "stop", "--time", "90", container_id, timeout=105)
+                self.run("container", "stop", "--time", "330", container_id, timeout=345)
                 self.run("container", "rm", container_id, timeout=30)
 
             print(f"Retired {len(observed_ids)} Conix indexer container(s) from {project}; "
                   "external networks, database and input volumes were retained.")
             return
 
-        if operation != "config/check":
-            raise OperationError("Generic indexer deployment is not installed.")
+        if operation not in ("config/check", "start"):
+            raise OperationError("Unrecognized retained indexer deployment operation.")
 
         for (label, selected) in (("database network", database), ("RPC network", rpc)):
             if type(selected) is not str or not CONTEXT_NAME.fullmatch(selected):
@@ -426,7 +432,7 @@ class Docker(DockerClient):
         if not re.fullmatch(r"conix-inputs-[0-9a-f]{24}", volume or ""):
             raise OperationError("Select an explicit Conix input-volume identity.")
 
-        from tools.containers.history import COMMAND as HISTORY_ADVANCE_COMMAND
+        from tools.containers.deployment import COMMAND as STANDALONE_COMMAND
 
         compose_argv = [
             "compose", "--env-file", "/dev/null", "--project-directory", str(ROOT),
@@ -457,7 +463,7 @@ class Docker(DockerClient):
                 or indexer_service.get("image") != image
                 or indexer_service.get("pull_policy") != "never"
                 or indexer_service.get("entrypoint") != ["python"]
-                or indexer_service.get("command") != HISTORY_ADVANCE_COMMAND
+                or indexer_service.get("command") != STANDALONE_COMMAND
                 or indexer_service.get("user") != "65532:65532"
                 or indexer_service.get("read_only") is not True
                 or indexer_service.get("init") is not True
@@ -499,7 +505,16 @@ class Docker(DockerClient):
         except (ValueError, KeyError, IndexError, TypeError, AttributeError) as error:
             raise OperationError("Cannot validate the selected runtime deployment configuration.") from error
 
-        print(f"Verified constrained prospective runtime Compose graph for {project}.")
+        if operation == "start":
+            from tools.containers.deployment import activate
+
+            activate(
+                self, project=project, compose_argv=compose_argv,
+                environment=compose_environment, image=image, volume=volume,
+                database=database, rpc=rpc,
+            )
+        else:
+            print(f"Verified constrained prospective runtime Compose graph for {project}.")
 
     def test(self, image, images):
         """Run an isolated PostgreSQL test project and retire only its resources."""
@@ -645,7 +660,8 @@ def main():
         "test/postgres/run", "test/input-staging/run",
         "history/advance",
         "deployment/inputs/create", "deployment/inputs/remove",
-        "deployment/config/check", "deployment/status", "deployment/remove",
+        "deployment/config/check", "deployment/start", "deployment/status",
+        "deployment/logs", "deployment/remove",
     ))
     parser.add_argument("--wheelhouse")
     parser.add_argument("--image")

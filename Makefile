@@ -20,7 +20,7 @@ override export CONIX_MAKE_DEPLOYMENT := $(value DEPLOYMENT)
 override export CONIX_MAKE_DATABASE_NETWORK := $(value DATABASE_NETWORK)
 override export CONIX_MAKE_RPC_NETWORK := $(value RPC_NETWORK)
 
-.PHONY: test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/postgres/run test/input-staging/run test/indexer/acceptance/run campaign/indexer/acceptance/run history/advance deployment/inputs/create deployment/inputs/remove deployment/config/check deployment/status deployment/remove help
+.PHONY: test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/postgres/run test/input-staging/run test/indexer/acceptance/run campaign/indexer/acceptance/run history/advance deployment/inputs/create deployment/inputs/remove deployment/config/check deployment/start deployment/status deployment/logs deployment/remove help
 
 # Each action's declaration is also the help authority. Recipes share the
 # literal-value dispatchers; no Make target aliases or duplicate help list.
@@ -95,7 +95,13 @@ deployment/inputs/remove: ## Remove selected input volume; INPUT_VOLUME=<owned v
 deployment/config/check: ## Check prospective Compose confinement; DEPLOYMENT=<name> INDEXER_IMAGE=<id> INPUT_VOLUME=<volume> DATABASE_NETWORK=<name> RPC_NETWORK=<name>
 	$(RUN_OPERATOR)
 
+deployment/start: ## Start admitted standalone indexer; DEPLOYMENT=<name> INDEXER_IMAGE=<id> INPUT_VOLUME=<volume> DATABASE_NETWORK=<name> RPC_NETWORK=<name>
+	$(RUN_OPERATOR)
+
 deployment/status: ## Inspect selected existing deployment; DEPLOYMENT=<name>
+	$(RUN_OPERATOR)
+
+deployment/logs: ## Show bounded logs for owned deployment; DEPLOYMENT=<name>
 	$(RUN_OPERATOR)
 
 deployment/remove: ## Retire selected existing indexer containers; DEPLOYMENT=<name>

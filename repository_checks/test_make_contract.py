@@ -19,8 +19,8 @@ TARGETS = {
     "test/indexer/acceptance/run", "campaign/indexer/acceptance/run",
     "history/advance",
     "deployment/inputs/create", "deployment/inputs/remove",
-"deployment/config/check",
-"deployment/status", "deployment/remove",
+"deployment/config/check", "deployment/start",
+"deployment/status", "deployment/logs", "deployment/remove",
 }
 
 
