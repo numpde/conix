@@ -664,11 +664,12 @@ def main():
         "wheelhouse/check", "wheelhouse/acquire",
         "image/indexer/build", "image/test-runner/build", "image/evm-test-runner/build",
         "image/indexer/check", "image/evm-test-runner/check",
-        "test/postgres/run", "test/input-staging/run",
+        "test/postgres/run", "test/standalone/run", "test/input-staging/run",
         "history/advance",
         "deployment/inputs/create", "deployment/inputs/remove",
-        "deployment/config/check", "deployment/start", "deployment/status",
-        "deployment/logs", "deployment/remove",
+        "deployment/init", "deployment/prepare", "deployment/database/init",
+        "deployment/config/check", "deployment/up", "deployment/status",
+        "deployment/logs", "deployment/down",
     ))
     parser.add_argument("--wheelhouse")
     parser.add_argument("--image")
@@ -676,6 +677,7 @@ def main():
     parser.add_argument("--indexer-image")
     parser.add_argument("--config-file")
     parser.add_argument("--dsn-file")
+    parser.add_argument("--owner-dsn-file")
     parser.add_argument("--volume")
     parser.add_argument("--deployment")
     parser.add_argument("--database-network")
@@ -688,7 +690,7 @@ def main():
             # alone constructs argv, never a shell recipe using their contents.
             make_inputs = {name: os.environ.get("CONIX_MAKE_" + name, "") for name in (
                 "DOCKER_CONTEXT", "WHEELHOUSE", "IMAGE", "RUNNER_IMAGE",
-                "INDEXER_IMAGE", "CONFIG_FILE", "DSN_FILE",
+                "INDEXER_IMAGE", "CONFIG_FILE", "DSN_FILE", "OWNER_DSN_FILE",
                 "INPUT_VOLUME", "DEPLOYMENT",
                 "DATABASE_NETWORK", "RPC_NETWORK",
             )}
@@ -700,10 +702,22 @@ def main():
             options.indexer_image = make_inputs["INDEXER_IMAGE"]
             options.config_file = make_inputs["CONFIG_FILE"]
             options.dsn_file = make_inputs["DSN_FILE"]
+            options.owner_dsn_file = make_inputs["OWNER_DSN_FILE"]
             options.volume = make_inputs["INPUT_VOLUME"]
             options.deployment = make_inputs["DEPLOYMENT"]
             options.database_network = make_inputs["DATABASE_NETWORK"]
             options.rpc_network = make_inputs["RPC_NETWORK"]
+
+        if options.action in (
+            "test/standalone/run",
+            "deployment/init", "deployment/prepare", "deployment/database/init",
+            "deployment/config/check", "deployment/up", "deployment/status",
+            "deployment/logs", "deployment/down",
+        ):
+            from tools.containers.named import dispatch
+
+            dispatch(options.action, options, client_cls=Docker, pinned_images=pinned_images)
+            return
 
         docker_endpoint = select_endpoint(options.context, options.origin, working_dir=ROOT)
 
