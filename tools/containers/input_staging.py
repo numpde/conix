@@ -213,8 +213,8 @@ class InputStaging:
         return None if proof else input_volume_name
 
     def verify_inputs(self, image, volume):
-        """Check staged ownership and permissions as the actual runtime UID."""
-        self.run(
+        """Verify staged inputs as the runtime UID and admit only fixed diagnostics."""
+        argv = self.docker_command_prefix + [
             "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
             "--user", "65532:65532", "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges:true",
@@ -222,8 +222,30 @@ class InputStaging:
             "--mount", f"type=volume,source={volume},target=/run/conix,readonly",
             "--entrypoint", "python", image,
             "-I", "-m", "conix.input_staging", "verify",
-            timeout=30,
-        )
+        ]
+        try:
+            result = subprocess.run(
+                argv, cwd=ROOT, env=self.docker_environment,
+                timeout=30, check=False, capture_output=True,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise OperationError(
+                "Input verification timed out; the contained check result is unconfirmed."
+            ) from error
+        except OSError as error:
+            raise OperationError(
+                f"Input verification could not start ({type(error).__name__}, errno={error.errno})."
+            ) from error
+
+        if result.returncode:
+            from tools.containers.diagnostics import explanation
+
+            reason = explanation(result.stderr, result.returncode, phases={"verification"})
+            raise OperationError(
+                "Conix input verification failed: "
+                + (reason or f"exit={result.returncode}; no admitted diagnostic."),
+                exit_code=result.returncode,
+            )
 
     def remove_inputs(self, volume, *, token=None):
         """Remove only a private volume with an exact matching ownership label."""

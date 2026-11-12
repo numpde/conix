@@ -240,6 +240,75 @@ class LocalDockerOperatorTests(unittest.TestCase):
             b'database password in upstream stderr only\n'
         ))
 
+    def test_verification_reports_actual_producer_type_location_and_effect(self):
+        """The real host verifier must decode stderr, not discard its evidence."""
+        from types import SimpleNamespace
+
+        record = (
+            b'CONIX-FAILURE-V1 {"phase":"verification","cause":"LookupError",'
+            b'"effect":"not_started","location":"input_staging.py:240"}\n'
+        )
+        docker = operator.Docker("unix:///tmp/selected.sock", ROOT)
+        observed = SimpleNamespace(returncode=17, stdout=b"", stderr=record)
+        with patch.object(input_staging.subprocess, "run", return_value=observed) as launched:
+            with self.assertRaises(operator.OperationError) as raised:
+                docker.verify_inputs("sha256:" + "a" * 64, "conix-inputs-" + "b" * 24)
+
+        message = str(raised.exception)
+        self.assertIn("cause=LookupError", message)
+        self.assertIn("phase=verification", message)
+        self.assertIn("location=input_staging.py:240", message)
+        self.assertIn("effect=operation did not start", message)
+        self.assertEqual(raised.exception.exit_code, 17)
+        argv = launched.call_args.args[0]
+        self.assertIn("--read-only", argv)
+        self.assertEqual(argv[argv.index("--network") + 1], "none")
+        self.assertEqual(argv[argv.index("--user") + 1], "65532:65532")
+        self.assertEqual(argv[-4:], ["-I", "-m", "conix.input_staging", "verify"])
+        self.assertTrue(launched.call_args.kwargs["capture_output"])
+
+    def test_verification_rejects_untrusted_stderr_without_disclosure(self):
+        """Malformed or secret-bearing stderr never becomes public operator text."""
+        from types import SimpleNamespace
+
+        secret = "postgresql://operator:private@postgres/database"
+        docker = operator.Docker("unix:///tmp/selected.sock", ROOT)
+        for output in (
+            secret.encode() + b"\n",
+            b'CONIX-FAILURE-V1 {"phase":"verification","cause":"RuntimeError",'
+            b'"effect":"not_started","location":"input_staging.py:240",'
+            b'"private":"credential"}\n' + secret.encode(),
+        ):
+            with (
+                self.subTest(kind=output[:24]),
+                patch.object(input_staging.subprocess, "run", return_value=SimpleNamespace(
+                    returncode=9, stdout=b"", stderr=output,
+                )),
+                self.assertRaises(operator.OperationError) as raised,
+            ):
+                docker.verify_inputs("sha256:" + "a" * 64, "conix-inputs-" + "b" * 24)
+            self.assertIn("no admitted diagnostic", str(raised.exception))
+            self.assertNotIn(secret, str(raised.exception))
+            self.assertEqual(raised.exception.exit_code, 9)
+
+    def test_successful_verification_remains_confined_and_has_no_receipt_output(self):
+        """Success is unchanged: one read-only verifier, no mounted host paths."""
+        from types import SimpleNamespace
+
+        docker = operator.Docker("unix:///tmp/selected.sock", ROOT)
+        with patch.object(input_staging.subprocess, "run", return_value=SimpleNamespace(
+            returncode=0, stdout=b"unexpected stdout", stderr=b"",
+        )) as launched:
+            self.assertIsNone(docker.verify_inputs(
+                "sha256:" + "a" * 64, "conix-inputs-" + "b" * 24,
+            ))
+        command = launched.call_args.args[0]
+        self.assertEqual(command[command.index("--entrypoint") + 1], "python")
+        self.assertEqual(command[command.index("--mount") + 1],
+                         "type=volume,source=conix-inputs-" + "b" * 24 + ",target=/run/conix,readonly")
+        self.assertNotIn("--privileged", command)
+        self.assertNotIn("--network=host", command)
+
     def test_staging_snapshot_reads_only_declared_regular_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
