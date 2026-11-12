@@ -167,8 +167,15 @@ Tool ownership
 --------------
 tools/containers/client.py owns sanitized selected Docker CLI calls and
 rootless/image admission. tools/containers/operator.py composes that client
-for Conix-specific images, private inputs, deployment and contained tests.
-tools/containers/history.py owns admission and retirement of the foreground
+for Conix-specific images, deployment and contained tests.
+tools/containers/input_staging.py owns host catalog/ABI/runtime-DSN snapshot
+transport, private-volume verification and retirement; the operator delegates
+to it without changing its Docker grants. tools/containers/resources.py owns
+common private-volume and internal-bridge admission, shared without sharing
+lifecycle or cleanup authority. tools/containers/diagnostics.py admits only
+fixed bounded phase/cause/effect process records; installed producers use
+conix.process_diagnostic without relaying exception prose.
+tools/containers/history.py owns activation and retirement of the foreground
 history worker on the selected client. tools/containers/deployment.py owns
 pre-start admission of a retained standalone service and its bounded logs.
 tools/containers/named.py owns one editable deployment.toml, the derived

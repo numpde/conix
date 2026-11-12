@@ -136,6 +136,10 @@ never install real deployment credentials in that directory. Git cannot
 represent the required 0700/0600 private modes, so the lane installs them
 before normal deployment admission. The saved context and wheelhouse are the
 selection authority; any supplied per-call selectors must agree with them.
+The acceptance harness uses only supported, immutable named-deployment
+inspections to read selected resource facts and prepared image/volume IDs;
+it never imports private deployment/lock readers. The normal Make lifecycle
+remains the only activation/retirement path.
 
 The external PG/Anvil fixture is declared in compose/deployment-test.yml,
 using the existing reviewed test services, two owned internal bridges and no
