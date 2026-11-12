@@ -12,6 +12,8 @@ import time
 import traceback
 import urllib.request
 
+from history_observations import snapshot
+
 
 def rpc(method, params):
     """Call the explicitly provisioned fixture without forwarding error prose."""
@@ -51,26 +53,6 @@ def produce(empty_blocks):
     if receipt["status"] != "0x1" or len(receipt["logs"]) != 1:
         raise ValueError("The fixture Transfer was not confirmed.")
     return {"height": int(receipt["blockNumber"], 16), "transaction": transaction}
-
-
-def snapshot(dsn):
-    """Observe durable history without granting this helper schema-owner authority."""
-    import psycopg
-
-    with psycopg.connect(dsn.strip(), connect_timeout=5, options="-c default_transaction_read_only=on") as db:
-        row = db.execute(
-            "SELECT last_block,revision,generation::text,encode(source_id,'hex'),blocked_reason "
-            "FROM conix.source_progress WHERE singleton=1"
-        ).fetchone()
-        blocks = db.execute(
-            "SELECT number,encode(hash,'hex'),encode(parent_hash,'hex') FROM conix.blocks ORDER BY number"
-        ).fetchall()
-        events = db.execute(
-            "SELECT block_number,encode(transaction_hash,'hex'),log_index "
-            "FROM conix.events ORDER BY block_number,log_index"
-        ).fetchall()
-    return {"height": row[0], "revision": row[1], "generation": row[2],
-            "source_id": row[3], "blocked": row[4], "blocks": blocks, "events": events}
 
 
 def main():
