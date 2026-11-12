@@ -508,10 +508,12 @@ def dispatch(action, options, *, client_cls, pinned_images):
         return
 
     if action in ("deployment/database/init", "deployment/up"):
-        docker, directory = _docker(decl, client_cls)
-        try:
-            with _locked(name):
-                receipt = _lock(decl)
+        with _locked(name):
+            # A missing or malformed generated lock is refused before selecting
+            # an Engine. The same lock fences preparation and service startup.
+            receipt = _lock(decl)
+            docker, directory = _docker(decl, client_cls)
+            try:
                 if action == "deployment/database/init":
                     if _inspect_existing(docker, name):
                         raise OperationError("Stop the selected deployment before schema initialization.")
@@ -522,8 +524,8 @@ def dispatch(action, options, *, client_cls, pinned_images):
                         volume=receipt["volume"], database=decl.database_network,
                         rpc=decl.rpc_network,
                     )
-        finally:
-            directory.cleanup()
+            finally:
+                directory.cleanup()
         return
 
     if action in ("deployment/status", "deployment/logs", "deployment/down"):
