@@ -1,51 +1,65 @@
-"""Named Conix deployments: configuration, preparation, and application lifecycle.
+"""Named Conix deployments: one editable definition, one generated TOML lock.
 
-The saved declaration selects resources once. A prepared receipt contains only
-immutable image/volume identities; credentials stay in operator-owned files.
-One command never silently performs another command's privileged work.
+The host operator projects the definition into the installed Tier-0 catalog.
+Only the projected catalog, its selected ABIs and runtime DSN are staged.
+The separately owned schema credential is read only by database/init.
 """
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import fcntl
 import json
+import math
 import os
-import sys
 from pathlib import Path
 import re
 import stat
 import subprocess
+import sys
 import tempfile
 import tomllib
-from contextlib import contextmanager
 
 from tools.containers.client import CONTEXT_NAME, IMAGE_ID, OperationError, select_endpoint
 from tools.containers.history import VOLUME_NAME, _admit_network, _admit_volume
 
+
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOYMENTS = ROOT / "config" / "deployments"
 NAME = re.compile(r"[a-z][a-z0-9-]{0,47}\Z")
-PREPARED = "prepared.json"
-FIELDS = {
-    "docker_context": "context",
-    "source_config": "config_file",
-    "runtime_dsn_file": "dsn_file",
-    "owner_dsn_file": "owner_dsn_file",
-    "database_network": "database_network",
-    "rpc_network": "rpc_network",
-    "wheelhouse": "wheelhouse",
-}
+KEY = re.compile(r"[a-z][a-z0-9_]*\Z")
+LOCK_FILE = "deployment.lock.toml"
+SETTINGS = {"version", "docker_context", "wheelhouse", "database_network",
+            "rpc_network", "chain", "contracts", "limits"}
 
 
 @dataclass(frozen=True)
 class Declaration:
     name: str
     docker_context: str
-    source_config: str
-    runtime_dsn_file: str
-    owner_dsn_file: str
-    database_network: str
-    rpc_network: str
-    wheelhouse: str
+    wheelhouse: str = ""
+    database_network: str = ""
+    rpc_network: str = ""
+    source: dict | None = None
+
+    @property
+    def folder(self):
+        return _directory(self.name)
+
+    @property
+    def abi_dir(self):
+        return self.folder / "abi"
+
+    @property
+    def runtime_dsn_file(self):
+        return self.folder / "secrets" / "runtime.dsn"
+
+    @property
+    def owner_dsn_file(self):
+        return self.folder / "secrets" / "owner.dsn"
+
+    @property
+    def lock_file(self):
+        return self.folder / LOCK_FILE
 
 
 def _directory(name):
@@ -54,27 +68,177 @@ def _directory(name):
     return DEPLOYMENTS / name
 
 
+def _owned_directory(path):
+    try:
+        details = path.lstat()
+    except OSError as error:
+        raise OperationError(f"Deployment directory {path.name!r} is unavailable.") from error
+    if (not stat.S_ISDIR(details.st_mode) or details.st_uid != os.geteuid()
+            or stat.S_IMODE(details.st_mode) != 0o700):
+        raise OperationError(f"Deployment directory {path.name!r} must be owner-only (0700).")
+
+
 def _private_file(path):
     try:
         info = path.lstat()
     except OSError as error:
-        raise OperationError("Selected named deployment file is unavailable.") from error
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600:
-        raise OperationError("Named deployment files must be owner-only regular files (0600).")
+        raise OperationError(f"Required deployment file {path.name!r} is unavailable.") from error
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) != 0o600):
+        raise OperationError(f"Deployment file {path.name!r} must be an owner-only regular file (0600).")
     return path
 
 
-def _validate(decl):
-    if CONTEXT_NAME.fullmatch(decl.docker_context) is None:
-        raise OperationError("The saved Docker context name is invalid.")
-    for path in (decl.source_config, decl.runtime_dsn_file, decl.owner_dsn_file, decl.wheelhouse):
-        if not Path(path).is_absolute() or len(path) > 4096:
-            raise OperationError("Saved host input paths must be absolute and bounded.")
-    for name in (decl.database_network, decl.rpc_network):
-        if CONTEXT_NAME.fullmatch(name) is None:
-            raise OperationError("Saved Docker network names must be explicit and valid.")
+def _read_toml(path, max_bytes):
+    _private_file(path)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                    or stat.S_IMODE(info.st_mode) != 0o600):
+                raise OperationError("Selected deployment file changed during inspection.")
+            data = stream.read(max_bytes + 1)
+    except OSError as error:
+        raise OperationError(f"Cannot read deployment file {path.name!r}.") from error
+    if not 0 < len(data) <= max_bytes:
+        raise OperationError(f"Deployment file {path.name!r} is empty or exceeds its size limit.")
+    try:
+        return tomllib.loads(data.decode("utf-8"))
+    except (UnicodeError, tomllib.TOMLDecodeError) as error:
+        raise OperationError(f"Deployment file {path.name!r} is not valid UTF-8 TOML.") from error
+
+
+def _scalar(value):
+    """Serialize only TOML values required by the existing Tier-0 catalog."""
+    if type(value) is str:
+        return json.dumps(value, ensure_ascii=True)
+    if type(value) is int:
+        return str(value)
+    if type(value) is float and math.isfinite(value):
+        return repr(value)
+    if type(value) is list:
+        return "[" + ", ".join(_scalar(part) for part in value) + "]"
+    raise OperationError("The selected source contains a value that cannot be projected as TOML.")
+
+
+def _table(label, data):
+    if type(data) is not dict:
+        raise OperationError(f"Deployment {label} must be a TOML table.")
+    rows = [f"[{label}]\n"]
+    for name, value in data.items():
+        if type(name) is not str or KEY.fullmatch(name) is None:
+            raise OperationError(f"Deployment {label} contains an invalid field name.")
+        rows.append(f"{name} = {_scalar(value)}\n")
+    return "".join(rows) + "\n"
+
+
+def _render_deployment(document):
+    """Render editable deployment data without inventing any source settings."""
+    keys = ("version", "docker_context", "wheelhouse", "database_network", "rpc_network")
+    output = []
+    for key in keys:
+        if key in document:
+            output.append(f"{key} = {_scalar(document[key])}\n")
+    output.append("\n")
+    for name in ("chain", "limits"):
+        if name in document:
+            output.append(_table(name, document[name]))
+    contracts = document.get("contracts", {})
+    if type(contracts) is not dict:
+        raise OperationError("Deployment contracts must be a TOML table.")
+    for alias, selected in contracts.items():
+        if type(alias) is not str or KEY.fullmatch(alias) is None:
+            raise OperationError("Deployment contract alias cannot be rendered.")
+        output.append(_table(f"contracts.{alias}", selected))
+    return "".join(output)
+
+
+def _project_catalog(decl):
+    """Project only source fields; let the installed catalog own their meaning."""
+    if decl.source is None:
+        raise OperationError("Complete the source settings in deployment.toml before preparation.")
+    document = {"version": 1, **decl.source,
+                "database": {"dsn_file": "/run/conix/connection.dsn",
+                             "runtime_role": "conix_runtime"}}
+    output = ["version = 1\n\n", _table("chain", document["chain"]),
+              _table("database", document["database"]), _table("limits", document["limits"])]
+    for alias, selected in document["contracts"].items():
+        output.append(_table(f"contracts.{alias}", selected))
+    return "".join(output)
+
+
+def _read(name, *, complete=True):
+    folder = _directory(name)
+    _owned_directory(folder)
+    document = _read_toml(folder / "deployment.toml", 64 * 1024)
+    if type(document) is not dict or set(document) - SETTINGS:
+        raise OperationError("deployment.toml contains unsupported settings.")
+    if type(document.get("version")) is not int or document["version"] != 1:
+        raise OperationError("deployment.toml requires version = 1.")
+    context = document.get("docker_context")
+    if type(context) is not str or CONTEXT_NAME.fullmatch(context) is None:
+        raise OperationError("deployment.toml requires a valid docker_context.")
+
+    required = SETTINGS - set(document)
+    if complete and required:
+        for key in ("wheelhouse", "database_network", "rpc_network", "chain", "contracts", "limits"):
+            if key in required:
+                raise OperationError(f"deployment.toml is missing required setting: {key}.")
+    selections = {}
+    for key in ("wheelhouse", "database_network", "rpc_network"):
+        value = document.get(key, "")
+        if value and type(value) is not str:
+            raise OperationError(f"deployment.toml {key} must be a string.")
+        selections[key] = value
+
+    decl = Declaration(
+        name=name, docker_context=context, **selections,
+        source={key: document[key] for key in ("chain", "contracts", "limits")}
+        if complete else None,
+    )
+    if not complete:
+        return decl
+
+    if not Path(decl.wheelhouse).is_absolute() or len(decl.wheelhouse) > 4096:
+        raise OperationError("deployment.toml wheelhouse must be an absolute existing pool path.")
+    for key in ("database_network", "rpc_network"):
+        value = getattr(decl, key)
+        if not value or CONTEXT_NAME.fullmatch(value) is None:
+            raise OperationError(f"deployment.toml requires a valid {key}.")
     if decl.database_network == decl.rpc_network:
-        raise OperationError("Selected database and RPC networks must be distinct.")
+        raise OperationError("Database and RPC network selections must be distinct.")
+
+    chain = decl.source["chain"]
+    limits = decl.source["limits"]
+    contracts = decl.source["contracts"]
+    if type(chain) is not dict or type(limits) is not dict or type(contracts) is not dict:
+        raise OperationError("Chain, contracts and limits must be TOML tables.")
+    if not contracts:
+        raise OperationError("deployment.toml requires at least one selected contract.")
+    for alias, selected in contracts.items():
+        if (type(alias) is not str or KEY.fullmatch(alias) is None
+                or type(selected) is not dict
+                or set(selected) != {"address", "abi_file", "events"}):
+            raise OperationError("A selected contract requires only address, abi_file and events.")
+
+    # This path projection is a transport constraint; semantic ABI/event/chain
+    # admission remains exclusively in the installed Tier-0 catalog.
+    from tools.containers.operator import _declared_abi_names
+
+    selected_paths = _declared_abi_names(_project_catalog(decl).encode("utf-8"))
+    _owned_directory(decl.abi_dir)
+    _owned_directory(folder / "secrets")
+    for filename in selected_paths:
+        path = decl.abi_dir / filename
+        try:
+            info = path.lstat()
+        except OSError as error:
+            raise OperationError(f"Selected ABI file {filename!r} is missing.") from error
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                or info.st_mode & 0o022):
+            raise OperationError(f"Selected ABI file {filename!r} must be an owned regular file.")
+    return decl
 
 
 def _write_new(path, data):
@@ -85,94 +249,44 @@ def _write_new(path, data):
         os.fsync(stream.fileno())
 
 
-def _write_prepared(folder, record):
-    descriptor, temporary = tempfile.mkstemp(prefix=".prepared-", dir=folder)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            os.fchmod(stream.fileno(), 0o600)
-            json.dump(record, stream, sort_keys=True)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, folder / PREPARED)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-
-
-def _read(name):
-    folder = _directory(name)
-    try:
-        details = folder.lstat()
-        if not stat.S_ISDIR(details.st_mode) or details.st_uid != os.geteuid() or stat.S_IMODE(details.st_mode) != 0o700:
-            raise OperationError("Named deployment directory must be owner-only (0700).")
-        data = _private_file(folder / "deployment.toml").read_bytes()
-        if len(data) > 8192:
-            raise OperationError("Named deployment configuration exceeds its size bound.")
-        document = tomllib.loads(data.decode("utf-8"))
-    except (UnicodeError, tomllib.TOMLDecodeError, OSError) as error:
-        raise OperationError("Cannot read the selected named deployment configuration.") from error
-    if type(document) is not dict or set(document) != {"version", *FIELDS} or document["version"] != 1:
-        raise OperationError("Saved deployment configuration has unexpected fields or version.")
-    if any(type(document[key]) is not str or not document[key] for key in FIELDS):
-        raise OperationError("Saved deployment configuration has a missing or malformed selection.")
-    decl = Declaration(name=name, **{key: document[key] for key in FIELDS})
-    _validate(decl)
-    return decl
-
-
-def _prompt(label):
-    try:
-        with open("/dev/tty", "r", encoding="utf-8") as source, open("/dev/tty", "w", encoding="utf-8") as sink:
-            sink.write(label + ": ")
-            sink.flush()
-            return source.readline().rstrip("\r\n")
-    except OSError as error:
-        raise OperationError(
-            f"Missing {label} for deployment/init; supply it explicitly on the Make command line."
-        ) from error
-
-
 def init(name, options):
-    """Record an immutable, nonsecret deployment selection, without Docker."""
+    """Create an editable skeleton and private directories; no source guesses."""
     folder = _directory(name)
     if os.geteuid() == 0:
-        raise OperationError("Create named deployments as the unprivileged Engine operator, not root.")
-    if getattr(options, "origin", None) != "command line":
-        raise OperationError("deployment/init requires explicit DOCKER_CONTEXT=<local-context>.")
-    values = {}
-    for (field, option) in FIELDS.items():
-        value = getattr(options, option, None)
-        if not value:
-            value = _prompt(option.upper())
-        values[field] = value
-    decl = Declaration(name=name, **values)
-    _validate(decl)
+        raise OperationError("Initialize deployments as the unprivileged Docker operator.")
+    if options.origin != "command line" or not CONTEXT_NAME.fullmatch(options.context or ""):
+        raise OperationError("deployment/init requires DOCKER_CONTEXT=<local-context> explicitly.")
     if folder.exists() or folder.is_symlink():
         raise OperationError("Named deployment already exists; initialization will not overwrite it.")
-
     for path in (ROOT / "config", DEPLOYMENTS):
         if path.exists() or path.is_symlink():
             if path.is_symlink() or not path.is_dir() or path.stat().st_uid != os.geteuid():
                 raise OperationError("Deployment configuration parent is not an owned directory.")
         else:
             path.mkdir(mode=0o700)
-
     folder.mkdir(mode=0o700)
-    # JSON quoted strings are valid TOML basic strings; keys are fixed source text.
-    content = "version = 1\n" + "".join(
-        f"{key} = {json.dumps(getattr(decl, key), ensure_ascii=False)}\n" for key in FIELDS
+    (folder / "abi").mkdir(mode=0o700)
+    (folder / "secrets").mkdir(mode=0o700)
+    skeleton = (
+        "version = 1\n"
+        + "docker_context = " + _scalar(options.context) + "\n\n"
+        + "# Fill in all required settings before deployment/prepare.\n"
+        + "# wheelhouse = \"/absolute/path/to/wheelhouse\"\n"
+        + "# database_network = \"<existing database bridge>\"\n"
+        + "# rpc_network = \"<existing RPC bridge>\"\n\n"
+        + "# [chain]           # supply chain_id, genesis_hash, start_block, rpc_url\n"
+        + "# [limits]          # supply all Tier-0 limits (see examples/conix.toml)\n"
+        + "# [contracts.token] # supply address, abi_file = \"abi/token.json\", events\n"
     )
-    _write_new(folder / "deployment.toml", content.encode("utf-8"))
-    print(f"Initialized deployment {name} (no image, secret, database, or container created).")
+    _write_new(folder / "deployment.toml", skeleton.encode("utf-8"))
+    print(f"Initialized deployment {name}; fill deployment.toml and install selected ABIs/DSNs.")
     print(f"Next: make deployment/prepare DEPLOYMENT={name}")
 
 
 @contextmanager
 def _locked(name):
-    """Serialize modifying operations on this named deployment."""
-    folder = _directory(name)
-    path = folder / ".operator.lock"
+    """Serialize preparation, schema creation and start on one named resource."""
+    path = _directory(name) / ".operator.lock"
     fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         try:
@@ -184,23 +298,52 @@ def _locked(name):
         os.close(fd)
 
 
-def _prepared(decl):
-    path = _directory(decl.name) / PREPARED
+def _valid_lock(record):
+    if (type(record) is not dict or set(record) != {"version", "image", "volume"}
+            or type(record["version"]) is not int or record["version"] != 1
+            or type(record["image"]) is not str or IMAGE_ID.fullmatch(record["image"]) is None
+            or type(record["volume"]) is not str or VOLUME_NAME.fullmatch(record["volume"]) is None):
+        raise OperationError("deployment.lock.toml requires exact version, image and volume identities.")
+    return record
+
+
+def _lock(decl):
+    """Read only the generated TOML authority; never accept prepared.json."""
+    path = decl.lock_file
     try:
-        data = _private_file(path).read_bytes()
-        if len(data) > 4096:
-            raise OperationError("Prepared deployment receipt exceeds its bound.")
-        receipt = json.loads(data)
-    except (ValueError, OSError) as error:
+        document = _read_toml(path, 4096)
+    except OperationError as error:
         raise OperationError(
-            f"No usable prepared deployment receipt; run make deployment/prepare DEPLOYMENT={decl.name}."
+            f"No valid deployment.lock.toml for {decl.name}; "
+            f"run make deployment/prepare DEPLOYMENT={decl.name}."
         ) from error
-    if (type(receipt) is not dict or set(receipt) != {"version", "image", "volume"}
-            or type(receipt["version"]) is not int or receipt["version"] != 1
-            or type(receipt["image"]) is not str or IMAGE_ID.fullmatch(receipt["image"]) is None
-            or type(receipt["volume"]) is not str or VOLUME_NAME.fullmatch(receipt["volume"]) is None):
-        raise OperationError("The selected prepared deployment receipt is invalid.")
-    return receipt
+    return _valid_lock(document)
+
+
+def _write_lock(folder, record):
+    """Publish a 0600 lock atomically after build, verification and staging."""
+    _valid_lock(record)
+    destination = folder / LOCK_FILE
+    if destination.exists() or destination.is_symlink():
+        _private_file(destination)
+    contents = (
+        "version = 1\n"
+        f"image = {_scalar(record['image'])}\n"
+        f"volume = {_scalar(record['volume'])}\n"
+    )
+    fd, temporary = tempfile.mkstemp(prefix=".deployment-lock-", dir=folder)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(contents.encode("utf-8"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        # A successful replace is the publication boundary. Never attempt
+        # cleanup of the new volume after that boundary: it is now selected.
+        os.replace(temporary, destination)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def _docker(decl, client_cls):
@@ -215,32 +358,37 @@ def _inspect_existing(docker, name):
     return _candidate_ids(docker, "conix-" + name)
 
 
-def prepare(decl, docker, images):
-    """Build only from present trusted inputs; stage a retained private volume.
+def _stage_projected(decl, docker, image):
+    """Project into the deployment's ABI directory; never mount the host tree."""
+    fd, temporary = tempfile.mkstemp(prefix=".projected-", suffix=".toml", dir=decl.folder)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(_project_catalog(decl))
+            stream.flush()
+            os.fsync(stream.fileno())
+        return docker.stage_inputs(
+            image, temporary, decl.runtime_dsn_file, announce=False,
+        )
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
-    Preparation may run on the rootful CI Engine, like the existing offline
-    build/staging lanes. Actual service start still requires rootless admission.
-    """
+
+def prepare(decl, docker, images):
+    """Offline build and stage; publish the TOML lock only after all succeed."""
     from tools.wheelhouse.operations import SharedWheelhouse
 
     with _locked(decl.name):
         if _inspect_existing(docker, decl.name):
-            raise OperationError("Retire the existing service before preparing replacement inputs.")
-        existing = None
-        if (_directory(decl.name) / PREPARED).exists():
-            existing = _prepared(decl)
-
+            raise OperationError("Stop the selected service before preparing replacement inputs.")
+        existing = _lock(decl) if decl.lock_file.exists() or decl.lock_file.is_symlink() else None
         pool = SharedWheelhouse(docker, images, decl.wheelhouse)
         pool.check()
         image = pool.build("indexer")
         docker.check_indexer(image)
-        volume = docker.stage_inputs(
-            image, decl.source_config, decl.runtime_dsn_file, announce=False,
-        )
+        volume = _stage_projected(decl, docker, image)
         try:
-            _write_prepared(_directory(decl.name), {
-                "version": 1, "image": image, "volume": volume,
-            })
+            _write_lock(decl.folder, {"version": 1, "image": image, "volume": volume})
         except BaseException:
             try:
                 docker.remove_inputs(volume)
@@ -252,21 +400,20 @@ def prepare(decl, docker, images):
             try:
                 docker.remove_inputs(existing["volume"])
             except OperationError:
-                print(f"Old input volume {existing['volume']} remains; retire it explicitly.",
+                print(f"Previous input volume {existing['volume']} remains; retire explicitly.",
                       file=sys.stderr)
         print(f"Prepared deployment {decl.name} with verified image and private input snapshot.")
         print(f"Next: make deployment/database/init DEPLOYMENT={decl.name}")
 
 
 def database_init(decl, docker, receipt):
-    """Send owner DSN through private stdin only; never grant it to the runtime."""
+    """Send owner DSN only through stdin to a short-lived schema initializer."""
     docker.require_rootless_engine()
     docker.require_role(receipt["image"], "indexer")
     _admit_volume(docker, receipt["volume"])
     network_id = _admit_network(docker, decl.database_network)
     owner = docker.private_bytes(decl.owner_dsn_file, 8192, secret=True)
     docker.verify_inputs(receipt["image"], receipt["volume"])
-
     argv = docker.docker_command_prefix + [
         "run", "--rm", "--interactive", "--pull", "never",
         "--network", network_id, "--read-only", "--user", "65532:65532",
@@ -276,30 +423,31 @@ def database_init(decl, docker, receipt):
         "--entrypoint", "python", receipt["image"], "-I", "-m", "conix.schema_cli", "initialize",
     ]
     try:
-        result = subprocess.run(argv, input=owner, capture_output=True,
-                                cwd=ROOT, env=docker.docker_environment, timeout=90)
+        result = subprocess.run(
+            argv, input=owner, capture_output=True, cwd=ROOT,
+            env=docker.docker_environment, timeout=90,
+        )
     except subprocess.TimeoutExpired as error:
-        raise OperationError("Schema initializer timed out; inspect the database before retrying.") from error
+        raise OperationError("Schema initializer timed out; inspect database before retrying.") from error
     except OSError as error:
         raise OperationError("Could not launch the contained owner-only initializer.") from error
     if result.returncode:
         raise OperationError(
             f"Schema initializer failed (exit {result.returncode}); "
-            "inspect the owner role, selected database and durable schema before retrying."
+            "inspect the selected database before retrying."
         )
     print(f"Initialized fresh Conix history for deployment {decl.name}.")
     print(f"Next: make deployment/up DEPLOYMENT={decl.name}")
 
 
 def dispatch(action, options, *, client_cls, pinned_images):
-    """Use saved selections for all repeat operations; no implicit acquisition."""
+    """Resolve one named declaration and reuse the existing Docker operator."""
     if action == "test/standalone/run":
         if options.origin != "command line" or not CONTEXT_NAME.fullmatch(options.context or ""):
-            raise OperationError("Select DOCKER_CONTEXT=<local-rootless-context> for the standalone test.")
+            raise OperationError("Select DOCKER_CONTEXT=<local-context> for the standalone test.")
         if not options.wheelhouse:
             raise OperationError("Select WHEELHOUSE=<existing-shared-pool> for the standalone test.")
         from tools.wheelhouse.operations import SharedWheelhouse
-
         endpoint = select_endpoint(options.context, "command line", working_dir=ROOT)
         with tempfile.TemporaryDirectory(prefix="conix-standalone-operator-") as folder:
             config = Path(folder)
@@ -319,14 +467,15 @@ def dispatch(action, options, *, client_cls, pinned_images):
 
     decl = None
     try:
-        decl = _read(name)
+        decl = _read(name, complete=action not in (
+            "deployment/status", "deployment/logs", "deployment/down",
+        ))
     except OperationError:
         if action not in ("deployment/status", "deployment/logs", "deployment/down"):
             raise
-        # Only a MISSING declaration permits explicit recovery; corrupted or
-        # foreign-owned declarations must not silently redirect operation.
-        declaration_path = _directory(name) / "deployment.toml"
-        if declaration_path.exists() or declaration_path.is_symlink():
+        # Only absent saved configuration permits explicit-context recovery.
+        config = _directory(name) / "deployment.toml"
+        if config.exists() or config.is_symlink():
             raise
         if options.origin != "command line" or not CONTEXT_NAME.fullmatch(options.context or ""):
             raise
@@ -346,7 +495,7 @@ def dispatch(action, options, *, client_cls, pinned_images):
         return
 
     if action == "deployment/config/check":
-        receipt = _prepared(decl)
+        receipt = _lock(decl)
         docker, directory = _docker(decl, client_cls)
         try:
             docker.deployment(
@@ -362,10 +511,7 @@ def dispatch(action, options, *, client_cls, pinned_images):
         docker, directory = _docker(decl, client_cls)
         try:
             with _locked(name):
-                # Prepare and activate use the same deployment lock. Read the
-                # receipt under it so a newer input volume cannot replace the
-                # selected snapshot before the service is created.
-                receipt = _prepared(decl)
+                receipt = _lock(decl)
                 if action == "deployment/database/init":
                     if _inspect_existing(docker, name):
                         raise OperationError("Stop the selected deployment before schema initialization.")
@@ -381,7 +527,6 @@ def dispatch(action, options, *, client_cls, pinned_images):
         return
 
     if action in ("deployment/status", "deployment/logs", "deployment/down"):
-        # In recovery, the operator must still explicitly choose an Engine.
         endpoint = select_endpoint(context, "command line", working_dir=ROOT)
         with tempfile.TemporaryDirectory(prefix="conix-recovery-client-") as directory:
             (Path(directory) / "config.json").write_text('{"auths":{},"proxies":{}}\n')
@@ -393,9 +538,13 @@ def dispatch(action, options, *, client_cls, pinned_images):
             }[action]
             if action == "deployment/down" and decl is not None:
                 with _locked(name):
-                    return docker.deployment(operation=operation, name=name, image=None,
-                                             volume=None, database=None, rpc=None)
-            return docker.deployment(operation=operation, name=name, image=None,
-                                     volume=None, database=None, rpc=None)
+                    return docker.deployment(
+                        operation=operation, name=name, image=None,
+                        volume=None, database=None, rpc=None,
+                    )
+            return docker.deployment(
+                operation=operation, name=name, image=None,
+                volume=None, database=None, rpc=None,
+            )
 
     raise OperationError("Unsupported named deployment command.")
