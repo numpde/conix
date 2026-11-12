@@ -23,8 +23,6 @@ jobs:
         run: python -m compileall -q src tests tools repository_checks
       - name: Qualify host-side Docker context and teardown contracts
         run: make test/repository/run
-      - name: Verify locked input declarations without Docker
-        run: make repository/inputs/check
       - name: Acquire pinned images and hashed wheelhouse; build and test offline
         run: |
           make image/python-base/acquire DOCKER_CONTEXT=default
@@ -41,10 +39,7 @@ jobs:
           runtime="$(make -s image/indexer/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
           make image/indexer/check DOCKER_CONTEXT=default IMAGE="$runtime"
           test_image="$(make -s image/test-runner/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
-          make test/postgres/run DOCKER_CONTEXT=default RUNNER_IMAGE="$test_image"
-          # The named disposable lane independently builds and starts the
-          # actual installed CLI, then retires its owned PostgreSQL/Anvil stack.
-          make test/standalone/run DOCKER_CONTEXT=default WHEELHOUSE="$pool"
+          make test/indexer/run DOCKER_CONTEXT=default RUNNER_IMAGE="$test_image"
           fixture_image="$(make -s image/evm-test-runner/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
           make image/evm-test-runner/check DOCKER_CONTEXT=default IMAGE="$fixture_image"
           # Stage the real distribution's fixed inputs in a private engine volume.

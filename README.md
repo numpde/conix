@@ -73,9 +73,9 @@ cache in the finished image.
     runtime="$(make -s image/indexer/build DOCKER_CONTEXT=agentic WHEELHOUSE="$HOME/Downloads/wheelhouse")"
     make image/indexer/check DOCKER_CONTEXT=agentic IMAGE="$runtime"
     runner="$(make -s image/test-runner/build DOCKER_CONTEXT=agentic WHEELHOUSE="$HOME/Downloads/wheelhouse")"
-    make test/postgres/run DOCKER_CONTEXT=agentic RUNNER_IMAGE="$runner"
+    make test/indexer/run DOCKER_CONTEXT=agentic RUNNER_IMAGE="$runner"
 
-test/postgres/run uses a confined PostgreSQL and Anvil stack, with separate
+test/indexer/run uses a confined PostgreSQL and Anvil stack, with separate
 owner-initialized SQL databases for generic journal tests and real EVM
 ingestion. The scanner stores real Anvil-emitted Transfers, processes
 an empty block, repairs its suffix and reindexes it. The reader checks
@@ -225,15 +225,9 @@ and staged inputs. If the saved declaration has been lost, recovery may
 use an explicit DOCKER_CONTEXT=<name> with DEPLOYMENT=<name> for those three
 commands only. A conflicting context is rejected while the saved file exists.
 
-For a disposable installed-process demonstration (not a retained deployment):
-
-    make test/standalone/run DOCKER_CONTEXT=agentic WHEELHOUSE="$HOME/Downloads/wheelhouse"
-
-That command builds a test runner offline from selected cached inputs,
-creates an isolated Anvil/PostgreSQL stack, initializes the schema under
-its separate owner, runs the contained tests (including a real launched
-`python -I -m conix run` process), and retires owned resources. It is NOT
-a deployed instance and cannot alter the saved named deployment.
+The contained `test/indexer/run` suite also launches the installed CLI and
+checks tip-following and SIGTERM. The retained deployment acceptance lane below
+exercises the separate named-service lifecycle.
 
 Manual repair stays explicit. Inside an appropriately confined container
 with the selected staged inputs, `python -I -m conix history inspect`
@@ -246,3 +240,40 @@ campaign on the selected rootless Engine and a fresh dapp32 acceptance run.
 Existing GitHub CI and the disposable Anvil/PostgreSQL tests are evidence
 only for the paths they actually execute. No runtime production readiness
 or automatic recovery guarantee follows from a green repository check.
+
+Retained deployment acceptance
+-----------------------------
+Run the repository-owned acceptance lane on the selected rootless Engine:
+
+    make test/deployment/run
+
+It uses `config/deployments/deployment-acceptance/` in place. The complete
+deployment TOML, ERC-20 ABI and two disposable test DSNs are tracked, including
+the `secrets/` directory. These passwords belong only to the isolated fixture;
+never replace them with real deployment credentials. Git cannot preserve
+private directory/file modes, so the lane installs 0700/0600 modes before
+passing the profile to the ordinary named deployment operator.
+
+The committed TOML selects `agentic` and the fw shared wheelhouse. Review those
+two settings for another host; per-call overrides cannot redirect the saved
+deployment. Pinned images and hash-locked wheels must already be cached.
+Nothing is downloaded implicitly. This lane requires a rootless Engine;
+ordinary CI's disposable CLI test is a separate qualification.
+
+`compose/deployment-test.yml` reuses the existing PostgreSQL, Anvil and role
+bootstrap definitions. Its fixed Anvil timestamp gives the committed source
+a repeatable genesis. Two owned internal networks expose no host ports.
+The lane invokes the same `deployment/prepare`, `database/init`, `config/check`,
+`up`, `status`, `logs` and `down` Make commands used normally. Contained helpers
+emit test event logs and inspect SQL without replacing the indexer's work.
+The test checks catch-up, idle tip, later arrivals, clean shutdown,
+fresh-process restart and unchanged durable history after restart.
+
+The generated `deployment.lock.toml` remains ignored. A successful run removes
+that lock, its private input volume and all owned external fixture resources;
+the tracked deployment files remain in place. Overlapping runs, existing
+indexers, generated locks and old fixture resources are refused before effects.
+Failure retains private logs and a result under `out/deployment-acceptance/`.
+If the consumer cannot be retired, its SQL/RPC dependencies stay available for
+inspection. Inspect those records before explicitly retiring stale resources;
+the next run never silently adopts or deletes them.

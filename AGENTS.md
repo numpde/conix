@@ -183,6 +183,12 @@ selected Docker operator without changing the sibling checkout.
 tools/fixtures/protocol.py owns the test-only JSON fixture admission and
 phase records; its source is copied into EVM/test images but never packaged
 in the installed Conix runtime. Host operators must not import from tests/.
+tools/fixtures/deployment.py owns test/deployment/run and its external test
+services. It boots the committed deployment-acceptance profile through the
+ordinary named Make lifecycle. tools/fixtures/process.py owns bounded child
+processes for both campaigns. The two committed deployment-acceptance DSNs
+are disposable fixture credentials, never credentials for a retained real
+service. Their directory is deliberately tracked; its generated lock is not.
 tools/wheelhouse/ contains issuer lock regeneration, released NMR tool
 bootstrap, shared pool/source policy, contained target selector, and offline
 image-build orchestration. Invoke operators with python -m via Make; avoid new
@@ -199,7 +205,7 @@ build, test run, retained resource create, status and remove. Owner schema
 initialization is now a separate named deployment/database/init operation
 in this T0-7 branch; legacy deployment/apply remains absent. The T0-7 branch
 exports named deployment/init, prepare, database/init, config/check,
-up/status/logs/down, and disposable test/standalone/run. These named
+up/status/logs/down, and contained test/indexer/run. These named
 operations do not make the scientific scanner or journal a host operator.
 Deployment/down retires only the selected labelled Conix indexer containers,
 not external networks, SQL or inputs.

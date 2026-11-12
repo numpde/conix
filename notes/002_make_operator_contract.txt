@@ -107,9 +107,9 @@ Tests and legacy diagnostics
 ----------------------------
   make test/repository/run
   make repository/inputs/check
-  make test/standalone/run DOCKER_CONTEXT=agentic WHEELHOUSE=<acquired-pool>
+  make test/indexer/run DOCKER_CONTEXT=agentic RUNNER_IMAGE=<verified-test-image>
 
-The standalone lane owns a disposable PostgreSQL/Anvil graph, initializes
+The contained indexer lane owns a disposable PostgreSQL/Anvil graph, initializes
 the owner-only schema and launches the real installed conix run process,
 including SIGTERM and durable-tip behavior. It is not retained deployment
 qualification. The separately triggered dapp32 campaign qualifies real
@@ -126,3 +126,27 @@ Make values are captured literally, never interpreted as shell syntax.
 Public checks remain fail-closed. Follow the original trusted input
 policies; do not add duplicate catalog validation or permit secrets,
 Docker sockets or owner credentials in the runtime.
+
+Retained deployment acceptance
+-----------------------------
+test/deployment/run owns the stable deployment-acceptance test identity. Its
+complete definition, ABI and disposable DSNs are tracked under
+config/deployments/deployment-acceptance/. They are test credentials only;
+never install real deployment credentials in that directory. Git cannot
+represent the required 0700/0600 private modes, so the lane installs them
+before normal deployment admission. The saved context and wheelhouse are the
+selection authority; any supplied per-call selectors must agree with them.
+
+The external PG/Anvil fixture is declared in compose/deployment-test.yml,
+using the existing reviewed test services, two owned internal bridges and no
+host ports. Its fixed timestamp makes genesis repeatable. Runtime startup,
+initialization, status, logs and retirement always use the normal named Make
+commands. No source/config copy or alternate worker launch is used.
+
+Acceptance proves catch-up, idle-tip behavior, later arrivals, clean shutdown,
+restart in a new process and preservation of the previous durable block/event
+prefix. The generated TOML lock is ignored and removed only after its owned
+input volume is retired. Tracked deployment files remain in place. Existing
+resources or locks are refused before mutation; uncertainty retains private
+evidence under out/deployment-acceptance/ and blocks automatic reuse. The test
+never tears down SQL/RPC while the retained consumer may still be alive.

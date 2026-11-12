@@ -519,7 +519,7 @@ class Docker(DockerClient):
     def test(self, image, images):
         """Run an isolated PostgreSQL test project and retire only its resources."""
         if not IMAGE_ID.fullmatch(image):
-            raise OperationError("test/postgres/run requires immutable RUNNER_IMAGE=sha256:<id>.")
+            raise OperationError("test/indexer/run requires immutable RUNNER_IMAGE=sha256:<id>.")
 
         self.require_role(image, "test-runner")
         self.require_image(images["postgres"])
@@ -664,7 +664,7 @@ def main():
         "wheelhouse/check", "wheelhouse/acquire",
         "image/indexer/build", "image/test-runner/build", "image/evm-test-runner/build",
         "image/indexer/check", "image/evm-test-runner/check",
-        "test/postgres/run", "test/standalone/run", "test/input-staging/run",
+        "test/indexer/run", "test/deployment/run", "test/input-staging/run",
         "history/advance",
         "deployment/inputs/create", "deployment/inputs/remove",
         "deployment/init", "deployment/prepare", "deployment/database/init",
@@ -706,8 +706,13 @@ def main():
             options.database_network = make_inputs["DATABASE_NETWORK"]
             options.rpc_network = make_inputs["RPC_NETWORK"]
 
+        if options.action == "test/deployment/run":
+            from tools.fixtures.deployment import run_acceptance
+
+            run_acceptance(options, client_cls=Docker, pinned_images=pinned_images)
+            return
+
         if options.action in (
-            "test/standalone/run",
             "deployment/init", "deployment/prepare", "deployment/database/init",
             "deployment/config/check", "deployment/up", "deployment/status",
             "deployment/logs", "deployment/down",
@@ -737,7 +742,7 @@ def main():
                 selected_wheels = wheel_pool.check() if options.action.endswith("/check") else wheel_pool.acquire()
                 print(f"Verified {len(selected_wheels)} hash-locked artifacts in WHEELHOUSE.", file=sys.stderr)
 
-            elif options.action == "test/postgres/run":
+            elif options.action == "test/indexer/run":
                 docker.test(options.runner_image or "", image_manifest)
 
             elif options.action == "image/indexer/check":

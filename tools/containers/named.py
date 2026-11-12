@@ -462,24 +462,6 @@ def database_init(decl, docker, receipt):
 
 def dispatch(action, options, *, client_cls, pinned_images):
     """Resolve one named declaration and reuse the existing Docker operator."""
-    if action == "test/standalone/run":
-        if options.origin != "command line" or not CONTEXT_NAME.fullmatch(options.context or ""):
-            raise OperationError("Select DOCKER_CONTEXT=<local-context> for the standalone test.")
-        if not options.wheelhouse:
-            raise OperationError("Select WHEELHOUSE=<existing-shared-pool> for the standalone test.")
-        from tools.wheelhouse.operations import SharedWheelhouse
-        endpoint = select_endpoint(options.context, "command line", working_dir=ROOT)
-        with tempfile.TemporaryDirectory(prefix="conix-standalone-operator-") as folder:
-            config = Path(folder)
-            (config / "config.json").write_text('{"auths":{},"proxies":{}}\n')
-            docker = client_cls(endpoint, config)
-            images = pinned_images()
-            pool = SharedWheelhouse(docker, images, options.wheelhouse)
-            pool.check()
-            runner = pool.build("test-runner")
-            docker.test(runner, images)
-        return
-
     # Named operations are resolved from one editable file. An explicit
     # obsolete selector must not be silently ignored or override its source.
     old_selectors = {

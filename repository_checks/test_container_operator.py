@@ -403,7 +403,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
             run = subprocess.run([
                 sys.executable, "-m", "tools.containers.operator",
                 "--context", "science", "--origin", "command line",
-                "test/postgres/run", "--runner-image", image,
+                "test/indexer/run", "--runner-image", image,
             ], env=env, capture_output=True, text=True, timeout=15)
             records = [json.loads(line) for line in log.read_text().splitlines()]
             return run, records

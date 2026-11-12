@@ -17,11 +17,12 @@ import stat
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 from tools.containers.client import CONTEXT_NAME, IMAGE_ID, OperationError, select_endpoint
 from tools.containers.operator import Docker, ROOT, pinned_images
+
+from tools.fixtures.process import CampaignError, clean_environment, owned_command, progress
 
 from tools.fixtures.protocol import (
     FixtureError,
@@ -37,9 +38,6 @@ from tools.fixtures.protocol import (
 ID = re.compile(r"conix-[0-9a-f]{12}\Z")
 GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 
-
-class CampaignError(Exception):
-    """The fixture operation or evidence was not reliably completed."""
 
 
 def sibling_checkout(checkout_directory):
@@ -101,121 +99,6 @@ def pin_sibling_context(docker, context_name):
 
     return None
 
-
-def _clean_env():
-    """Exclude ambient Docker, Make, Compose and private-wallet authority."""
-    excluded_prefixes = (
-        "DOCKER_", "COMPOSE_", "BUILDX_", "CONIX_MAKE_", "CAM_",
-        "PAY_TO_PLAY_", "MAKE", "GNUMAKEFLAGS",
-    )
-    excluded_names = ("PRIVATE_KEY", "BASH_ENV", "ENV", "FIXTURE_ID", "SCENARIO")
-
-    return {
-        name: value for (name, value) in os.environ.items()
-        if not name.startswith(excluded_prefixes) and name not in excluded_names
-    }
-
-
-def _progress(message):
-    """Emit only source-controlled progress labels, never child output."""
-    print(f"[conix] {message}", file=sys.stderr, flush=True)
-
-
-def owned_command(argv, *, output, error_file, env, timeout, payload=None, label="fixture command"):
-    """Bound and reap an owned child while keeping private receipts off terminal."""
-    started_at = time.monotonic()
-    _progress(f"{label}: started")
-
-    with output.open("wb") as stdout_file, error_file.open("wb") as stderr_file:
-        output.chmod(0o600)
-        error_file.chmod(0o600)
-
-        owned_process = subprocess.Popen(
-            argv,
-            cwd=ROOT,
-            env=env,
-            stdin=subprocess.PIPE if payload is not None else subprocess.DEVNULL,
-            stdout=stdout_file,
-            stderr=stderr_file,
-            start_new_session=True,
-        )
-
-        payload_pending = True
-
-        try:
-            while True:
-                remaining_seconds = timeout - (time.monotonic() - started_at)
-
-                if remaining_seconds <= 0:
-                    raise subprocess.TimeoutExpired(argv, timeout)
-
-                try:
-                    owned_process.communicate(
-                        input=payload if payload_pending else None,
-                        timeout=min(15, remaining_seconds),
-                    )
-                    break
-                except subprocess.TimeoutExpired:
-                    # Resume the same child without resending its private stdin.
-                    payload_pending = False
-
-                    if time.monotonic() - started_at >= timeout:
-                        raise
-
-                    _progress(f"{label}: running ({int(time.monotonic() - started_at)}s)")
-        except BaseException as error:
-            # Preserve the original failure even when the child ignores both
-            # signals. A stopped CLI still does not prove Docker daemon work
-            # was retired; the campaign independently verifies Compose cleanup.
-            child_retirement_unconfirmed = False
-
-            try:
-                os.killpg(owned_process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            except OSError:
-                child_retirement_unconfirmed = True
-
-            try:
-                owned_process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(owned_process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                except OSError:
-                    child_retirement_unconfirmed = True
-
-                try:
-                    owned_process.wait(timeout=5)
-                except (OSError, subprocess.TimeoutExpired):
-                    child_retirement_unconfirmed = True
-            except OSError:
-                child_retirement_unconfirmed = True
-
-            if child_retirement_unconfirmed:
-                error.add_note(
-                    "Fixture child retirement is unconfirmed; inspect the "
-                    "selected operation before deleting retained evidence."
-                )
-
-            if isinstance(error, subprocess.TimeoutExpired):
-                retirement = "; child retirement unconfirmed" if child_retirement_unconfirmed else ""
-                raise CampaignError(
-                    f"{label} timed out after {timeout}s; daemon effects are unconfirmed{retirement}."
-                ) from error
-
-            raise
-
-    if owned_process.returncode != 0:
-        raise CampaignError(f"{label} exited with status {owned_process.returncode}; see private {error_file.name}.")
-
-    if output.stat().st_size > 1048576:
-        raise CampaignError(f"{label} produced an oversized receipt; no JSON was admitted.")
-
-    _progress(f"{label}: completed ({int(time.monotonic() - started_at)}s)")
-
-    return output.read_bytes()
 
 
 def verify_network(docker, descriptor):
@@ -436,14 +319,14 @@ class PayToPlayTest:
         # Docker returns an error before confirming startup.
         self.sql_retired = False
         self.sql_started = True
-        _progress("Disposable PostgreSQL: starting")
+        progress("Disposable PostgreSQL: starting")
 
         self.docker.run(
             *compose_argv, "up", "--detach", "--no-build", "--pull", "never",
             "--wait", "--wait-timeout", "60", "postgres",
             env=self.compose_environment, timeout=90,
         )
-        _progress("Disposable PostgreSQL: ready")
+        progress("Disposable PostgreSQL: ready")
 
         self._phase("bootstrap", "bootstrap", prior_receipt=None, expect_receipt=False)
 
@@ -601,7 +484,7 @@ class Campaign:
             ],
             output=self._file("producer-" + action + ".out"),
             error_file=self._file("producer-" + action + ".err"),
-            env={**_clean_env(), "DOCKER_CONFIG": str(self.docker.config_dir)},
+            env={**clean_environment(), "DOCKER_CONFIG": str(self.docker.config_dir)},
             timeout=480 if action == "up" else 150,
             label="dapp32 fixture/up (includes build)" if action == "up" else f"dapp32 fixture/{action}",
         )
@@ -613,7 +496,7 @@ class Campaign:
         creation_receipt = self._dapp32("up")
         created_descriptor = decode(creation_receipt, fixture_id=self.fixture_id)
 
-        _progress("dapp32 fixture: verifying Anvil network and deployment")
+        progress("dapp32 fixture: verifying Anvil network and deployment")
         verify_network(self.docker, created_descriptor)
 
         inspected_descriptor = decode(self._dapp32("info"), fixture_id=self.fixture_id)
