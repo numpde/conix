@@ -57,7 +57,7 @@ jobs:
           # CI uses the SAME named deployment boundary: init a skeleton,
           # fill its one editable TOML, then install the derived input paths.
           # Rootful CI may prepare offline; startup still requires rootless.
-          make deployment/init DEPLOYMENT=ci DOCKER_CONTEXT=default
+          make deployment/config/init DEPLOYMENT=ci DOCKER_CONTEXT=default
           python3 - "$pool" <<'PY'
           import sys
           from pathlib import Path

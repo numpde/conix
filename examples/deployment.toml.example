@@ -1,6 +1,6 @@
 # ILLUSTRATIVE ONLY: replace every chain/network/address before deployment.
 # Copy the SOURCE VALUES into config/deployments/<name>/deployment.toml
-# created by make deployment/init. Do not copy this file over an initialized
+# created by make deployment/config/init. Do not copy this file over an initialized
 # deployment without reviewing its saved docker_context.
 version = 1
 docker_context = "agentic"

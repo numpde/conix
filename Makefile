@@ -20,7 +20,7 @@ override export CONIX_MAKE_DEPLOYMENT := $(value DEPLOYMENT)
 override export CONIX_MAKE_DATABASE_NETWORK := $(value DATABASE_NETWORK)
 override export CONIX_MAKE_RPC_NETWORK := $(value RPC_NETWORK)
 
-.PHONY: test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/indexer/run test/deployment/acceptance/run test/input-staging/run test/indexer/acceptance/borrowed/run test/indexer/acceptance/owned/run history/advance deployment/inputs/create deployment/inputs/remove deployment/init deployment/prepare deployment/database/init deployment/config/check deployment/up deployment/status deployment/logs deployment/down help
+.PHONY: test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/indexer/run test/deployment/acceptance/run test/input-staging/run test/indexer/acceptance/borrowed/run test/indexer/acceptance/owned/run history/block/advance deployment/inputs/stage deployment/inputs/remove deployment/config/init deployment/prepare deployment/database/schema/init deployment/config/check deployment/up deployment/status deployment/logs deployment/down help
 
 # Each action's declaration is also the help authority. Recipes share the
 # literal-value dispatchers; no Make target aliases or duplicate help list.
@@ -29,8 +29,11 @@ RUN_FIXTURE = @python3 -m tools.fixtures.pay_to_play --from-make --origin "$(ori
 
 help: ## Show maintained commands without Docker or side effects
 	@printf '%s\n' 'Conix Make API: <resource>[/<subject>]/<action>' \
-	  'Docker operations require DOCKER_CONTEXT=<local context>; no implicit acquisition.' ''
-	@awk -F ':[^#]*## ' '/^[a-z][a-z0-9/-]*:.*## / { printf "  %-36s %s\n", $$1, $$2 }' Makefile
+	  'Docker primitives require DOCKER_CONTEXT=<local Engine>; named deployments use their saved selections.' \
+	  'Image selectors are immutable sha256 IDs. WHEELHOUSE is an absolute host pool path.' \
+	  'DEPLOYMENT selects config/deployments/<name>/deployment.toml. DSN_FILE is a private file path, never a raw DSN.' \
+	  'DATABASE_NETWORK and RPC_NETWORK name existing Engine bridges. No implicit acquisition.' ''
+	@awk -F ':[^#]*## ' '/^[a-z][a-z0-9/-]*:.*## / { printf "  %-44s %s\n", $$1, $$2 }' Makefile
 
 test/repository/run: ## Run host-only repository checks; no Docker
 	@python3 -m unittest discover -s repository_checks -p 'test_*.py' -v
@@ -65,49 +68,49 @@ image/test-runner/build: ## Build offline contained indexer test image; DOCKER_C
 image/evm-test-runner/build: ## Build offline EVM test image; DOCKER_CONTEXT=<name> WHEELHOUSE=<path>
 	$(RUN_OPERATOR)
 
-image/indexer/check: ## Check installed ABI package; DOCKER_CONTEXT=<name> IMAGE=<sha256:id>
+image/indexer/check: ## Run offline installed imports/ABI checks; DOCKER_CONTEXT=<name> IMAGE=<sha256:id>
 	$(RUN_OPERATOR)
 
-image/evm-test-runner/check: ## Check EVM test image; DOCKER_CONTEXT=<name> IMAGE=<sha256:id>
+image/evm-test-runner/check: ## Run offline Python/Cast checks; DOCKER_CONTEXT=<name> IMAGE=<sha256:id>
 	$(RUN_OPERATOR)
 
-test/indexer/run: ## Run contained indexer/CLI tests against PostgreSQL and Anvil; DOCKER_CONTEXT=<name> RUNNER_IMAGE=<id>
+test/indexer/run: ## Run installed indexer/CLI suite in disposable PostgreSQL/Anvil, then retire stack; DOCKER_CONTEXT=<name> required RUNNER_IMAGE=<test-runner sha256:id>
 	$(RUN_OPERATOR)
 
-test/deployment/acceptance/run: ## Qualify the committed deployment-acceptance profile through the ordinary named lifecycle
+test/deployment/acceptance/run: ## Test catch-up, tip-following, restart continuity and shutdown; owns disposable SQL/RPC; uses saved deployment-acceptance profile
 	$(RUN_OPERATOR)
 
-test/input-staging/run: ## Prove confined input staging; INDEXER_IMAGE=<id> CONFIG_FILE=<path> DSN_FILE=<path>
+test/input-staging/run: ## Stage catalog/ABIs/runtime DSN, verify confinement, then retire test volume; INDEXER_IMAGE=<sha256:id> CONFIG_FILE=<catalog path> DSN_FILE=<private path>
 	$(RUN_OPERATOR)
 
-test/indexer/acceptance/borrowed/run: ## Borrow dapp32 fixture; RUNNER_IMAGE=<id> FIXTURE_DESCRIPTOR=<private path>
+test/indexer/acceptance/borrowed/run: ## Baseline acceptance; preserve existing dapp32 producer; RUNNER_IMAGE=<evm-test-runner sha256:id> FIXTURE_DESCRIPTOR=<private JSON path>
 	$(RUN_FIXTURE)
 
-test/indexer/acceptance/owned/run: ## Own dapp32 fixture; RUNNER_IMAGE=<id> DAPP32_DIR=<path>
+test/indexer/acceptance/owned/run: ## Create dapp32 fixture; test transactions/restart/manual reorg repair; retire owned consumers then fixture; RUNNER_IMAGE=<evm-test-runner sha256:id> DAPP32_DIR=<checkout>
 	$(RUN_FIXTURE)
 
-history/advance: ## Advance one block; INDEXER_IMAGE=<id> INPUT_VOLUME=<id> DATABASE_NETWORK=<name> RPC_NETWORK=<name>
+history/block/advance: ## Advance one complete block then exit; INDEXER_IMAGE=<sha256:id> INPUT_VOLUME=<owned volume> DATABASE_NETWORK=<bridge> RPC_NETWORK=<bridge>
 	$(RUN_OPERATOR)
 
-deployment/inputs/create: ## Stage private inputs; INDEXER_IMAGE=<id> CONFIG_FILE=<path> DSN_FILE=<path>
+deployment/inputs/stage: ## Stage existing catalog/ABIs/runtime DSN into private volume; print volume name; INDEXER_IMAGE=<sha256:id> CONFIG_FILE=<catalog path> DSN_FILE=<private path>
 	$(RUN_OPERATOR)
 
 deployment/inputs/remove: ## Remove selected input volume; INPUT_VOLUME=<owned volume>
 	$(RUN_OPERATOR)
 
-deployment/init: ## Create editable source skeleton and private ABI/credential directories; DEPLOYMENT=<name> DOCKER_CONTEXT=<name>
+deployment/config/init: ## Create editable config skeleton and private ABI/credential directories; DEPLOYMENT=<name> DOCKER_CONTEXT=<name>
 	$(RUN_OPERATOR)
 
 deployment/prepare: ## Build offline and stage checked runtime inputs for saved DEPLOYMENT=<name>
 	$(RUN_OPERATOR)
 
-deployment/database/init: ## Run owner-only schema initialization once for prepared DEPLOYMENT=<name>
+deployment/database/schema/init: ## Initialize Conix schema once in externally provisioned PostgreSQL using separate owner DSN; DEPLOYMENT=<name>
 	$(RUN_OPERATOR)
 
 deployment/config/check: ## Inspect prepared service configuration without creating resources; DEPLOYMENT=<name>
 	$(RUN_OPERATOR)
 
-deployment/up: ## Start only the prepared, owner-initialized standalone service; DEPLOYMENT=<name>
+deployment/up: ## Start prepared, owner-initialized indexer; no downloads/build/DDL; DEPLOYMENT=<name>
 	$(RUN_OPERATOR)
 
 deployment/status: ## Show selected existing deployment without requiring prepared image; DEPLOYMENT=<name>
@@ -116,6 +119,6 @@ deployment/status: ## Show selected existing deployment without requiring prepar
 deployment/logs: ## Show bounded logs from owned deployment; DEPLOYMENT=<name>
 	$(RUN_OPERATOR)
 
-deployment/down: ## Retire owned indexer containers, keeping database/networks/inputs; DEPLOYMENT=<name>
+deployment/down: ## Stop/remove owned indexer containers; retain external SQL/networks/staged inputs; DEPLOYMENT=<name>
 	$(RUN_OPERATOR)
 

@@ -17,9 +17,9 @@ TARGETS = {
     "image/indexer/check", "image/evm-test-runner/check",
     "test/indexer/run", "test/deployment/acceptance/run", "test/input-staging/run",
     "test/indexer/acceptance/borrowed/run", "test/indexer/acceptance/owned/run",
-    "history/advance",
-    "deployment/inputs/create", "deployment/inputs/remove",
-    "deployment/init", "deployment/prepare", "deployment/database/init",
+    "history/block/advance",
+    "deployment/inputs/stage", "deployment/inputs/remove",
+    "deployment/config/init", "deployment/prepare", "deployment/database/schema/init",
     "deployment/config/check", "deployment/up",
     "deployment/status", "deployment/logs", "deployment/down",
 }

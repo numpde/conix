@@ -956,7 +956,7 @@ and input transport. The dapp32 campaign runs separately.
                        retired. The installed foreground worker published
                        a real Anvil log, observed tip, resumed with an empty
                        block, and refused a reader credential on fw agentic.
-                       history/advance repeated those checks on separate
+                       history/block/advance repeated those checks on separate
                        internal networks. A live worker reached both peers
                        and could not reach PostgreSQL via its unselected
                        network address. It had no usable IPv4 or IPv6 default

@@ -202,9 +202,9 @@ name a stable resource, role or subject, and precise action, not Python
 locations, implementation tiers or test mechanisms. Do not introduce aliases
 for retired names. Distinguish read-only check, explicit acquire, offline
 build, test run, retained resource create, status and remove. Owner schema
-initialization is now a separate named deployment/database/init operation
+initialization is now a separate named deployment/database/schema/init operation
 in this T0-7 branch; legacy deployment/apply remains absent. The T0-7 branch
-exports named deployment/init, prepare, database/init, config/check,
+exports named deployment/config/init, prepare, database/schema/init, config/check,
 up/status/logs/down, and contained test/indexer/run. These named
 operations do not make the scientific scanner or journal a host operator.
 Deployment/down retires only the selected labelled Conix indexer containers,

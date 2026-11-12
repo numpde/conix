@@ -265,7 +265,7 @@ class DeploymentAcceptance:
         self.prepare_attempted = True
         self.make("deployment/prepare")
         lock = self.decl.lock_file.read_bytes()
-        self.make("deployment/database/init")
+        self.make("deployment/database/schema/init")
         self.make("deployment/config/check")
         self.make("deployment/up")
         first_id, first = self.await_height(first_block["height"])

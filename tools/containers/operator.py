@@ -665,9 +665,9 @@ def main():
         "image/indexer/build", "image/test-runner/build", "image/evm-test-runner/build",
         "image/indexer/check", "image/evm-test-runner/check",
         "test/indexer/run", "test/deployment/acceptance/run", "test/input-staging/run",
-        "history/advance",
-        "deployment/inputs/create", "deployment/inputs/remove",
-        "deployment/init", "deployment/prepare", "deployment/database/init",
+        "history/block/advance",
+        "deployment/inputs/stage", "deployment/inputs/remove",
+        "deployment/config/init", "deployment/prepare", "deployment/database/schema/init",
         "deployment/config/check", "deployment/up", "deployment/status",
         "deployment/logs", "deployment/down",
     ))
@@ -713,7 +713,7 @@ def main():
             return
 
         if options.action in (
-            "deployment/init", "deployment/prepare", "deployment/database/init",
+            "deployment/config/init", "deployment/prepare", "deployment/database/schema/init",
             "deployment/config/check", "deployment/up", "deployment/status",
             "deployment/logs", "deployment/down",
         ):
@@ -751,7 +751,7 @@ def main():
             elif options.action == "image/evm-test-runner/check":
                 docker.check_evm_test_runner(options.image)
 
-            elif options.action == "history/advance":
+            elif options.action == "history/block/advance":
                 from tools.containers.history import advance_history
 
                 advance_history(
@@ -759,7 +759,7 @@ def main():
                     database=options.database_network, rpc=options.rpc_network,
                 )
 
-            elif options.action in ("deployment/inputs/create", "test/input-staging/run"):
+            elif options.action in ("deployment/inputs/stage", "test/input-staging/run"):
                 docker.stage_inputs(
                     image=options.indexer_image,
                     config_path=options.config_file,

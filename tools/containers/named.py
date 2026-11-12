@@ -2,7 +2,7 @@
 
 The host operator projects the definition into the installed Tier-0 catalog.
 Only the projected catalog, its selected ABIs and runtime DSN are staged.
-The separately owned schema credential is read only by database/init.
+The separately owned schema credential is read only by database/schema/init.
 """
 
 from contextlib import contextmanager
@@ -255,7 +255,7 @@ def init(name, options):
     if os.geteuid() == 0:
         raise OperationError("Initialize deployments as the unprivileged Docker operator.")
     if options.origin != "command line" or not CONTEXT_NAME.fullmatch(options.context or ""):
-        raise OperationError("deployment/init requires DOCKER_CONTEXT=<local-context> explicitly.")
+        raise OperationError("deployment/config/init requires DOCKER_CONTEXT=<local-context> explicitly.")
     if folder.exists() or folder.is_symlink():
         raise OperationError("Named deployment already exists; initialization will not overwrite it.")
     for path in (ROOT / "config", DEPLOYMENTS):
@@ -423,7 +423,7 @@ def prepare(decl, docker, images):
                 print(f"Previous input volume {existing['volume']} remains; retire explicitly.",
                       file=sys.stderr)
         print(f"Prepared deployment {decl.name} with verified image and private input snapshot.")
-        print(f"Next: make deployment/database/init DEPLOYMENT={decl.name}")
+        print(f"Next: make deployment/database/schema/init DEPLOYMENT={decl.name}")
 
 
 def database_init(decl, docker, receipt):
@@ -483,7 +483,7 @@ def dispatch(action, options, *, client_cls, pinned_images):
 
     name = options.deployment
     _directory(name)
-    if action == "deployment/init":
+    if action == "deployment/config/init":
         return init(name, options)
 
     decl = None
@@ -528,14 +528,14 @@ def dispatch(action, options, *, client_cls, pinned_images):
             directory.cleanup()
         return
 
-    if action in ("deployment/database/init", "deployment/up"):
+    if action in ("deployment/database/schema/init", "deployment/up"):
         with _locked(name):
             # A missing or malformed generated lock is refused before selecting
             # an Engine. The same lock fences preparation and service startup.
             receipt = _lock(decl)
             docker, directory = _docker(decl, client_cls)
             try:
-                if action == "deployment/database/init":
+                if action == "deployment/database/schema/init":
                     if _inspect_existing(docker, name):
                         raise OperationError("Stop the selected deployment before schema initialization.")
                     database_init(decl, docker, receipt)

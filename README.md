@@ -134,13 +134,13 @@ Named T0-7 B deployment (candidate)
 T0-7 B is the standalone continuous indexer. Its normal lifecycle follows
 the saved-deployment model used by Agent Mail and the prepare/run separation
 used by NMR provider tools. The schema, scanner, journal, reader and
-one-shot history/advance command retain their existing owners.
+one-shot history/block/advance command retain their existing owners.
 
 Initialize the named deployment once. This creates an editable source
 configuration and private directories, but does not guess chain coordinates,
 download dependencies, generate credentials or provision external services:
 
-    make deployment/init DEPLOYMENT=local DOCKER_CONTEXT=agentic
+    make deployment/config/init DEPLOYMENT=local DOCKER_CONTEXT=agentic
 
 The only editable deployment configuration is
 `config/deployments/local/deployment.toml`. Complete its required fields
@@ -164,14 +164,14 @@ Place the selected JSON ABI files in `abi/`, using the exact relative
 `abi_file` names from deployment.toml. Write the runtime and owner PostgreSQL
 DSNs as separate mode-0600 files under `secrets/`; their directory and the ABI
 directory are created mode 0700. No credential bytes enter deployment.toml.
-The owner credential is read only by `deployment/database/init`. It is not
+The owner credential is read only by `deployment/database/schema/init`. It is not
 staged into the running service.
 
 Example first-time sequence, after installing those files and provisioning
 the PostgreSQL service/roles and distinct internal networks:
 
     make deployment/prepare DEPLOYMENT=local
-    make deployment/database/init DEPLOYMENT=local
+    make deployment/database/schema/init DEPLOYMENT=local
     make deployment/config/check DEPLOYMENT=local
     make deployment/up DEPLOYMENT=local
     make deployment/status DEPLOYMENT=local
@@ -207,7 +207,7 @@ An old input volume is retired only after replacement preparation succeeds.
 The PostgreSQL service and roles/schema must ALREADY exist on the selected
 internal database network: conix_owner owns schema conix, while the distinct
 conix_runtime and conix_reader roles have their ordinary restricted grants.
-The separately authorized deployment/database/init sends the private owner
+The separately authorized deployment/database/schema/init sends the private owner
 credential to a short-lived non-root container through stdin only and
 calls the owner-only conix.schema.initialize() API. It never makes the
 ordinary indexer a schema owner. It is create-only and refuses initialized
@@ -263,7 +263,7 @@ ordinary CI's disposable CLI test is a separate qualification.
 `compose/deployment-test.yml` reuses the existing PostgreSQL, Anvil and role
 bootstrap definitions. Its fixed Anvil timestamp gives the committed source
 a repeatable genesis. Two owned internal networks expose no host ports.
-The lane invokes the same `deployment/prepare`, `database/init`, `config/check`,
+The lane invokes the same `deployment/prepare`, `database/schema/init`, `config/check`,
 `up`, `status`, `logs` and `down` Make commands used normally. Contained helpers
 emit test event logs and inspect SQL without replacing the indexer's work.
 The test checks catch-up, idle tip, later arrivals, clean shutdown,

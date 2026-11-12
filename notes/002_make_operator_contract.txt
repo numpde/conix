@@ -24,7 +24,7 @@ rejected, not ignored. Existing older prepared.json files convey no authority.
 
 Initialization and source configuration
 ---------------------------------------
-  make deployment/init DEPLOYMENT=local DOCKER_CONTEXT=agentic
+  make deployment/config/init DEPLOYMENT=local DOCKER_CONTEXT=agentic
 
 Init requires an explicit named local context. It creates an owner-only
 deployment skeleton and both private directories, without trying Docker,
@@ -74,7 +74,7 @@ in-use deployment: preparation refuses an existing service.
 
 Startup and administration
 --------------------------
-  make deployment/database/init DEPLOYMENT=local
+  make deployment/database/schema/init DEPLOYMENT=local
   make deployment/config/check DEPLOYMENT=local
   make deployment/up DEPLOYMENT=local
   make deployment/status DEPLOYMENT=local
@@ -117,7 +117,7 @@ token/payment/restart/reorg scenarios on the selected host. The actual
 retained-service lifecycle still requires separate verification on a
 rootless Engine with explicitly provisioned external inputs.
 
-Low-level history/advance, deployment/inputs/create/remove and image/
+Low-level history/block/advance, deployment/inputs/stage and deployment/inputs/remove and image/
 wheelhouse commands remain explicit diagnostic/build primitives. They are
 not alternate normal deployment flows. The public deployment/start and
 deployment/remove aliases remain retired.
@@ -150,3 +150,54 @@ input volume is retired. Tracked deployment files remain in place. Existing
 resources or locks are refused before mutation; uncertainty retains private
 evidence under out/deployment-acceptance/ and blocks automatic reuse. The test
 never tears down SQL/RPC while the retained consumer may still be alive.
+
+Blind Make naming workshop — 13 November 2026
+---------------------------------------------
+The first slice aligned all acceptance entry points under test/:
+  test/deployment/acceptance/run
+  test/indexer/acceptance/borrowed/run
+  test/indexer/acceptance/owned/run
+Borrowed acceptance keeps producer lifecycle rights external. Owned acceptance
+creates and retires its fixture. Deployment acceptance uses the normal named
+lifecycle with its own disposable SQL/RPC dependencies.
+
+Three reusable gpt-6-luna readers at low reasoning effort received no repository
+context and used no tools. Each first interpreted all 30 public target names
+and all 13 parameter names. The coordinator compared their predictions with
+the owning dispatchers, named lifecycle, staging, history and wheelhouse code.
+
+All three identified consequential uncertainty in four names. A second blind
+round interpreted these candidates and selected commands for concrete tasks:
+  deployment/init          -> deployment/config/init
+  deployment/database/init -> deployment/database/schema/init
+  deployment/inputs/create -> deployment/inputs/stage
+  history/advance          -> history/block/advance
+The revised names identify configuration rather than general provisioning,
+schema rather than database-server creation, staging rather than generation,
+and block advancement rather than an unspecified history operation. Old names
+have no aliases. No operation or resource grant was expanded.
+
+Later rounds gave readers the proposed operator help and asked them to select
+operations, order prerequisites, predict retained state and reject unsupported
+requests. Work was divided across build/dependency, deployment and acceptance
+scenarios. Readers selected the distinct runner roles, preserved the borrowed
+producer, chose the owned lane for transactions/reorg exercises, and separated
+schema initialization from external PostgreSQL provisioning. They did not infer
+payment-accounting qualification or automatic production reorganization repair.
+Names alone did not establish offline behavior, exact cleanup scope, immutable
+image selectors or file formats; those belong in help and this contract.
+
+Two parameter teach-backs needed follow-up. One reader initially split
+DATABASE_NETWORK; another grouped WHEELHOUSE among resource names. Subsequent
+value-selection checks distinguished the Engine bridge name, absolute host
+wheel pool path, private DSN file path, deployment name, volume name and image
+ID. A reader also requested that the indexer test's required RUNNER_IMAGE be
+explicit in help. Existing parameter names were retained.
+
+The reusable readers were reader_a, reader_b and reader_c in this Codex session.
+Independent diff review found one stale example instruction, corrected before
+commit. These are qualitative usability observations, not execution evidence
+or a statistically independent user study: reused readers retain earlier rounds.
+Both naming slices demonstrated exported-API RED then GREEN and passed all
+148 host repository checks. Real Engine acceptance was not rerun for these
+interface-only changes; earlier Engine results apply to the preceding revision.

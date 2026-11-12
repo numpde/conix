@@ -369,7 +369,7 @@ class NamedDeploymentContracts(unittest.TestCase):
             with self.subTest(selector=key):
                 self.options.__dict__[key] = "other-resource"
                 with self.assertRaisesRegex(OperationError, "deployment.toml"):
-                    self.dispatch("deployment/init")
+                    self.dispatch("deployment/config/init")
                 self.options.__dict__[key] = ""
         self.assertFalse(self.folder().exists())
         self.assertFalse(RecordingDocker.seen)
@@ -402,7 +402,7 @@ class NamedDeploymentContracts(unittest.TestCase):
             patch.object(named, "_admit_network", return_value="d"*64),
             patch.object(named.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as invoked,
         ):
-            self.dispatch("deployment/database/init")
+            self.dispatch("deployment/database/schema/init")
         docker = RecordingDocker.seen[-1]
         self.assertIn(("private_bytes", folder / "secrets" / "owner.dsn", 8192, True), docker.calls)
         argv = invoked.call_args.args[0]
