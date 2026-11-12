@@ -332,6 +332,27 @@ class NamedDeploymentContracts(unittest.TestCase):
         self.assertIn(("remove_volume", VOLUME), RecordingDocker.seen[-1].calls)
         self.assertFalse(any(p.name.startswith(".prepared-") for p in self.folder().iterdir()))
 
+    def test_public_inspection_does_not_expose_mutable_private_declarations(self):
+        folder = self.locked()
+        view = named.inspect_named("pilot")
+        prepared = named.inspect_prepared("pilot")
+        self.assertEqual(view.genesis_hash, SOURCE["chain"]["genesis_hash"])
+        self.assertEqual(view.database_network, "db-conix")
+        self.assertEqual(view.runtime_dsn_file, folder / "secrets" / "runtime.dsn")
+        self.assertFalse(hasattr(view, "source"))
+        self.assertFalse(hasattr(view, "lock_file"))
+        self.assertEqual((prepared.image, prepared.volume), (IMAGE, VOLUME))
+        with self.assertRaises(AttributeError):
+            prepared.volume = VOLUME_NEW
+
+    def test_prepared_cleanup_checks_exact_selection_without_retiring_resources(self):
+        folder = self.locked()
+        with self.assertRaises(OperationError):
+            named.clear_prepared("pilot", expected_volume=VOLUME_NEW)
+        self.assertTrue((folder / "deployment.lock.toml").exists())
+        named.clear_prepared("pilot", expected_volume=VOLUME)
+        self.assertIsNone(named.inspect_prepared("pilot"))
+
     def test_lock_admission_rejects_invalid_toml_and_legacy_json(self):
         folder = self.configured()
         (folder / "prepared.json").write_text(json.dumps({

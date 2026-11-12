@@ -1,6 +1,7 @@
 """Host contracts for the named deployment acceptance lane; no Docker required."""
 
 import copy
+import json
 import io
 from pathlib import Path
 import tempfile
@@ -19,7 +20,7 @@ class DeploymentAcceptanceContracts(unittest.TestCase):
     def campaign(self, folder):
         """Supply an empty selected Engine without weakening real preflight checks."""
         decl = SimpleNamespace(
-            lock_file=folder / "deployment.lock.toml", docker_context="science",
+            docker_context="science", wheelhouse="/wheels",
             database_network=lane.PROJECT + "_tests", rpc_network=lane.PROJECT + "_rpc",
         )
         docker = Mock()
@@ -34,19 +35,21 @@ class DeploymentAcceptanceContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
             campaign = self.campaign(folder)
-            campaign.decl.lock_file.write_text("existing selection")
-            with self.assertRaises(OperationError):
-                campaign.preflight()
+            with patch.object(lane.named, "inspect_prepared", return_value=SimpleNamespace(
+                image="sha256:" + "a" * 64, volume="conix-inputs-" + "b" * 24,
+            )):
+                with self.assertRaises(OperationError):
+                    campaign.preflight()
             campaign.docker.run.assert_not_called()
-            self.assertEqual(campaign.decl.lock_file.read_text(), "existing selection")
 
     def test_existing_indexer_is_not_adopted_or_retired(self):
         """The stable deployment ID must not authorize touching an earlier service."""
         with tempfile.TemporaryDirectory() as directory:
             campaign = self.campaign(Path(directory))
             campaign.docker.run.return_value = "a" * 64
-            with self.assertRaises(OperationError):
-                campaign.preflight()
+            with patch.object(lane.named, "inspect_prepared", return_value=None):
+                with self.assertRaises(OperationError):
+                    campaign.preflight()
             self.assertFalse(campaign.fixture_attempted)
             self.assertEqual(campaign.cleanup(), [])
             campaign.docker.remove_inputs.assert_not_called()
@@ -100,7 +103,7 @@ class DeploymentAcceptanceContracts(unittest.TestCase):
             with (
                 patch.object(lane.named, "ROOT", root),
                 patch.object(lane, "fixture_permissions"),
-                patch.object(lane.named, "_read", return_value=decl),
+                patch.object(lane.named, "inspect_named", return_value=decl),
                 patch.object(lane, "select_endpoint", return_value="unix:///tmp/selected.sock"),
                 patch.object(lane, "DeploymentAcceptance", return_value=campaign),
                 patch("sys.stderr", new_callable=io.StringIO) as messages,
@@ -111,6 +114,41 @@ class DeploymentAcceptanceContracts(unittest.TestCase):
             self.assertIn("Fixture startup", str(failure.exception))
             self.assertIn("Cleanup unconfirmed", messages.getvalue())
             self.assertNotIn("untrusted cleanup detail", messages.getvalue())
+
+    def test_inspection_tracks_prepared_selection_without_private_lock_access(self):
+        """Acceptance reads public resource facts and never parses TOML itself."""
+        with tempfile.TemporaryDirectory() as directory:
+            campaign = self.campaign(Path(directory))
+            prepared = SimpleNamespace(image="sha256:" + "a" * 64, volume="conix-inputs-" + "b" * 24)
+            docker_record = {
+                "Id": "a" * 64, "State": {"Running": True}, "Image": prepared.image,
+                "Config": {"Cmd": ["-I", "-m", "conix", "run"]},
+            }
+            campaign.docker.run.return_value = json.dumps(docker_record)
+            with (
+                patch.object(lane, "_candidate_ids", return_value=["a" * 64]),
+                patch.object(lane.named, "inspect_prepared", return_value=prepared) as inspect,
+            ):
+                self.assertEqual(campaign.running(), "a" * 64)
+            inspect.assert_called_once_with(lane.NAME)
+
+    def test_prepared_cleanup_requires_retired_volume_before_clearing(self):
+        """A failed volume retirement must not discard its recovery lock."""
+        with tempfile.TemporaryDirectory() as directory:
+            campaign = self.campaign(Path(directory))
+            campaign.fixture_attempted = campaign.prepare_attempted = True
+            campaign.make = Mock()
+            campaign.child = Mock()
+            prepared = SimpleNamespace(image="sha256:" + "a" * 64, volume="conix-inputs-" + "b" * 24)
+            campaign.docker.remove_inputs.side_effect = OperationError("retirement unconfirmed")
+            with (
+                patch.object(lane.named, "inspect_prepared", return_value=prepared),
+                patch.object(lane.named, "clear_prepared") as clear,
+                patch.object(lane, "_candidate_ids", return_value=[]),
+            ):
+                failed = campaign.cleanup()
+            clear.assert_not_called()
+            self.assertTrue(any("staged inputs" in phase for phase in failed))
 
     def test_host_sigterm_uses_cleanup_path_and_restores_handler(self):
         """A terminating test controller must get the same cleanup opportunity as Ctrl-C."""

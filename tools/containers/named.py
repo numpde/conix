@@ -62,6 +62,63 @@ class Declaration:
         return self.folder / LOCK_FILE
 
 
+@dataclass(frozen=True)
+class DeploymentView:
+    """Public read-only deployment facts needed by the acceptance consumer."""
+    name: str
+    docker_context: str
+    wheelhouse: str
+    database_network: str
+    rpc_network: str
+    runtime_dsn_file: Path
+    genesis_hash: str
+
+
+@dataclass(frozen=True)
+class PreparedView:
+    """Exact image/volume identities without exposing lock representation."""
+    image: str
+    volume: str
+
+
+def inspect_named(name):
+    """Inspect only the selected source/Engine coordinates without Docker."""
+    declaration = _read(name)
+    return DeploymentView(
+        name=name,
+        docker_context=declaration.docker_context,
+        wheelhouse=declaration.wheelhouse,
+        database_network=declaration.database_network,
+        rpc_network=declaration.rpc_network,
+        runtime_dsn_file=declaration.runtime_dsn_file,
+        genesis_hash=declaration.source["chain"]["genesis_hash"],
+    )
+
+
+def inspect_prepared(name):
+    """Inspect one admitted prepared selection; absence is not a valid lock."""
+    folder = _directory(name)
+    _owned_directory(folder)
+    lock = folder / LOCK_FILE
+    if not lock.exists() and not lock.is_symlink():
+        return None
+    record = _lock(Declaration(name=name, docker_context=""))
+    return PreparedView(image=record["image"], volume=record["volume"])
+
+
+def clear_prepared(name, *, expected_volume):
+    """Forget a prepared selection only after its exact volume was retired.
+
+    The acceptance owner performs its own Docker removal first; this function
+    cannot acquire resource-retirement authority or delete an unrelated lock.
+    """
+    with _locked(name):
+        prepared = inspect_prepared(name)
+        if prepared is None or prepared.volume != expected_volume:
+            raise OperationError("Prepared input selection changed; retaining its lock.")
+        (_directory(name) / LOCK_FILE).unlink()
+
+
 def _directory(name):
     if type(name) is not str or NAME.fullmatch(name) is None:
         raise OperationError("Select DEPLOYMENT=<lowercase-name> without path separators.")

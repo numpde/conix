@@ -143,8 +143,8 @@ class DeploymentAcceptance:
 
     def preflight(self):
         """Never adopt a previous deployment, generated lock or leftover fixture."""
-        self.require(not self.decl.lock_file.exists() and not self.decl.lock_file.is_symlink(),
-                     "Acceptance found an existing deployment lock; inspect it before another run.")
+        self.require(named.inspect_prepared(NAME) is None,
+                     "Acceptance found an existing prepared deployment; inspect it before another run.")
         self.require(not _candidate_ids(self.docker, "conix-" + NAME),
                      "Acceptance found an existing indexer; it will not be adopted or stopped.")
         self.require(not self.docker.run("ps", "--all", "--filter",
@@ -203,9 +203,10 @@ class DeploymentAcceptance:
         self.require(len(identities) == 1, "Acceptance requires exactly one retained indexer.")
         (identity,) = identities
         record = json.loads(self.docker.run("container", "inspect", "--format", "{{json .}}", identity, capture=True))
-        lock = named._lock(self.decl)
-        self.require(record["Id"] == identity and record["State"]["Running"]
-                     and record["Image"] == lock["image"]
+        prepared = named.inspect_prepared(NAME)
+        self.require(prepared is not None and record["Id"] == identity
+                     and record["State"]["Running"]
+                     and record["Image"] == prepared.image
                      and record["Config"]["Cmd"] == ["-I", "-m", "conix", "run"],
                      "The installed retained process exited or changed identity.")
         return identity
@@ -259,12 +260,13 @@ class DeploymentAcceptance:
                    "--interactive=false", "-T", "bootstrap"], "fixture roles and schema")
         genesis = self.probe("genesis")
         self.records["genesis"] = genesis["hash"]
-        self.require(genesis["hash"] == self.decl.source["chain"]["genesis_hash"],
+        self.require(genesis["hash"] == self.decl.genesis_hash,
                      "Fixture genesis differs from the committed deployment identity.")
         first_block = self.probe("produce", empty_blocks=3)
         self.prepare_attempted = True
         self.make("deployment/prepare")
-        lock = self.decl.lock_file.read_bytes()
+        prepared = named.inspect_prepared(NAME)
+        self.require(prepared is not None, "Preparation returned without an admitted selection.")
         self.make("deployment/database/schema/init")
         self.make("deployment/config/check")
         self.make("deployment/up")
@@ -293,7 +295,7 @@ class DeploymentAcceptance:
         self.require(same_id == second_id and len(final["events"]) == 4,
                      "The restarted service did not follow all fixture events.")
         self.stop(second_id)
-        self.require(self.probe("snapshot") == final and self.decl.lock_file.read_bytes() == lock,
+        self.require(self.probe("snapshot") == final and named.inspect_prepared(NAME) == prepared,
                      "Final retirement changed durable history or the prepared selection.")
         self.records.update(first_container=first_id, second_container=second_id,
                             before_restart=before, after_restart=resumed, final=final)
@@ -333,11 +335,12 @@ class DeploymentAcceptance:
             self.require(not _candidate_ids(self.docker, "conix-" + NAME), "Named consumer retirement is unconfirmed.")
         except BaseException as error:
             return ["named consumer retirement (" + type(error).__name__ + ")"]
-        if self.prepare_attempted and self.decl.lock_file.exists():
+        if self.prepare_attempted:
             try:
-                lock = named._lock(self.decl)
-                self.docker.remove_inputs(lock["volume"])
-                self.decl.lock_file.unlink()
+                prepared = named.inspect_prepared(NAME)
+                if prepared is not None:
+                    self.docker.remove_inputs(prepared.volume)
+                    named.clear_prepared(NAME, expected_volume=prepared.volume)
             except BaseException as error:
                 failures.append("staged inputs (" + type(error).__name__ + ")")
         try:
@@ -367,7 +370,7 @@ def run_acceptance(options, *, client_cls, pinned_images):
         raise OperationError("The deployment acceptance lane owns DEPLOYMENT=deployment-acceptance only.")
     folder = named._directory(NAME)
     fixture_permissions(folder)
-    decl = named._read(NAME)
+    decl = named.inspect_named(NAME)
     if options.context and options.context != decl.docker_context:
         raise OperationError("Use the acceptance profile's saved docker_context.")
     if options.wheelhouse and options.wheelhouse != decl.wheelhouse:
