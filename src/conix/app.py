@@ -35,7 +35,8 @@ async def run(catalog, database_dsn, stop, *, poll_interval=2.0):
             catalog=catalog, database_dsn=database_dsn, rpc_url=catalog.chain.rpc_url,
         ) as writer:
             while not stop.is_set():
-                progress = await writer.advance_one()
+                async with asyncio.timeout(catalog.limits.operation_timeout_seconds):
+                    progress = await writer.advance_one()
                 if progress is None:
                     break
                 report(progress)
