@@ -10,7 +10,6 @@ import re
 import stat
 import struct
 import sys
-import traceback
 from conix.process_diagnostic import emit, emit_unexpected
 from itertools import islice
 from pathlib import Path

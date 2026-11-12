@@ -1,8 +1,9 @@
-"""Read fixed process-failure records, never arbitrary subprocess stderr.
+"""Admit bounded process-failure records, never arbitrary subprocess stderr.
 
-The installed producer controls three literal identifiers. A malformed,
-oversized, unknown or multiline record is rejected wholesale without
-attempted redaction or copying source exception prose.
+Three fixed fields identify phase, cause and durable effect. Unexpected errors
+may add a narrowly admitted exception-type identifier and source basename:line.
+Malformed, oversized, unexpected-field or multiline records are rejected
+without redacting or forwarding exception messages.
 """
 
 import json

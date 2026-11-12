@@ -1,7 +1,9 @@
-"""Emit a bounded, source-controlled process failure record on stderr.
+"""Emit bounded, source-controlled process failure records on stderr.
 
-Records contain only reviewed phase/cause/effect identifiers, never exception
-text or untrusted RPC/SQL/configuration values. These are not application logs.
+Known failures report fixed phase/cause/effect identifiers. Unexpected failures
+also report the actual safe exception class name and traceback basename:line,
+or 'unavailable' if that metadata cannot be admitted. Never copy exception
+messages, absolute filesystem paths, or untrusted RPC/SQL/configuration data.
 """
 
 import json
