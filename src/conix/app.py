@@ -35,10 +35,11 @@ async def run(catalog, database_dsn, stop, *, poll_interval=2.0):
     automatic session recovery and no separate validating scanner.
     """
     while not stop.is_set():
-        async with open_writer(
-            catalog=catalog, database_dsn=database_dsn, rpc_url=catalog.chain.rpc_url,
-        ) as writer:
-            progress = await writer.advance_one()
+        async with asyncio.timeout(catalog.limits.operation_timeout_seconds):
+            async with open_writer(
+                catalog=catalog, database_dsn=database_dsn, rpc_url=catalog.chain.rpc_url,
+            ) as writer:
+                progress = await writer.advance_one()
         if progress is None:
             await wait_at_tip(stop, poll_interval)
         else:
