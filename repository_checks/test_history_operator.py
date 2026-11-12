@@ -74,43 +74,33 @@ class HistoryOperatorContracts(unittest.TestCase):
         self.assertIn("output bound", str(failure.exception))
         self.assertNotIn("upstream", str(failure.exception))
 
-    def test_known_worker_failure_retains_a_safe_causal_explanation(self):
-        """A documented RPC deadline failure has useful method and effect."""
-        known_failure = (
-            b"Index advance failed (RpcUnavailable). "
-            b"RPC eth_getLogs exceeded its request deadline.\n"
+    def test_worker_failure_preserves_fixed_phase_cause_and_effect(self):
+        record = b'CONIX-FAILURE-V1 {"phase":"advance","cause":"RpcUnavailable","effect":"unconfirmed"}\n'
+        description = str(history._failure(record, 3))
+        self.assertIn("phase=advance", description)
+        self.assertIn("cause=RpcUnavailable", description)
+        self.assertIn("effect=durable outcome unconfirmed", description)
+        self.assertIn("exit=3", description)
+
+        unknown = b'CONIX-FAILURE-V1 {"phase":"advance","cause":"CommitOutcomeUnknown","effect":"commit_unknown"}\n'
+        self.assertIn("PostgreSQL COMMIT outcome unknown", str(history._failure(unknown, 7)))
+
+    def test_worker_failure_never_forwards_untrusted_prose(self):
+        secret = "privateKey=0x" + "af" * 32
+        attempts = (
+            f"Index advance failed (RpcUnavailable). {secret}\n".encode(),
+            b'CONIX-FAILURE-V1 {"phase":"advance","cause":"RpcUnavailable","effect":"unconfirmed","detail":"private"}\n',
+            b'CONIX-FAILURE-V1 {"phase":"advance","cause":"RpcUnavailable","effect":"unconfirmed"}\n' + secret.encode(),
+            b'CONIX-FAILURE-V1 {"phase":"advance","cause":"Unknown","effect":"unconfirmed"}\n',
+            b'CONIX-FAILURE-V1 {"phase":"staging","cause":"InputError","effect":"unconfirmed"}\n',
         )
-        admitted = history._failure(known_failure, 3)
-        description = str(admitted)
-
-        self.assertIn("RpcUnavailable", description)
-        self.assertIn("eth_getLogs", description)
-        self.assertIn("request deadline", description)
-        self.assertIn("3", description)
-
-    def test_known_worker_failure_does_not_forward_secret_shaped_cause(self):
-        """Trusted exception category does not authenticate arbitrary stderr."""
-        key = "0x" + "af" * 32
-        unsafe_causes = (
-            f"RPC eth_getLogs failed because privateKey={key}.",
-            f"RPC eth_getLogs failed for http://secret.example/{key}.",
-            "RPC eth_getLogs failed\x1b[2J and erased the screen.",
-        )
-        for cause in unsafe_causes:
-            with self.subTest(cause_type=cause.split()[2]):
-                stderr = f"Index advance failed (RpcUnavailable). {cause}\n".encode()
-                diagnostic = str(history._failure(stderr, 5))
-                self.assertIn("RpcUnavailable", diagnostic)
-                self.assertIn("5", diagnostic)
-                self.assertNotIn(key, diagnostic)
-                self.assertNotIn("secret.example", diagnostic)
-                self.assertNotIn("\x1b", diagnostic)
-
-    def test_worker_diagnostics_admit_category_without_arbitrary_text(self):
-        secret = "private producer output"
-        diagnostic = history._failure(f"Index advance failed (RpcUnavailable). {secret}\n".encode(), 1)
-        self.assertIn("RpcUnavailable", str(diagnostic))
-        self.assertNotIn(secret, str(diagnostic))
+        for message in attempts:
+            with self.subTest(message=message[:24]):
+                result = str(history._failure(message, 5))
+                self.assertIn("exit=5", result)
+                self.assertNotIn(secret, result)
+                self.assertNotIn("RpcUnavailable", result)
+                self.assertNotIn("InputError", result)
 
     def test_configured_and_live_networks_must_match_selected_identities(self):
         database_id, rpc_id = "d" * 64, "e" * 64

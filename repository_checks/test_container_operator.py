@@ -226,17 +226,18 @@ class LocalDockerOperatorTests(unittest.TestCase):
         self.assertNotIn("privateKey", explanation)
         self.assertNotIn(credential, explanation)
 
-    def test_staging_diagnostics_admit_fixed_causes_but_not_secrets(self):
-        admitted = operator._staging_failure(
-            b"Conix input staging failed (InputError): Staged inputs were truncated or have trailing bytes.\n"
-        )
-        self.assertIn("truncated", admitted)
+    def test_staging_diagnostics_admit_structured_causes_not_prose(self):
+        from tools.containers.diagnostics import explanation
+        record = b'CONIX-FAILURE-V1 {"phase":"staging","cause":"InputError","effect":"unconfirmed"}\n'
+        admitted = explanation(record, 4, phases={"staging"})
+        self.assertIn("cause=InputError", admitted)
+        self.assertIn("phase=staging", admitted)
+        self.assertIn("effect=durable outcome unconfirmed", admitted)
         self.assertIsNone(operator._staging_failure(
-            b"Conix input staging failed (InputError): password=0x"
-            + b"ab" * 32 + b"\n"
+            b"Conix input staging failed (InputError): password=0x" + b"ab" * 32 + b"\n"
         ))
         self.assertIsNone(operator._staging_failure(
-            b"database password in upstream stderr only\n"
+            b'database password in upstream stderr only\n'
         ))
 
     def test_staging_snapshot_reads_only_declared_regular_files(self):

@@ -11,6 +11,7 @@ import stat
 import struct
 import sys
 import traceback
+from conix.process_diagnostic import emit
 from itertools import islice
 from pathlib import Path
 
@@ -227,21 +228,27 @@ def main(argv: list[str] | None = None) -> None:
             stage(payload)
         else:
             load_runtime_inputs()
-    except InputError as error:
-        # The messages are source-controlled and never include input bytes.
-        phase = "staging" if operation == ["stage"] else "verification"
-        raise SystemExit(f"Conix input {phase} failed (InputError): {error}") from None
-    except OSError as error:
-        raise SystemExit(
-            f"Conix input staging failed ({type(error).__name__}): "
-            "inspect volume ownership and the selected private input files."
-        ) from None
-    except Exception as error:
-        frame = traceback.extract_tb(error.__traceback__)[-1]
-        raise SystemExit(
-            f"Conix input {operation[0]} failed ({type(error).__name__}) "
-            f"at {Path(frame.filename).name}:{frame.lineno}."
-        ) from None
+    except InputError:
+        emit(
+            phase="staging" if operation == ["stage"] else "verification",
+            cause="InputError",
+            effect="unconfirmed" if operation == ["stage"] else "not_started",
+        )
+        raise SystemExit(2) from None
+    except OSError:
+        emit(
+            phase="staging" if operation == ["stage"] else "verification",
+            cause="OSError",
+            effect="unconfirmed" if operation == ["stage"] else "not_started",
+        )
+        raise SystemExit(2) from None
+    except Exception:
+        emit(
+            phase="staging" if operation == ["stage"] else "verification",
+            cause="UnexpectedError",
+            effect="unconfirmed" if operation == ["stage"] else "not_started",
+        )
+        raise SystemExit(2) from None
 
 
 if __name__ == "__main__":

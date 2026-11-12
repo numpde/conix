@@ -2,13 +2,12 @@
 
 import asyncio
 import json
-from pathlib import Path
 import sys
-import traceback
 
 from conix.abi import MalformedABIData, ResourceExceeded
 from conix.core import BranchConflict, open_writer
 from conix.input_staging import InputError, load_runtime_inputs
+from conix.process_diagnostic import emit
 from conix.journal import CommitOutcomeUnknown, HistoryConflict, StorageUnavailable, WriterBusy
 from conix.rpc import RpcProtocolError, RpcUnavailable
 
@@ -31,24 +30,22 @@ def main():
         (catalog, database_dsn) = load_runtime_inputs()
         phase = "advance"
         progress = asyncio.run(advance(catalog, database_dsn))
-    except InputError as error:
-        raise SystemExit(f"Cannot load staged inputs ({type(error).__name__}). {error}") from None
-    except CommitOutcomeUnknown as error:
-        raise SystemExit(f"Index advance has an unconfirmed PostgreSQL COMMIT. {error}") from None
+    except InputError:
+        emit(phase="staged_inputs", cause="InputError", effect="not_started")
+        raise SystemExit(2) from None
+    except CommitOutcomeUnknown:
+        emit(phase="advance", cause="CommitOutcomeUnknown", effect="commit_unknown")
+        raise SystemExit(2) from None
     except (TimeoutError, KeyboardInterrupt) as error:
-        raise SystemExit(
-            f"Index advance was interrupted ({type(error).__name__}). "
-            "Reopen the journal and inspect durable progress before another advance."
-        ) from None
+        emit(phase=phase, cause=type(error).__name__, effect="unconfirmed")
+        raise SystemExit(2) from None
     except (BranchConflict, HistoryConflict, StorageUnavailable, WriterBusy,
             RpcProtocolError, RpcUnavailable, MalformedABIData, ResourceExceeded) as error:
-        raise SystemExit(f"Index advance failed ({type(error).__name__}). {error}") from None
-    except Exception as error:
-        frame = traceback.extract_tb(error.__traceback__)[-1]
-        raise SystemExit(
-            f"Index advance failed during {phase} ({type(error).__name__}) "
-            f"at {Path(frame.filename).name}:{frame.lineno}."
-        ) from None
+        emit(phase=phase, cause=type(error).__name__, effect="unconfirmed")
+        raise SystemExit(2) from None
+    except Exception:
+        emit(phase=phase, cause="UnexpectedError", effect="unconfirmed")
+        raise SystemExit(2) from None
 
     receipt = {"outcome": "at_tip", "source_id": catalog.source_id.hex()}
     if progress is not None:

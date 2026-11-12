@@ -44,34 +44,10 @@ def pinned_images():
 
 
 def _staging_failure(stderr):
-    """Admit only one fixed, bounded, nonsecret staging diagnostic."""
-    diagnostic_prefix = "Conix input staging failed (InputError): "
+    """Use only fixed producer fields; never relay arbitrary stderr."""
+    from tools.containers.diagnostics import explanation
 
-    try:
-        stderr_lines = stderr[-4096:].decode("utf-8").splitlines()
-    except (UnicodeError, AttributeError):
-        return None
-
-    for diagnostic_line in reversed(stderr_lines):
-        if re.fullmatch(
-            r"Conix input stage failed \([A-Za-z][A-Za-z0-9_]{0,63}\) at [A-Za-z0-9_]{1,64}\.py:[1-9][0-9]{0,5}\.",
-            diagnostic_line,
-        ):
-            return diagnostic_line
-        if not diagnostic_line.startswith(diagnostic_prefix):
-            continue
-
-        safe_reason = diagnostic_line[len(diagnostic_prefix):]
-
-        if (
-            1 <= len(safe_reason) <= 240
-            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.,:/()-]*", safe_reason)
-            and not any(marker in safe_reason.lower() for marker in ("password", "private", "secret", "://"))
-            and re.search(r"(?:0x)?[0-9a-fA-F]{64}", safe_reason) is None
-        ):
-            return safe_reason
-
-    return None
+    return explanation(stderr, "unknown", phases={"staging", "verification"})
 
 
 def _declared_abi_names(configuration):
@@ -297,9 +273,15 @@ class Docker(DockerClient):
                 raise OperationError("Input staging timed out; the container outcome is unconfirmed.") from error
 
             if staging_result.returncode:
-                admitted_reason = _staging_failure(staging_result.stderr)
-                safe_reason = admitted_reason or "no admitted nonsecret diagnostic returned"
-                raise OperationError(f"Conix input staging failed (exit {staging_result.returncode}): {safe_reason}.")
+                from tools.containers.diagnostics import explanation
+
+                reason = explanation(
+                    staging_result.stderr, staging_result.returncode, phases={"staging"},
+                )
+                raise OperationError(
+                    f"Conix input staging failed: "
+                    f"{reason or f'exit={staging_result.returncode}; effect=unconfirmed; no admitted diagnostic'}."
+                )
 
             self.verify_inputs(image, input_volume_name)
 
