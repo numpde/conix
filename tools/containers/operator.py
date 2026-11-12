@@ -708,6 +708,12 @@ def main():
             options.database_network = make_inputs["DATABASE_NETWORK"]
             options.rpc_network = make_inputs["RPC_NETWORK"]
 
+        if options.owner_dsn_file and options.action != "deployment/init":
+            raise OperationError(
+                "Owner DSN path selection is allowed only for deployment/init; "
+                "normal operations never accept owner credentials."
+            )
+
         if options.action in (
             "test/standalone/run",
             "deployment/init", "deployment/prepare", "deployment/database/init",

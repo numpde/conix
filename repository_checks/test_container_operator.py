@@ -196,7 +196,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
             )
 
             self.assertNotEqual(completed.returncode, 0)
-            self.assertIn("unrecognized arguments: --owner-dsn-file", completed.stderr)
+            self.assertIn("Owner DSN path selection is allowed only", completed.stderr)
             self.assertFalse(log.exists(), "Retired credentials reached Docker selection.")
 
     def test_public_acquisition_worker_cannot_echo_private_stderr(self):
@@ -668,7 +668,7 @@ class LocalDockerOperatorTests(unittest.TestCase):
             env["PATH"] = folder + os.pathsep + env["PATH"]
             env["CONIX_FAKE_LOG"] = str(log)
 
-            for action in ("status", "remove"):
+            for action in ("status", "down"):
                 with self.subTest(action=action):
                     result = subprocess.run([
                         sys.executable, "-m", "tools.containers.operator",
