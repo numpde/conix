@@ -19,7 +19,8 @@ Other paths derive exclusively from that directory:
 The named directory and abi/ and secrets/ subdirectories are owner-owned
 mode 0700. Deployment.toml is owner-only mode 0600. No other editable source
 configuration, path-selector settings, redundant lock or host credentials
-registry exists. Existing older prepared.json files convey no authority.
+registry exists. Explicit old per-operation resource/path overrides are
+rejected, not ignored. Existing older prepared.json files convey no authority.
 
 Initialization and source configuration
 ---------------------------------------

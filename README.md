@@ -150,7 +150,8 @@ contracts/events with ABI files, and every Tier-0 limit. See
 `examples/deployment.toml.example` and `examples/conix.toml`.
 
 The directory structure is fixed; no source path or credential path is supplied
-on subsequent Make commands:
+on subsequent Make commands. Explicit old per-operation image, ABI, network,
+DSN-path or wheelhouse selectors are refused rather than ignored:
 
     config/deployments/local/
         deployment.toml             # editable, owner-only

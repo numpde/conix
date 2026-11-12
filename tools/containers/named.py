@@ -460,6 +460,25 @@ def dispatch(action, options, *, client_cls, pinned_images):
             docker.test(runner, images)
         return
 
+    # Named operations are resolved from one editable file. An explicit
+    # obsolete selector must not be silently ignored or override its source.
+    old_selectors = {
+        "CONFIG_FILE": "config_file",
+        "DSN_FILE": "dsn_file",
+        "OWNER_DSN_FILE": "owner_dsn_file",
+        "INDEXER_IMAGE": "indexer_image",
+        "INPUT_VOLUME": "volume",
+        "DATABASE_NETWORK": "database_network",
+        "RPC_NETWORK": "rpc_network",
+        "WHEELHOUSE": "wheelhouse",
+    }
+    for label, attribute in old_selectors.items():
+        if getattr(options, attribute, None):
+            raise OperationError(
+                f"Named deployment selections belong in deployment.toml; "
+                f"remove the {label} override."
+            )
+
     name = options.deployment
     _directory(name)
     if action == "deployment/init":
