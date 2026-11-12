@@ -83,8 +83,11 @@ class StandaloneAnvilContracts(unittest.IsolatedAsyncioTestCase):
 
                     await rpc("evm_mine", [])
                     await reach(head + 1)
-                    result = await inspect_history(source, dsn, ancestor=head + 1)
-                    self.assertEqual(result["blocks"][0]["number"], head + 1)
                 finally:
                     stop.set()
                     await asyncio.wait_for(running, timeout=10)
+
+                # Explicit operator inspection requires the service to have
+                # relinquished writer ownership; do not race a live tip poll.
+                result = await inspect_history(source, dsn, ancestor=head + 1)
+                self.assertEqual(result["blocks"][0]["number"], head + 1)
