@@ -1,5 +1,10 @@
 """Contracts for the acceptance observer, separate from the indexer itself."""
 
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -8,6 +13,22 @@ import deployment_probe as probe
 
 class DeploymentProbeContracts(unittest.TestCase):
     """Submission and credential-file formatting must not distort observations."""
+
+    def test_script_launch_imports_helpers_without_ambient_python_settings(self):
+        """The real probe entrypoint must load sibling helpers inside the test image."""
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "json.py").write_text("raise RuntimeError('ambient-module-selected')\n")
+            environment = dict(os.environ, PYTHONPATH=directory, PYTHONSAFEPATH="1")
+            result = subprocess.run(
+                [sys.executable, "-E", "-s", str(Path(probe.__file__).resolve())],
+                input=b'{"operation":"unsupported"}', capture_output=True,
+                env=environment, timeout=10,
+            )
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, b"")
+        self.assertIn(b"Deployment probe failed (ValueError)", result.stderr)
+        self.assertNotIn(b"Traceback", result.stderr)
+        self.assertNotIn(b"ambient-module-selected", result.stderr)
 
     def test_submitted_transaction_is_observed_without_resubmission(self):
         """Anvil may acknowledge submission before its receipt is available."""

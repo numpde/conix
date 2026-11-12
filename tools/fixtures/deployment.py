@@ -178,7 +178,9 @@ class DeploymentAcceptance:
             "--network", network, "--read-only", "--user", "65532:65532",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
             "--pids-limit", "32", "--memory", "128m", "--memory-swap", "128m",
-            "--entrypoint", "python", self.runner, "-I", "/tests/deployment_probe.py"]
+            # The read-only image owns the script directory and its test helpers.
+            # Ignore Python environment/user-site settings while allowing sibling imports.
+            "--entrypoint", "python", self.runner, "-E", "-s", "/tests/deployment_probe.py"]
         try:
             output = self.child(argv, "fixture " + operation, payload=json.dumps(request).encode(), timeout=30)
         except CampaignError as error:

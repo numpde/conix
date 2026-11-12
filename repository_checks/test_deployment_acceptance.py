@@ -67,6 +67,17 @@ class DeploymentAcceptanceContracts(unittest.TestCase):
             env = campaign.child.call_args.kwargs["environment"]
             self.assertFalse(any(key.startswith(("DOCKER_", "COMPOSE_", "CONIX_MAKE_")) for key in env))
 
+    def test_probe_allows_reviewed_sibling_imports_without_python_environment(self):
+        """The isolated image owns /tests; interpreter isolation must allow its helpers."""
+        with tempfile.TemporaryDirectory() as directory:
+            campaign = self.campaign(Path(directory))
+            campaign.runner = "sha256:" + "a" * 64
+            campaign.child = Mock(return_value=b'{}')
+            campaign.probe("genesis")
+            argv = campaign.child.call_args.args[0]
+            image_index = argv.index(campaign.runner)
+            self.assertEqual(argv[image_index + 1:], ["-E", "-s", "/tests/deployment_probe.py"])
+
     def test_consumer_cleanup_failure_preserves_dependencies_and_inputs(self):
         """SQL/RPC must remain inspectable if the retained consumer may still run."""
         with tempfile.TemporaryDirectory() as directory:
