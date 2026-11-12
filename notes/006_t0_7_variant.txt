@@ -3,9 +3,11 @@ Conix T0-7 B — Catch-up writer session
 
 Branch: main-tier-0-7-B-20261112
 Base: 8c2087011bea46221eb10a16e39dc0d11c0d2682
-Status: IMPLEMENTED CANDIDATE; full selected-Engine T0-7 qualification PENDING.
-This branch is an independent alternative to the other two. No change
-to the governing plan on main is implied by its existence.
+Status: IMPLEMENTED; selected-Engine retained deployment and owned dapp32
+acceptance passed at 0c90f41. Note 004 section 8.8 owns exact evidence and
+limits; full section 11.5 continuous-service qualification is not claimed.
+Variant B is selected for integration. The other two experimental variants
+are not incorporated by this change.
 
 Execution choice
 ----------------
@@ -35,9 +37,10 @@ The T0-6 core evidence is documented in note 004 §8.8. Added tests cover
 orchestration behavior, named deployment selection, explicit recovery
 delegation, runtime ownership admission, a real installed CLI process,
 and a PostgreSQL/Anvil tip-following scenario. These tests
-are source-level candidate gates until they are executed and recorded
-against a selected rootless Engine and the real dapp32 acceptance fixture.
-No production deployment or full T0-7 qualification is claimed here.
+passed in CI and the separately recorded fw/rootless agentic campaigns at
+0c90f41. Retained-service acceptance and owned generic dapp32 acceptance
+have distinct scopes. No production deployment or full T0-7 qualification
+is claimed here.
 
 Compare all three on executable behavior, writer-lock lifetime, number of
 sessions per catch-up block, additional code surface, process/repair

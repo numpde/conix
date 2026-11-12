@@ -871,6 +871,53 @@ alternative Engine configurations are outside this qualification.
 The existing index set is retained; the topic1 comparison described below
 is an optimization question with no Tier-0 throughput requirement.
 
+Variant-B selected-Engine qualification (2026-11-13)
+...................................................
+
+Executable revision: 0c90f41325794883f141b90b0d8b309999064a90.
+Host: fw; rootless Docker context agentic, endpoint
+unix:///run/user/1000/docker-engines/agentic/docker.sock.
+The unchanged source tree at this revision passed:
+  - 164 host repository checks and 6 separate input checks;
+  - 107 contained PostgreSQL/Anvil tests, with 2 expected skips;
+  - exact-revision GitHub Actions run 43330709262:
+    https://github.com/numpde/conix/actions/runs/43330709262
+  - test/deployment/acceptance/run through the normal named Make lifecycle:
+    initial catch-up, idle tip, later arrivals, clean shutdown, a new process
+    on restart, retained source/generation/block/event prefix and further
+    tip following. Checkpoints before restart, after restart and finally
+    were 6, 9 and 11. Both process exits were clean. Fixture cleanup was
+    confirmed and the generated deployment lock was removed;
+  - test/indexer/acceptance/owned/run against dapp32 revision
+    71654651185fec5d196f0437c128992d22997baa. Baseline, token/payment exercise,
+    restart and manual reorganization repair passed. Conix consumers were
+    retired before fixture/down; owned networks and volumes were retired.
+
+The offline EVM runner was
+sha256:f021e92a00e2b670ba973382bb141b93e055505290390007264c8f153d308938.
+Local revision-bound receipts and logs are retained under
+out/qualification/0c90f41325794883f141b90b0d8b309999064a90/.
+Those local receipts are generated evidence, not required source inputs.
+
+The first retained attempt at adcd0d5 failed before application startup:
+Python -I excluded the extracted test observer's script directory. Its owned
+fixture cleanup completed. The corrected probe uses -E -s to exclude Python
+environment and user-site settings while admitting reviewed sibling code
+from the image-owned read-only /tests directory. A contained subprocess
+regression covers that import boundary and hostile Python environment values.
+A separate host fixture correction sets explicit source permissions instead
+of depending on the host umask. Both fixes precede the qualified revision.
+
+Scope: retained-service acceptance used the deterministic event emitter;
+the owned dapp32 campaign exercised the generic core phases. These separate
+passes do not establish every combined continuous-service fault scenario
+in section 11.5, a fresh borrowed-fixture baseline at this revision, public
+chain finality, hard power-loss durability, unattended Tier-1 recovery,
+production readiness or qualification of another Engine. The full T0-7
+release claim remains bounded by the outstanding section 11.5 evidence.
+Subsequent documentation-only commits do not change the tested executable
+inputs; their CI is reported separately from these Engine campaigns.
+
 ABI fixture sources:
   tests/fixtures/abi/{erc20,erc721,pay_to_play,compound}.json
   tests/fixtures/abi/support_matrix.json
@@ -1185,12 +1232,15 @@ The one-shot proof checks valid and malformed catalogs before activation.
 11. T0-7 — standalone Tier-0 application (decision 2026-11-11)
 ----------------------------------------------------------------
 
-Status: PLANNED. T0-6, qualified in section 8.8, established an installed
+Status: Variant B implemented; selected-Engine deployment and owned core
+acceptance are recorded in section 8.8. Full section 11.5 service qualification
+remains a separate release gate. T0-6 established an installed
 scientific/persistence core and one-block foreground operation. It did not
 establish an autonomously running indexer service. Do not relabel that
 qualification as a T0-7 success. T0-7 completes Tier 0, using the frozen
-core rather than replacing it. The implementation belongs on a focused new
-branch; the decisions recorded here are committed on main.
+core rather than replacing it. The variant-B implementation follows this
+contract; the evidence ledger distinguishes its passing campaigns from
+remaining release scenarios.
 
 11.1. Required operational contract
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1201,11 +1251,11 @@ writer, ingest every available complete selected block in order, and wait
 at the chain tip. It must notice later blocks without an external driver
 and continue until explicitly stopped or an error makes continuation unsafe.
 
-The proposed public invocation is:
+The implemented public invocation is:
 
     python -I -m conix run
 
-This entrypoint does not exist yet. Preserve the implemented diagnostic:
+This entrypoint delegates to the existing core. The diagnostic remains:
 
     python -I -m conix.worker advance
 
@@ -1402,7 +1452,8 @@ Last line
 ---------
 
 The generic Tier-0 core is T0-6 qualified within the evidence and limits
-in section 8.8. Full standalone Tier-0 operation is the unimplemented
-T0-7 work in section 11. Higher tiers must reuse the concrete validated
-scanner, journal, reader and repair, and must not duplicate the normal
+in section 8.8. Variant B implements standalone Tier-0 operation; that
+section records its qualification scope and remaining section 11 release
+evidence. Higher tiers must reuse the concrete validated scanner, journal,
+reader and repair, and must not duplicate the normal
 application loop or revive the retired PayToPlay-specific prototype.
