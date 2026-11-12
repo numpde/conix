@@ -49,7 +49,7 @@ elif "compose" in args and "config" in args:
                 "read_only": True, "pull_policy": "never", "cap_drop": ["ALL"],
                 "security_opt": ["no-new-privileges:true"],
                 "entrypoint": ["python"],
-                "command": ["-I", "-m", "conix.worker", "advance"],
+                "command": ["-I", "-m", "conix", "run"],
                 "cpus": 1, "pids_limit": 128,
                 "mem_limit": 536870912, "memswap_limit": 536870912,
                 "init": True, "restart": "no",

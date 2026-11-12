@@ -1,0 +1,42 @@
+Conix T0-7 B — Catch-up writer session
+==============================
+
+Branch: main-tier-0-7-B-20261112
+Base: 8c2087011bea46221eb10a16e39dc0d11c0d2682
+Status: IMPLEMENTED CANDIDATE; full selected-Engine T0-7 qualification PENDING.
+This branch is an independent alternative to the other two. No change
+to the governing plan on main is implied by its existence.
+
+Execution choice
+----------------
+Retain one core writer across consecutive successful advances, close it at the checked tip, then poll with no advisory lock held. A source/SQL failure terminates rather than reopening automatically.
+
+Shared T0-7 components
+----------------------
+- Installed `python -I -m conix run`: follows new blocks without external
+  drivers and exits on source, branch, SQL or ambiguous COMMIT failures.
+- Existing `conix.worker advance` is retained for one-block diagnostics.
+- Manual `history inspect [--ancestor N]` reads retained identities even
+  after a reorganization. `history repair --ancestor N` invokes the same
+  RPC-checked Writer.repair_to() and journal; no automatic ancestor search.
+- Retained deployment activation via `deployment/start` creates a STOPPED
+  Compose-defined container, checks its actual confinement and exact
+  ownership, then starts it. `deployment/status`, `deployment/logs` and
+  `deployment/remove` are distinct operator operations. No automatic
+  container restart.
+- The generic selected-log scanner, writer publication, reader, API and
+  source identity are shared unchanged from T0-6; no alternate publisher.
+
+Evidence and limits
+-------------------
+The T0-6 core evidence is documented in note 004 §8.8. Added tests cover
+orchestration behavior, explicit recovery delegation, runtime ownership
+admission and a real Anvil/PostgreSQL tip-following scenario. These tests
+are source-level candidate gates until they are executed and recorded
+against a selected rootless Engine and the real dapp32 acceptance fixture.
+No production deployment or full T0-7 qualification is claimed here.
+
+Compare all three on executable behavior, writer-lock lifetime, number of
+sessions per catch-up block, additional code surface, process/repair
+failure behavior, and actual selected-Engine qualification. Do not
+conflate a green fake-worker orchestration test with journal correctness.

@@ -1,4 +1,4 @@
-# Deployment scope: one concrete Tier-0 worker. PostgreSQL and RPC sources
+# Deployment scope: one standalone Tier-0 indexer. PostgreSQL and RPC sources
 # are independently owned; this Compose file grants only their network access.
 # Operator-owned static inputs are staged into an engine volume before startup.
 services:
@@ -6,9 +6,9 @@ services:
     image: ${CONIX_INDEXER_IMAGE:?select verified immutable runtime image ID}
     pull_policy: never
     init: true
-    # One foreground advance. Retained deployment activation is not yet supported.
+    # The installed application follows the tip until stopped or a failure exits.
     entrypoint: ["python"]
-    command: ["-I", "-m", "conix.worker", "advance"]
+    command: ["-I", "-m", "conix", "run"]
     restart: "no"
     user: "65532:65532"
     read_only: true
@@ -18,7 +18,7 @@ services:
     cpus: 1
     mem_limit: 512m
     memswap_limit: 512m
-    stop_grace_period: 90s
+    stop_grace_period: 330s
     volumes:
       - type: volume
         source: inputs

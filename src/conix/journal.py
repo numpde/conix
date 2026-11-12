@@ -164,6 +164,38 @@ class Journal:
             raise HistoryConflict("This writer has retired; open a fresh session.")
         return await self._read_basis(connection=self.connection, catalog=self.catalog)
 
+    async def retained_blocks(self, *, limit: int = 64) -> tuple[Block, ...]:
+        """Inspect stored ancestry, including a noncanonical or blocked suffix."""
+        if type(limit) is not int or not 1 <= limit <= 65:
+            raise ValueError("Retained-history inspection limit must be between 1 and 65.")
+        if self.retired:
+            raise HistoryConflict("This writer has retired; open a fresh session.")
+        try:
+            cursor = await self.connection.execute(
+                "SELECT number, hash, parent_hash, timestamp FROM conix.blocks "
+                "ORDER BY number DESC LIMIT %s", (limit,),
+            )
+            return tuple(Block(*row) for row in await cursor.fetchall())
+        except psycopg.Error as error:
+            raise StorageUnavailable("Cannot inspect retained block identities.") from error
+
+    async def retained_block(self, number: int) -> Block | None:
+        """Return one stored identity for explicitly selected checked repair."""
+        if type(number) is not int or number < self.catalog.chain.start_block:
+            raise ValueError("Selected retained block number precedes the configured origin.")
+        if self.retired:
+            raise HistoryConflict("This writer has retired; open a fresh session.")
+        try:
+            row = await (
+                await self.connection.execute(
+                    "SELECT number, hash, parent_hash, timestamp "
+                    "FROM conix.blocks WHERE number = %s", (number,),
+                )
+            ).fetchone()
+            return None if row is None else Block(*row)
+        except psycopg.Error as error:
+            raise StorageUnavailable("Cannot inspect the selected retained block.") from error
+
     @asynccontextmanager
     async def _transaction(self):
         if self.retired:

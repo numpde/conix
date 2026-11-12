@@ -34,7 +34,9 @@ PARAMETERS = {
     "deployment/inputs/create": "CONFIG_FILE",
     "deployment/inputs/remove": "INPUT_VOLUME",
     "deployment/config/check": "DEPLOYMENT",
+    "deployment/start": "INPUT_VOLUME",
     "deployment/status": "RPC_NETWORK",
+    "deployment/logs": "DEPLOYMENT",
     "deployment/remove": "INDEXER_IMAGE",
 }
 
