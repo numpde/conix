@@ -52,9 +52,10 @@ Ordered operational commands:
   make deployment/logs DEPLOYMENT=local
   make deployment/down DEPLOYMENT=local
 
-Preparation uses the checked wheelhouse and pinned base images available on
-the saved local rootless Engine; missing artifacts require explicit separate
-acquisition. Successful image/staging admission produces an owner-only
+Preparation uses the checked wheelhouse and pinned base images on the
+selected local Engine; offline CI can prepare on a rootful Engine, but actual
+deployment/up and database/init require a verified rootless Engine. Missing
+artifacts require explicit separate acquisition. Successful image/staging admission produces an owner-only
 prepared receipt naming the exact immutable image ID and private volume ID.
 Failed preparation does not publish a candidate. Repreparing refuses a live
 service; old input state is retired only after a replacement was prepared.

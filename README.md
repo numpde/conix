@@ -166,6 +166,9 @@ records the exact image/volume IDs in a private prepared receipt. No missing
 base image or wheel is automatically downloaded. Use the separate explicit
 image/*/acquire and wheelhouse/acquire operations if inputs are missing.
 Preparing an upgrade requires the selected standalone service to be down.
+Preparation alone can be qualified on a rootful CI Engine, using the same
+existing offline build and staging rules. Actual retained startup and
+schema-owner operations still require a verified rootless Engine.
 An old input volume is retired only after replacement preparation succeeds.
 
 The PostgreSQL service and roles/schema must ALREADY exist on the selected

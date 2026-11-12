@@ -157,6 +157,23 @@ class NamedDeploymentContracts(unittest.TestCase):
             ["config/check", "start"],
         )
 
+    def test_prepare_reuses_checked_build_and_stages_once_without_rootless_start(self):
+        self.configure()
+        self.options.context = ""
+        self.options.origin = "undefined"
+        with patch("tools.wheelhouse.operations.SharedWheelhouse") as wheelhouse:
+            selected = wheelhouse.return_value
+            selected.build.return_value = IMAGE
+            self.execute("deployment/prepare")
+
+        selected.check.assert_called_once_with()
+        selected.build.assert_called_once_with("indexer")
+        self.assertEqual(named._prepared(named._read("pilot")), {
+            "version": 1, "image": IMAGE, "volume": VOLUME,
+        })
+        self.assertIn(("staging", "/project/private/runtime.dsn"), RecordingDocker.seen[-1].calls)
+        self.assertNotIn(("rootless", ""), RecordingDocker.seen[-1].calls)
+
     def test_database_initializer_uses_owner_stdin_only(self):
         self.prepared()
         from types import SimpleNamespace

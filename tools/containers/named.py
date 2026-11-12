@@ -216,11 +216,14 @@ def _inspect_existing(docker, name):
 
 
 def prepare(decl, docker, images):
-    """Build only from present trusted inputs; stage a retained private volume."""
+    """Build only from present trusted inputs; stage a retained private volume.
+
+    Preparation may run on the rootful CI Engine, like the existing offline
+    build/staging lanes. Actual service start still requires rootless admission.
+    """
     from tools.wheelhouse.operations import SharedWheelhouse
 
     with _locked(decl.name):
-        docker.require_rootless_engine()
         if _inspect_existing(docker, decl.name):
             raise OperationError("Retire the existing service before preparing replacement inputs.")
         existing = None
