@@ -40,7 +40,7 @@ class DatabaseSessionContracts(unittest.IsolatedAsyncioTestCase):
         source = object()
         dsn = object()
         stop = asyncio.Event()
-        previous = storage_error(psycopg.OperationalError("connection broken"))
+        previous = storage_error(psycopg.errors.ConnectionFailure("connection broken"))
         entered = 0
         retired = 0
 
@@ -102,7 +102,7 @@ class DatabaseSessionContracts(unittest.IsolatedAsyncioTestCase):
         failures = [
             storage_error(psycopg.errors.ConnectionFailure("connection lost")),
             storage_error(psycopg.errors.AdminShutdown("backend terminated")),
-            storage_error(psycopg.OperationalError("lost transport")),
+            storage_error(psycopg.errors.ConnectionDoesNotExist("session disconnected")),
         ]
 
         async def application(*_args):
@@ -120,7 +120,7 @@ class DatabaseSessionContracts(unittest.IsolatedAsyncioTestCase):
     async def test_stop_during_backoff_preserves_failure_without_another_session(self):
         stop = asyncio.Event()
         entered = asyncio.Event()
-        failure = storage_error(psycopg.OperationalError("transport failed"))
+        failure = storage_error(psycopg.errors.AdminShutdown("backend shut down"))
         attempts = []
 
         async def application(*_args):
@@ -167,7 +167,7 @@ class DatabaseSessionContracts(unittest.IsolatedAsyncioTestCase):
         async def application(*_args):
             attempts.append(True)
             try:
-                raise storage_error(psycopg.OperationalError("connection lost"))
+                raise storage_error(psycopg.errors.ConnectionFailure("connection lost"))
             finally:
                 raise failure
 
