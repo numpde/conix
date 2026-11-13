@@ -145,3 +145,37 @@ Integration CI is distinct from the selected-Engine result above. This
 qualification does not activate a deployed Tier-1 service, establish T1-C
 automatic repair or T1-D unattended recovery, or qualify arbitrary Engines,
 providers, process supervisors or production environments.
+
+
+T1-C1 — Bounded retained canonical-ancestor selection (2026-11-13)
+------------------------------------------------------------------
+
+Branch: main-tier-1-reorg-ancestor-20261113 (unmerged).
+Base: main@64a648a0a221cb50394e29b3138fdeb4f093038a.
+RED test-only revision: ab47d8ce71e367529335e3a35ef1b803e4d8de69.
+  https://github.com/numpde/conix/actions/runs/43453304044
+  The installed suite failed importing the absent conix.resilience.reorg
+  implementation (145 tests run, one import error, two expected skips).
+GREEN executable revision: 1fe9fc5b718a65e80f2cab229896db3d1b76ac7e.
+  https://github.com/numpde/conix/actions/runs/43453483369
+  189 host repository tests passed; 152 contained tests passed with two
+  expected skips. All eight new tests passed, including a genuine disposable
+  Anvil three-block replacement with SQL basis unchanged after selection.
+  The fixture then used the ORIGINAL checked manual repair to restore its
+  own database; the selector performed no repair.
+
+The selector is given an already verified exclusive original Writer. It
+uses Journal.retained_ancestry and Writer._block, with one shared RPC deadline,
+to select the highest exact matching stored header within the catalog's
+existing evidence window. It checks that the durable progress basis did not
+change, returns no candidate for a still-canonical retained tip, and
+refuses missing headers, exhausted ancestry, or contradictory source facts.
+No extra RPC decoder, scanner, SQL mutation, repair path, scheduler or
+configuration field was introduced.
+
+This is GitHub-hosted rootful container CI, NOT selected fw/rootless agentic
+qualification. The separately required selected-Engine run is still open.
+No T1-C2 repair orchestration, persisted-state recovery policy, production
+activation or integration into main has been performed. Automatic repair
+must still use the original Writer.repair_to under exclusive ownership and
+revalidate the selected basis and live canonical evidence at invocation.
