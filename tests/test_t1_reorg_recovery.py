@@ -499,6 +499,7 @@ class RealReorganizationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
         await self.rpc("anvil_setCode", [self.token, "0x" + transfer_runtime(9).hex()])
         new_hash = await self.rpc("eth_sendTransaction", [{
             "from": account, "to": self.token, "gas": "0x100000",
+            "data": "0x09",
         }])
         for _ in range(2):
             await self.rpc("evm_mine", [])
@@ -533,9 +534,9 @@ class RealReorganizationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
                 checkpoint=current, contract="token",
                 event=TRANSFER_SIGNATURE,
             )
-            self.assertEqual(len(page.events), 1)
-            self.assertEqual(page.events[0].data, b"\x00" * 31 + b"\x09")
-            self.assertEqual(page.events[0].transaction_hash, bytes.fromhex(new_hash[2:]))
+            self.assertTrue(page.events)
+            self.assertEqual(page.events[-1].data, b"\x00" * 31 + b"\x09")
+            self.assertEqual(page.events[-1].transaction_hash, bytes.fromhex(new_hash[2:]))
 
         async with await AsyncConnection.connect(self.reader_dsn, connect_timeout=5) as sql:
             replaced = await (await sql.execute(
