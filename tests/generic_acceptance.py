@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fixture_protocol import (FixtureError, ScenarioFailure, _bad_constant, _pairs,
                               admit_public_acceptance_source, admit_public_test_source, admit_tokens,
-                              phase_failure_record)
+                              continuous_cleanup_note, phase_failure_record)
 from abi_contract_vectors import VOUCHER_SIGNATURE
 from abi_golden_vectors import TRANSFER_SIGNATURE
 import httpx
@@ -276,6 +276,55 @@ def stage_continuous_inputs(source_path, writer_dsn, target):
     return source
 
 
+async def _cleanup_continuous(process, target):
+    """Attempt every owned retirement action, returning only fixed failure labels."""
+    failures = []
+
+    if process is not None and process.returncode is None:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        except BaseException:
+            failures.append("process retirement")
+
+        try:
+            await asyncio.wait_for(process.communicate(), timeout=10)
+        except BaseException:
+            failures.append("process reaping")
+        if process.returncode is None:
+            failures.append("process retirement")
+
+    abi = target / "abi"
+    try:
+        members = tuple(abi.iterdir())
+    except BaseException:
+        failures.append("ABI enumeration")
+        members = ()
+
+    for member in members:
+        try:
+            member.unlink()
+        except BaseException:
+            failures.append("ABI member removal")
+
+    try:
+        abi.rmdir()
+    except BaseException:
+        failures.append("ABI directory removal")
+
+    for name, failure in (
+        ("config.toml", "configuration removal"),
+        ("connection.dsn", "credential removal"),
+    ):
+        try:
+            (target / name).unlink(missing_ok=True)
+        except BaseException:
+            failures.append(failure)
+
+    return tuple(dict.fromkeys(failures))
+
+
 async def continuous(descriptor, source_path, rpc_call, *, tokens, writer_dsn, reader_dsn):
     """Prove continuous installed ingestion using the owned three-contract source.
 
@@ -291,6 +340,7 @@ async def continuous(descriptor, source_path, rpc_call, *, tokens, writer_dsn, r
     config = target / "config.toml"
     credential = target / "connection.dsn"
     process = None
+    primary = None
     try:
         async with open_reader(catalog=source, database_dsn=reader_dsn,
                                rpc_url=descriptor["rpcUrl"]) as reader:
@@ -398,18 +448,23 @@ async def continuous(descriptor, source_path, rpc_call, *, tokens, writer_dsn, r
             raise ScenarioFailure("Continuous acceptance did not stop cleanly.")
         if writer_dsn.encode() in stdout + stderr:
             raise ScenarioFailure("Continuous acceptance disclosed a database credential.")
-        print("PASS: continuous Conix indexed new PayToPlay, ERC-20 and ERC-721 events.", flush=True)
+    except BaseException as error:
+        primary = error
+        raise
     finally:
-        if process is not None and process.returncode is None:
-            process.kill()
-            await asyncio.wait_for(process.communicate(), timeout=10)
-        # These are private ephemeral test-container inputs, not deployment
-        # state, owned database history or producer resources.
-        for member in (target / "abi").iterdir():
-            member.unlink()
-        (target / "abi").rmdir()
-        config.unlink(missing_ok=True)
-        credential.unlink(missing_ok=True)
+        # Child, selected ABIs and the two runtime files have independent
+        # cleanup outcomes. None may replace a failed RPC/reader operation.
+        uncertain = await _cleanup_continuous(process, target)
+        if uncertain:
+            note = continuous_cleanup_note(uncertain)
+            if primary is not None:
+                primary.add_note(note)
+            else:
+                raise ScenarioFailure(note)
+
+    # A clean application stop alone is insufficient if input retirement
+    # failed. Never print PASS before cleanup completes.
+    print("PASS: continuous Conix indexed new PayToPlay, ERC-20 and ERC-721 events.", flush=True)
 
 async def main():
     if len(sys.argv) != 2 or sys.argv[1] not in (

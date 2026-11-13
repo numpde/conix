@@ -165,6 +165,24 @@ _PHASES = frozenset({"preflight", "prepare", "initialize", "baseline", "exercise
 _PUBLIC_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.,:;()/'=_-]{0,239}\Z")
 _CATEGORY = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}\Z")
 _PRIVATE_MARKERS = ("privatekey", "postgresql:", "password", "secret", "://")
+_CONTINUOUS_CLEANUP_AREAS = frozenset({
+    "process retirement", "process reaping", "ABI enumeration",
+    "ABI member removal", "ABI directory removal",
+    "configuration removal", "credential removal",
+})
+_CONTINUOUS_CLEANUP_PREFIX = "Continuous cleanup unconfirmed: "
+
+
+def continuous_cleanup_note(areas):
+    """Render only fixed cleanup locations, never exception messages or paths."""
+    if (
+        type(areas) not in (tuple, list)
+        or not areas
+        or any(type(area) is not str or area not in _CONTINUOUS_CLEANUP_AREAS for area in areas)
+    ):
+        raise ValueError("An unknown continuous cleanup phase was reported.")
+    return _CONTINUOUS_CLEANUP_PREFIX + ", ".join(dict.fromkeys(areas)) + "."
+
 
 
 class ScenarioFailure(AssertionError):
@@ -212,6 +230,31 @@ def phase_failure_record(phase: str, error: Exception) -> bytes:
         reason = f"Unexpected error at {location}; inspect the selected operation."
         if not _public_reason(reason):
             reason = "Unexpected error; inspect the selected operation."
+    # Only the test-owned continuous phase may attach this fixed cleanup
+    # classification to an otherwise unexpected primary error. Reject notes
+    # carrying paths, exception messages or arbitrary subprocess output.
+    if phase == "continuous":
+        for note in getattr(error, "__notes__", ()):
+            if type(note) is not str or not note.startswith(_CONTINUOUS_CLEANUP_PREFIX):
+                continue
+            parts = note[len(_CONTINUOUS_CLEANUP_PREFIX):].removesuffix(".").split(", ")
+            if not note.endswith("."):
+                continue
+            try:
+                admitted = continuous_cleanup_note(parts) == note
+            except ValueError:
+                admitted = False
+            if not admitted:
+                continue
+            combined = reason + " " + note
+            if _public_reason(combined):
+                reason = combined
+            else:
+                concise = "Original failure retained. " + note
+                if _public_reason(concise):
+                    reason = concise
+            break
+
     return _FAILURE_PREFIX + json.dumps(
         {"phase": phase, "category": category, "reason": reason},
         separators=(",", ":"), ensure_ascii=True,
