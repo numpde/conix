@@ -19,13 +19,14 @@ from psycopg import AsyncConnection
 
 from abi_golden_vectors import ERC20, TRANSFER_SIGNATURE
 from anvil_catalog import catalog_for_anvil
+from conix import app
 from conix.core import BranchConflict, open_writer
 from conix.journal import (
     Block, CommitOutcomeUnknown, HistoryConflict, Journal, Progress,
     RetainedAncestry, StorageUnavailable,
 )
 from conix.reader import CursorInvalid, open_reader
-from conix.resilience import reorg, supervisor
+from conix.resilience import reorg, rpc_retry, supervisor
 from conix.rpc import RpcProtocolError, RpcUnavailable
 
 
@@ -519,7 +520,54 @@ class RealReorganizationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
         # The first ordinary T1-B session fails on the original retained tip.
         # T1-C then uses only the original checked repair and starts a fresh
         # instance of T1-B, whose app.run publishes the replacement.
-        updated = await self.supervised_until(replacement_head, old.generation)
+        original_application = app.run
+        original_journal_repair = Journal.repair_to
+        original_writer = open_writer
+        applications = []
+        repaired_ancestors = []
+        retired = []
+        active = 0
+
+        async def real_application(*args, **kwargs):
+            applications.append(args)
+            return await original_application(*args, **kwargs)
+
+        async def real_repair(journal, *, ancestor):
+            result = await original_journal_repair(journal, ancestor=ancestor)
+            repaired_ancestors.append(ancestor)
+            return result
+
+        @asynccontextmanager
+        async def observed_writer(**kwargs):
+            nonlocal active
+            selected = None
+            try:
+                async with original_writer(**kwargs) as writer:
+                    self.assertEqual(active, 0, "Recovery admitted a second live writer.")
+                    active += 1
+                    selected = writer
+                    yield writer
+            finally:
+                if selected is not None:
+                    self.assertTrue(
+                        selected.journal.connection.closed,
+                        "Recovery admitted work before the previous writer retired.",
+                    )
+                    active -= 1
+                    retired.append(selected)
+
+        with (
+            patch.object(rpc_retry.app, "run", real_application),
+            patch.object(Journal, "repair_to", real_repair),
+            patch.object(rpc_retry, "open_writer", observed_writer),
+            patch.object(reorg, "open_writer", observed_writer),
+        ):
+            updated = await self.supervised_until(replacement_head, old.generation)
+
+        self.assertEqual(active, 0)
+        self.assertGreaterEqual(len(retired), 3)
+        self.assertGreaterEqual(len(applications), 2)
+        self.assertEqual(len(repaired_ancestors), 1)
         self.assertIsNone(updated[3])
         self.assertGreater(updated[1], old.revision)
 
