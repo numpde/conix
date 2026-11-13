@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
+from urllib.parse import urlsplit
 from unittest.mock import Mock, patch
 
 from tools.containers.client import OperationError
@@ -29,6 +30,17 @@ class DeploymentAcceptanceContracts(unittest.TestCase):
         docker.docker_environment = {}
         docker.run.return_value = ""
         return lane.DeploymentAcceptance(decl, docker, {}, folder)
+
+    def test_committed_credentials_select_one_database_with_distinct_roles(self):
+        """Reader admission must observe the same disposable history as the indexer."""
+        folder = lane.named.ROOT / "config/deployments/deployment-acceptance/secrets"
+        selected = {}
+        for role in ("owner", "runtime", "reader"):
+            connection = urlsplit((folder / (role + ".dsn")).read_text().strip())
+            self.assertEqual(connection.username, "conix_" + role)
+            selected[role] = (connection.hostname, connection.port, connection.path)
+        self.assertEqual(selected["reader"], selected["runtime"])
+        self.assertEqual(selected["owner"], selected["runtime"])
 
     def test_existing_lock_refuses_before_engine_effects(self):
         """A leftover prepared selection is recovery state, not a fresh fixture."""
