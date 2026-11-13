@@ -281,7 +281,8 @@ async def continuous(descriptor, source_path, rpc_call, *, tokens, writer_dsn, r
 
     Earlier phases establish real payment/ERC-20/ERC-721 history. This phase
     launches the installed ordinary CLI in a separate process, then checks
-    two later tip arrivals through the same public reader.
+    real events from each selected contract and later tip arrivals through
+    the same public reader.
     """
     from conix.reader import open_reader
 
@@ -315,12 +316,9 @@ async def continuous(descriptor, source_path, rpc_call, *, tokens, writer_dsn, r
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
 
-        # The first new block starts after the preceding owned campaign phase,
-        # not in an unqualified second writer or reconstructed scanner.
-        for arrival in (1, 2):
-            await rpc_call(descriptor, "evm_mine", [])
-            expected = before.block.number + arrival
-            async with asyncio.timeout(25):
+        async def await_height(expected):
+            """Observe actual publication through the public Reader, not mock progress."""
+            async with asyncio.timeout(30):
                 while True:
                     if process.returncode is not None:
                         raise ScenarioFailure("The installed continuous process exited before tip arrival.")
@@ -332,12 +330,52 @@ async def continuous(descriptor, source_path, rpc_call, *, tokens, writer_dsn, r
                     if current is not None and current.block.number >= expected:
                         if current.block.number != expected or current.generation != before.generation:
                             raise ScenarioFailure("Continuous acceptance published a contradictory checkpoint.")
-                        break
+                        return current
                     await asyncio.sleep(0.2)
+
+        # First prove an empty arrival; then use existing test producers to
+        # emit THREE real selected events while this same process is running.
+        await rpc_call(descriptor, "evm_mine", [])
+        await await_height(before.block.number + 1)
+
+        from t0_5_chain import send
+        from t0_5_payment import collect_voucher, fixture_voucher_signer_address
+
+        accounts = descriptor["publicFixtureAccounts"]
+        admin = accounts["admin"]["address"]
+        customer = accounts["customer"]["address"]
+        relayer = accounts["relayer"]["address"]
+        payee = accounts["payee"]["address"]
+        signer = await fixture_voucher_signer_address(rpc_call, descriptor)
+
+        newly_mined = {
+            "payment": await collect_voucher(
+                rpc_call, descriptor, signer=signer, customer=customer,
+                collector=relayer, channel=2, total=20, cap=5,
+                invoice=bytes.fromhex("55" * 32),
+            ),
+            "token20": await send(
+                rpc_call, descriptor, admin, "transfer(address,uint256)",
+                ("address", "uint256"), (payee, 1),
+                contract=tokens["token20"]["address"],
+            ),
+            # The preceding canonical branch transferred token 7 to payee.
+            "token721": await send(
+                rpc_call, descriptor, payee, "transferFrom(address,address,uint256)",
+                ("address", "address", "uint256"), (payee, relayer, 7),
+                contract=tokens["token721"]["address"],
+            ),
+        }
+        last_mined = max(int(receipt["blockNumber"], 16) for receipt in newly_mined.values())
+        await await_height(last_mined)
+
+        # A second empty arrival proves same-process tip following AFTER
+        # real multi-contract ingestion, without creating an alternate writer.
+        await rpc_call(descriptor, "evm_mine", [])
+        after = await await_height(last_mined + 1)
 
         async with open_reader(catalog=source, database_dsn=reader_dsn,
                                rpc_url=descriptor["rpcUrl"]) as reader:
-            after = await reader.checkpoint()
             for alias, signature in (
                 ("payment", VOUCHER_SIGNATURE),
                 ("token20", TRANSFER_SIGNATURE),
@@ -347,8 +385,12 @@ async def continuous(descriptor, source_path, rpc_call, *, tokens, writer_dsn, r
                     checkpoint=after, contract=alias, event=signature,
                     where={}, limit=source.limits.max_page_size,
                 )
-                if not page.complete or tuple(event.transaction_hash for event in page.events) != prior_events[alias]:
-                    raise ScenarioFailure("Continuous tip following changed previously indexed contract events.")
+                expected = (
+                    *prior_events[alias],
+                    bytes.fromhex(newly_mined[alias]["transactionHash"][2:]),
+                )
+                if not page.complete or tuple(event.transaction_hash for event in page.events) != expected:
+                    raise ScenarioFailure("Continuous application omitted or duplicated a mined contract event.")
 
         process.send_signal(signal.SIGTERM)
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=12)
@@ -356,7 +398,7 @@ async def continuous(descriptor, source_path, rpc_call, *, tokens, writer_dsn, r
             raise ScenarioFailure("Continuous acceptance did not stop cleanly.")
         if writer_dsn.encode() in stdout + stderr:
             raise ScenarioFailure("Continuous acceptance disclosed a database credential.")
-        print("PASS: continuous Conix preserved PayToPlay, ERC-20 and ERC-721 history.", flush=True)
+        print("PASS: continuous Conix indexed new PayToPlay, ERC-20 and ERC-721 events.", flush=True)
     finally:
         if process is not None and process.returncode is None:
             process.kill()

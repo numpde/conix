@@ -113,8 +113,9 @@ The owned campaign deploys real compiled ERC-20/ERC-721 fixtures before schema
 initialization, indexes a mixed token/payment block, verifies signed PayToPlay
 collections and filtered history, restarts in a fresh process, and exercises
 an Anvil reorganization with manual repair. A final owned phase now launches
-the installed continuous process and verifies later tip arrivals preserve
-all three selected contract histories. That final phase requires its own
+the installed continuous process, mines new PayToPlay/ERC-20/ERC-721
+transactions under that process, and checks the exact independent transaction
+receipts and later tip arrivals through the public Reader. That final phase requires its own
 selected-Engine rerun; GitHub CI only checks its source and admission paths.
 Borrowed-fixture mode runs only the nondestructive baseline.
 

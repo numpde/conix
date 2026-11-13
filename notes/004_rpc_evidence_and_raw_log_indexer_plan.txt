@@ -1450,8 +1450,11 @@ itself handled all T0-7e failure combinations. This acceptance branch adds:
   * test/indexer/acceptance/owned/run: after its existing real dapp32
     exercise/resume/reorg phases, launch the installed continuous 'conix run'
     in a new test-owned runtime tmpfs against the same immutable three-contract
-    source. Follow two later empty blocks and confirm the public Reader still
-    returns the exact prior PayToPlay, ERC-20 and ERC-721 event identities.
+    source. Follow an empty block, then emit a real PayToPlay collection,
+    ERC-20 Transfer and ERC-721 Transfer through the campaign's existing
+    producers while the continuous service runs. Follow a later empty block
+    and confirm that the public Reader preserves the prior event prefix and
+    adds exactly those three independent mined transaction identities.
     Source projection and the confined Compose grant have independent tests.
 
 At candidate revision 6ec83ee39f2a9de2bb118c7a2e66796e02556c08,
