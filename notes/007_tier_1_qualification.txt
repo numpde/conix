@@ -1,0 +1,75 @@
+Conix — Tier 1 qualification and continuation
+============================================
+
+13 November 2026. T1-A selected-Engine qualification recorded before integration.
+This is the authority for Tier 1 revision-bound implementation evidence; Note
+000 governs protected concrete delegation, and Note 004 remains the Tier-0
+source/evidence authority. Note 001 section 4 is historical T1 planning.
+
+T1-A — Bounded selected-read retries
+-------------------------------------
+
+Executable revision: 60ee378a7d26d48ca087ca793d7517e16db53a50.
+Branch before integration: main-tier-1-rpc-reads-20261113.
+Exact-revision GitHub Actions run 43388260483 passed:
+  https://github.com/numpde/conix/actions/runs/43388260483
+  - 165 repository tests;
+  - 128 contained tests, including 2 expected skips;
+  - offline installed-image and private staging qualifications.
+
+The operator separately reports a successful selected-Engine run at the
+identical executable revision, on fw / Linux amd64 / rootless Docker context
+agentic: 128 contained tests (2 expected skips), including the real delegated
+RPC -> Writer.advance_one -> PostgreSQL Journal.publish_block witness. The
+owned disposable database, RPC and test resources were retired successfully.
+The local checkout was clean; main was unchanged before integration.
+
+Private revision-bound operator evidence (not a required build/source input):
+  /home/ra/repos/conix/out/qualification/
+    60ee378a7d26d48ca087ca793d7517e16db53a50/t1-a.json
+
+The operator supplied the evidence location and stated results; this review
+independently verified the matching GitHub commit and CI but did not access
+the private host-local JSON. Do not treat the CI runner as a rootless proof.
+
+Exact delegation:
+  conix.resilience.rpc_retry.run_with_read_retries
+    -> original conix.app.run with optional writer_session
+      -> original core.open_writer and source admission/exclusive journal
+        -> original Writer.advance_one
+          -> RetryingRPC.call
+            -> original bounded RPC.call
+        -> original Journal.publish_block.
+The normal Python CLI 'conix run' retains the unextended Tier-0 session.
+No additional HTTP client, evidence parser, scanner, publisher, tip scheduler
+or automatic COMMIT replay exists. Three total attempts are permitted only
+for selected block/header and pinned-log reads on reviewed transient
+connection/read failure causes, before the original absolute deadline.
+Unclassified provider failures, protocol issues, branch conflicts, database
+errors and expired work fail closed. Cancellation propagates.
+
+Limitations: qualifying this opt-in library composition does NOT activate
+Tier 1 inside any deployed service, qualify arbitrary public RPC providers,
+establish unattended recovery, prove long-term/finality safety, or authorize
+automatic reorganization repair. Tier 1-B/C/D need independent behavior and
+selected-Engine evidence. The old main-tier-1 branch's standalone follow()
+loop is obsolete; it duplicates normal Tier-0 tip scheduling and is not
+a basis for new Tier-1 supervision.
+
+T1-B — Next independent slice
+-----------------------------
+
+Session supervision must invoke the SAME Tier-0 application (optionally
+composed with T1-A), await full session termination and owned-resource
+retirement, then start a NEW application session for specifically classified
+recoverable failures. Preserve source identity, PostgreSQL durable progress,
+request deadlines and cancellation. No second tip scheduler, alternate
+journal/repair algorithm or external progress registry. Never mistake
+RpcUnavailable as necessarily transient; it also represents provider
+rejection and expired work. COMMIT uncertainty and blocked history remain
+manual until independently qualified safe recovery in later slices.
+
+Qualify with explicit RED/GREEN behavioral cases and a contained Anvil/
+PostgreSQL witness of real core execution, including no restart after
+cancellation, permanent errors and unconfirmed retirement. Rootless
+selected-Engine and deployed-supervisor tests are distinct further gates.

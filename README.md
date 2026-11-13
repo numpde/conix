@@ -285,8 +285,8 @@ inspection. Inspect those records before explicitly retiring stale resources;
 the next run never silently adopts or deletes them.
 
 
-Tier 1-A candidate: bounded selected-read retry
-------------------------------------------------
+Tier 1-A: bounded selected-read retry
+-------------------------------------
 The optional Tier-1 composition is `conix.resilience.rpc_retry.run_with_read_retries`.
 It delegates to the SAME `conix.app.run` catch-up, tip-following and
 writer-retirement loop, supplying a single selected `writer_session` factory.
@@ -318,5 +318,9 @@ Ordinary `python -I -m conix run` and existing deployed Make lifecycle
 keep the original Tier-0 default. T1-A is an explicit candidate composition,
 not a deployed service, T1-B supervisor, automatic repair or runtime
 policy switch. The contained tests qualify delegated calls, real Tier-0
-scanner/journal publication, deadlines and cancellation. Selected rootless
-Engine qualification and unattended fault recovery are separate gates.
+scanner/journal publication, deadlines and cancellation. The opt-in
+composition passed selected-Engine tests on fw / rootless agentic at
+60ee378a7d26d48ca087ca793d7517e16db53a50, including 128 tests
+(2 expected skips) and confirmed owned-resource cleanup. Note 007 records
+the qualification, evidence location and limits. This is NOT qualification
+of a deployed Tier-1 service or unattended recovery.
