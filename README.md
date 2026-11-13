@@ -277,15 +277,25 @@ consumer deployments on other hosts.
 
 ### Optional Tier 1 resilience
 
-The default `conix run` remains the Tier 0 application. Two opt-in Python
-compositions are available: `conix.resilience.rpc_retry.run_with_read_retries`
+The default `conix run` remains the Tier 0 application. Opt-in Python
+compositions include: `conix.resilience.rpc_retry.run_with_read_retries`
 adds bounded selected-read retries; `conix.resilience.supervisor.supervise`
 adds at most two fresh application sessions after classified connection/read
 failures, once the previous writer and HTTP session have retired.
 
 Provider rejection, malformed or contradictory evidence, SQL failures and
-uncertain COMMIT outcomes do not grant a restart. There is no automatic
+uncertain COMMIT outcomes do not grant a restart. T1-B alone adds no automatic
 reorganization repair or production deployment change. T1-B passed 141
 contained tests (2 expected skips) on fw/rootless agentic at `455ecfd`.
+
+The opt-in `conix.resilience.reorg.supervise_with_reorg_recovery` composition
+adds bounded canonical-ancestor selection and checked reorganization repair.
+It revalidates the ancestor, stored-tip conflict and durable basis, invokes
+the original repair, then restarts the ordinary supervised application.
+Unrelated operator holds, unavailable evidence and uncertain COMMIT do not
+authorize repair. C1 and C2 passed selected-rootless qualification at their
+recorded revisions. This does not enable recovery in the default CLI or
+qualify unattended T1-D operation.
+
 [Note 007](notes/007_tier_1_qualification.txt) records policies, exact revisions,
 CI evidence and qualification limits.

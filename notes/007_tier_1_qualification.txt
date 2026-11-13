@@ -1,7 +1,7 @@
 Conix — Tier 1 qualification and continuation
 ============================================
 
-13 November 2026. T1-A and T1-B selected-Engine evidence recorded before integration.
+13 November 2026. Tier 1 selected-Engine evidence recorded before integration.
 This is the authority for Tier 1 revision-bound implementation evidence; Note
 000 governs protected concrete delegation, and Note 004 remains the Tier-0
 source/evidence authority. Note 001 section 4 is historical T1 planning.
@@ -254,8 +254,47 @@ the original app.run responsibility.
 
 The upstream canonical branch cannot be frozen across RPC and SQL; this
 is provider-relative revalidation, not an independent consensus or
-finality proof. Actual rootless fw/agentic qualification of T1-C2 remains
-OPEN, independently of the fully qualified T1-C1 revision. The local
-qualification receipt for T1-C2 cannot be declared until that run succeeds.
+finality proof. At that hosted qualification stage, rootless fw/agentic qualification
+of T1-C2 remained open. The selected-Engine result is recorded separately
+below; it does not change the scope of the hosted result.
 No merge, branch retirement, external deployment or production activation
 is claimed by these hosted results.
+
+
+T1-C selected-Engine qualification and integration (2026-11-13)
+---------------------------------------------------------------
+
+Original C1 record preserved:
+  d6dab3179cb120e621ac1cfafd1c1bde0564e537
+  fw/rootless agentic: 189 repository checks, 6 input checks,
+  152 contained tests with 2 expected skips, all 8 C1 tests including
+  genuine multi-block Anvil ancestor selection without journal mutation.
+  out/qualification/d6dab3179cb120e621ac1cfafd1c1bde0564e537/t1-c1.json
+
+Original C2 record preserved:
+  71fc4ccbb1a601a5a9c2b10028e8878e1ff0d5fe
+  fw/rootless agentic: 189 repository checks, 6 input checks,
+  177 contained tests with 2 expected skips. Real replacement-event
+  recovery, old-generation Reader rejection, explicit persisted-marker
+  recovery and unrelated operator-hold guards passed. Owned fixture
+  containers, database volume and network were retired successfully.
+  out/qualification/71fc4ccbb1a601a5a9c2b10028e8878e1ff0d5fe/t1-c2.json
+
+Both runs used the selected local Unix Engine endpoint:
+  unix:///run/user/1000/docker-engines/agentic/docker.sock
+The private receipts above remain unchanged; they are evidence, not
+required source/build inputs. Matching hosted CI results are recorded in
+the preceding C1/C2 sections and are supplementary to these local runs.
+
+Integration reconciles main's README-only change at 2c033d0. It changes
+README and this record relative to qualified C2 executable inputs. The
+final integration diff receives independent review and its exact committed
+revision must pass repository/input checks and the contained suite locally
+before main advances. Reconciled results are recorded separately under
+out/qualification/<integration-revision>/integration.json; exact-head CI on
+main and merged-branch retirement are recorded there after integration.
+
+The existing opt-in mechanism remains bounded and provider-relative.
+No T1-C feature expansion, default CLI activation, production deployment or
+T1-D work is included. Explicit reorganization markers remain distinct
+from unrelated operator holds; Tier 0 does not automatically persist them.
