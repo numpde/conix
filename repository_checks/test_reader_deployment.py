@@ -1,6 +1,9 @@
 """A named Reader check may only use an isolated, fully owned one-shot client."""
 
 import copy
+import subprocess
+import sys
+import textwrap
 from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO
 import json
@@ -68,6 +71,42 @@ def container():
 
 
 class NamedReaderCheckContracts(unittest.TestCase):
+    def test_sigterm_runs_owned_cleanup_and_restores_previous_handler(self):
+        """An actual terminating host signal must pass through Reader retirement."""
+        script = textwrap.dedent("""            import os, signal
+            from unittest.mock import Mock, patch
+            from repository_checks.test_reader_deployment import graph, IMAGE, VOLUME, TOKEN
+            from tools.containers import reader_deployment as reader
+            docker = Mock()
+            docker.docker_environment = {}
+            previous = signal.getsignal(signal.SIGTERM)
+            def interrupted(*args):
+                os.kill(os.getpid(), signal.SIGTERM)
+            try:
+                with (
+                    patch.object(reader, '_admit_volume'),
+                    patch.object(reader, '_admit_network'),
+                    patch.object(reader, 'admit_graph'),
+                    patch.object(reader.json, 'loads', return_value=graph()),
+                    patch.object(reader, '_check_candidates', return_value=[]) as candidates,
+                    patch.object(reader, '_run_reader', side_effect=interrupted),
+                ):
+                    reader.check(docker, name='pilot', image=IMAGE, volume=VOLUME,
+                                 database='db-conix', rpc='rpc-conix')
+            except KeyboardInterrupt:
+                assert candidates.call_count == 3
+                assert signal.getsignal(signal.SIGTERM) == previous
+                print('owned-cleanup-confirmed')
+            else:
+                raise AssertionError('Reader did not propagate interruption')
+        """)
+        result = subprocess.run(
+            [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("owned-cleanup-confirmed", result.stdout)
+
     def test_reader_failure_record_reaches_host_without_private_stderr(self):
         """A real check failure retains its admitted phase, type, location and exit."""
         temporary_receipt = tempfile.mkstemp

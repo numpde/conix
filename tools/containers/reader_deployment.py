@@ -7,10 +7,12 @@ bridges without acquiring or owning either network. Each check owns only its
 uniquely identified ephemeral container and retires it after admission.
 """
 
+from contextlib import contextmanager
 import json
 import os
 import re
 import secrets
+import signal
 import sys
 import subprocess
 import tempfile
@@ -149,6 +151,20 @@ def _run_reader(docker, arguments, environment):
     return result.stdout
 
 
+@contextmanager
+def _interrupt_on_sigterm():
+    """Route host termination through owned cleanup, then restore the caller's handler."""
+    def interrupted(_signum, _frame):
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGTERM, interrupted)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+@_interrupt_on_sigterm()
 def check(docker, *, name, image, volume, database, rpc):
     """Check the actual Reader role/source, then retire only owned check work."""
     if IMAGE_ID.fullmatch(image or "") is None or VOLUME_NAME.fullmatch(volume or "") is None:
