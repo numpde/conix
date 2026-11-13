@@ -17,6 +17,7 @@ import psycopg
 from psycopg import AsyncConnection
 
 from anvil_catalog import catalog_for_anvil
+from pg_commit_reply import without_commit_reply
 from conix import app
 from conix.core import BranchConflict
 from conix.journal import (
@@ -343,6 +344,66 @@ class RealPostgreSQLDisconnectionContracts(unittest.IsolatedAsyncioTestCase):
             (before[0] + 1) if before[0] is not None else catalog.chain.start_block,
             height + 1,
         )))
+
+
+
+    async def test_real_lost_commit_reply_does_not_authorize_automatic_restart(self):
+        """An actual server-side COMMIT with a dropped reply remains T1-D2 work."""
+        url = os.environ["CONIX_TEST_ANVIL_URL"]
+        dsn = os.environ["CONIX_TEST_ANVIL_DSN"]
+        reader_dsn = os.environ["CONIX_TEST_ANVIL_READ_DSN"]
+
+        async with httpx.AsyncClient(trust_env=False, timeout=5) as http:
+            async def chain(method, params):
+                reply = await http.post(
+                    url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+                )
+                reply.raise_for_status()
+                value = reply.json()
+                self.assertNotIn("error", value)
+                return value["result"]
+
+            genesis = await chain("eth_getBlockByNumber", ["0x0", False])
+            catalog = catalog_for_anvil(genesis_hash=genesis["hash"], rpc_url=url)
+            await chain("evm_mine", [])
+            height = int((await chain("eth_getBlockByNumber", ["latest", False]))["number"], 16)
+
+        async def progress():
+            async with await AsyncConnection.connect(reader_dsn, connect_timeout=5) as sql:
+                return await (await sql.execute(
+                    "SELECT last_block, generation, revision, blocked_reason "
+                    "FROM conix.source_progress WHERE singleton = 1"
+                )).fetchone()
+
+        before = await progress()
+        self.assertTrue(before[0] is None or before[0] < height)
+        sessions = []
+        original = database.supervise_with_reorg_recovery
+
+        async def observed(*args):
+            sessions.append(True)
+            return await original(*args)
+
+        async with asyncio.timeout(25), without_commit_reply(dsn) as (relay_dsn, completed):
+            with patch.object(database, "supervise_with_reorg_recovery", observed):
+                with self.assertRaises(CommitOutcomeUnknown):
+                    await database.supervise_with_database_recovery(
+                        catalog, relay_dsn, asyncio.Event(),
+                    )
+            await completed
+
+        self.assertEqual(sessions, [True], "Unknown COMMIT triggered another application.")
+        after = await progress()
+        self.assertEqual(after[0], height)
+        self.assertEqual(after[1], before[1], "Normal publication changed generation.")
+        self.assertEqual(after[2], before[2] + 1)
+        self.assertIsNone(after[3])
+        async with await AsyncConnection.connect(reader_dsn, connect_timeout=5) as sql:
+            row = await (await sql.execute(
+                "SELECT count(*) FROM conix.blocks WHERE number = %s", (height,),
+            )).fetchone()
+        self.assertEqual(row, (1,), "The original COMMIT must be the only publication.")
+
 
 
 if __name__ == "__main__":
