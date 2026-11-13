@@ -358,8 +358,9 @@ replay of the previous SQL mutation, shared mutable connection, alternative
 scanner, extra PostgreSQL registry, new configuration or retry policy in
 the Tier-0 entrypoint. The combined wrapper is optional.
 
-The classification is deliberately finite: psycopg OperationalError
-causes with selected connection/shutdown SQLSTATEs (08000, 08001, 08003,
+Historical classification at ec6ab83, superseded by the P2 correction
+below: psycopg OperationalError causes with selected connection/shutdown
+SQLSTATEs (08000, 08001, 08003,
 08006, 57P01, 57P02, 57P03) or no server-provided SQLSTATE are eligible
 for at most two new application sessions. The no-SQLSTATE case cannot
 independently prove why libpq failed; it is an operational restart
@@ -377,3 +378,53 @@ proven; a full PostgreSQL server/process restart and arbitrary network
 failures are not separately demonstrated. No automatic unknown-COMMIT
 reconciliation (T1-D2), cross-process orchestration, production activation
 or integration into main is claimed.
+
+
+T1-D1 P2 — SQLSTATE-free authentication failure incorrectly restarted
+---------------------------------------------------------------------
+
+The operator's independent review of ec6ab83f6ef8d1fa9e3d06ab56ef1b2def24d1ee
+on fw/rootless agentic reproduced a P2: an actual wrong-password PostgreSQL
+login raised psycopg.OperationalError with sqlstate=None; the old classifier
+allowed two further application attempts (three total). The earlier local
+suite otherwise passed 189 repository checks, 6 input checks and 186
+contained tests with two expected skips, with owned fixture cleanup
+confirmed. Its revision-bound review is at
+out/qualification/ec6ab83f6ef8d1fa9e3d06ab56ef1b2def24d1ee/t1-d1-review.json.
+Those results did NOT qualify the original recovery policy for integration.
+
+Behavioral RED committed at e54e4ccd583e95dbe6cdc16d6903bd60bbe35482:
+  https://github.com/numpde/conix/actions/runs/43501142061
+The unchanged implementation failed two regressions: a real invalid
+PostgreSQL password retried instead of refusing after one invocation,
+and an unclassified constructed OperationalError(None) was granted
+restart authority. 189 host tests passed; 187 contained tests ran with
+two failures and two expected skips.
+
+Correction: SQLSTATE absence provides NO admissible evidence of a
+connection-only failure. The classifier now requires one of the existing
+explicitly selected connection/shutdown SQLSTATEs (08000, 08001, 08003,
+08006, 57P01, 57P02, 57P03). It does not parse exception messages or infer
+transience from a psycopg.OperationalError class alone. The unit-positive
+fixtures were corrected to generate explicit structured connection
+exceptions, rather than claiming no-SQLSTATE errors were safe. The
+original Tier-0 journal, source admission, and COMMIT uncertainty fencing
+are unchanged.
+
+Corrected executable/test revision:
+  1a963734af370f3bcf3298e2cff8275ec3b95dd8
+  https://github.com/numpde/conix/actions/runs/43501364393
+Hosted CI passed 189 host repository tests, 187 contained tests (two
+expected skips), including actual wrong-password refusal with exactly
+one application invocation, the original real-backend-termination
+recovery, actual lost-COMMIT-response exclusion, and confirmed
+disposable network/volume retirement.
+
+This deliberately reduces automatic recovery coverage: libpq transport
+failures with no SQLSTATE must now stop for operator action, even when
+they are genuinely transient. Re-admitting those cases would require
+independently established transport provenance and a new behavioral
+qualification, not guessed authentication-vs-network exception text.
+The corrected executable has NOT yet been qualified on fw/rootless
+agentic or approved for integration. There was no change to main, no
+T1-D2 uncertain-COMMIT reconciliation, and no production activation.
