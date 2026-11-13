@@ -287,5 +287,10 @@ Provider rejection, malformed or contradictory evidence, SQL failures and
 uncertain COMMIT outcomes do not grant a restart. There is no automatic
 reorganization repair or production deployment change. T1-B passed 141
 contained tests (2 expected skips) on fw/rootless agentic at `455ecfd`.
+
+The unmerged `main-tier-1-reorg-ancestor-20261113` branch implements bounded
+canonical-ancestor selection without repair. Selected-rootless-Engine
+qualification and integration remain open.
+
 [Note 007](notes/007_tier_1_qualification.txt) records policies, exact revisions,
 CI evidence and qualification limits.
