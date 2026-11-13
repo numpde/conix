@@ -14,10 +14,12 @@ from conix.journal import StorageUnavailable
 from conix.resilience.reorg import supervise_with_reorg_recovery
 
 
-# Conservative PostgreSQL transport and shutdown errors. Never retry an
-# unknown transaction resolution (08007), protocol violation (08P01),
-# authentication/permission/schema errors, serialization or SQL deadlocks.
-# A libpq disconnect may have no SQLSTATE because the server reply was lost.
+# Admit only explicit PostgreSQL connection/shutdown SQLSTATEs. A missing
+# SQLSTATE is NOT transport evidence: even real wrong-password authentication
+# failures can arrive as generic psycopg.OperationalError with sqlstate=None.
+# Unknown transaction resolution (08007), protocol violation (08P01),
+# authentication/permission/schema errors and other unclassified failures
+# must not grant another application session.
 _DISCONNECT_SQLSTATES = frozenset({
     "08000", "08001", "08003", "08006",
     "57P01", "57P02", "57P03",
@@ -33,7 +35,7 @@ def is_restartable_database_failure(failure):
     cause = failure.__cause__
     if not isinstance(cause, psycopg.OperationalError):
         return False
-    return cause.sqlstate is None or cause.sqlstate in _DISCONNECT_SQLSTATES
+    return cause.sqlstate in _DISCONNECT_SQLSTATES
 
 
 async def supervise_with_database_recovery(catalog, database_dsn, stop):
