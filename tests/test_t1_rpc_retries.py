@@ -219,7 +219,7 @@ class RetryingReadContracts(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(pinned_filters), 2)
         self.assertEqual(pinned_filters[0], pinned_filters[1])
         self.assertEqual(
-            pinned_filters[0][0][0]["blockHash"],
+            pinned_filters[0][0]["blockHash"],
             "0x" + "11" * 32,
         )
 
