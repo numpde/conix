@@ -176,6 +176,23 @@ class ReorganizationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.observed, [])
         self.writer.repair_to.assert_not_awaited()
 
+    async def test_unrelated_operator_hold_cannot_be_repaired_even_if_chain_forked(self):
+        """An actual fork cannot clear a separate intervention-required SQL hold."""
+        self.journal.basis = replace(
+            self.basis, blocked_reason="uncertain SQL publication: inspect before release",
+        )
+        self.journal.retained_ancestry.return_value = RetainedAncestry(
+            self.journal.basis, self.blocks,
+        )
+        self.journal.inspect.return_value = self.journal.basis
+        self.set_observations({
+            9: [self.conflict, self.conflict],
+            8: [block(8), block(8)],
+        })
+        self.assertIsNone(await self.invoke(blocked_only=True))
+        self.writer.repair_to.assert_not_awaited()
+        self.assertEqual(self.observed, [])
+
     async def test_blocked_but_canonical_history_is_not_silently_cleared(self):
         self.journal.basis = replace(self.basis, blocked_reason="manual inspection")
         self.journal.retained_ancestry.return_value = RetainedAncestry(
