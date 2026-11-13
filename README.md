@@ -267,10 +267,12 @@ The implemented consumer interface is a Python API providing `checkpoint()`, `ev
 
 The current indexer records selected raw contract logs, transaction identifiers, and block headers. Full transaction/receipt acquisition, broader query capabilities, and an HTTP API should not be assumed to exist merely because they are possible end-state extensions.
 
-Named Reader preparation and admission are provided by the separate
-`deployment/reader/*` operator commands. Reader consumers still own
-their own application process; Conix does not publish a Reader HTTP service
-or manage deployments on other Docker Engines.
+Named Reader preparation, connection checks, status and removal are provided
+by the `deployment/reader/*` operator commands. They reuse the named source
+configuration and prepare a separate Reader input volume and read-only
+credential. Reader consumers own their application processes on the same
+Docker Engine; Conix does not publish a Reader HTTP service or manage
+consumer deployments on other hosts.
 
 
 ### Optional Tier 1 resilience
