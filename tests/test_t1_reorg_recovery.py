@@ -213,7 +213,9 @@ class ReorganizationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.observed, [])
 
     async def test_blocked_but_canonical_history_is_not_silently_cleared(self):
-        self.journal.basis = replace(self.basis, blocked_reason="manual inspection")
+        self.journal.basis = replace(
+            self.basis, blocked_reason=REORGANIZATION_BLOCKED_REASON,
+        )
         self.journal.retained_ancestry.return_value = RetainedAncestry(
             self.journal.basis, self.blocks,
         )
