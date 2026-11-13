@@ -123,7 +123,8 @@ class ReorganizationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
             9: [self.conflict, block(9)],
             8: [block(8), block(8)],
         })
-        self.assertFalse(await self.invoke())
+        self.assertIs(await self.invoke(), False)
+        self.assertEqual([height for height, _ in self.observed], [9, 8, 8, 9])
         self.writer.repair_to.assert_not_awaited()
 
     async def test_ancestor_changed_after_selection_refuses_repair(self):
@@ -221,7 +222,8 @@ class ReorganizationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
         )
         self.journal.inspect.return_value = self.journal.basis
         self.set_observations({9: [block(9)]})
-        self.assertFalse(await self.invoke(blocked_only=True))
+        self.assertIs(await self.invoke(blocked_only=True), False)
+        self.assertEqual([height for height, _ in self.observed], [9])
         self.writer.repair_to.assert_not_awaited()
 
     async def test_stop_or_cancellation_cannot_turn_selection_into_mutation(self):
