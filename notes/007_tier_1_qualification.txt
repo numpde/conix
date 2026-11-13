@@ -298,3 +298,82 @@ The existing opt-in mechanism remains bounded and provider-relative.
 No T1-C feature expansion, default CLI activation, production deployment or
 T1-D work is included. Explicit reorganization markers remain distinct
 from unrelated operator holds; Tier 0 does not automatically persist them.
+
+
+T1-D1 — Opt-in bounded PostgreSQL disconnection recovery (2026-11-13)
+--------------------------------------------------------------------
+
+Branch: main-tier-1-database-disconnect-20261113, unmerged.
+Base: main@f6386378cfa4ef9fcdbf37f7e40d961e02f8cfa7.
+No default conix run, T1-A/B/C, owner/schema, journal mutation, Reader,
+Make operator or deployment activation change.
+
+The test-first baseline at 138c2d61cc0596bb7d9d924662edd81eb3982616
+provided a real pass-through to the existing T1-C supervisor, not a
+missing import. The behavior RED at
+5f394ad14e610e474f3c2e31a3515b5aa80dfe2c:
+  https://github.com/numpde/conix/actions/runs/43496707663
+189 host repository checks passed. The contained test terminated the real
+PostgreSQL writer backend via pg_terminate_backend while the original app
+was acquiring actual selected Anvil logs. On resumption it received
+psycopg.errors.AdminShutdown at the original journal's BEGIN and the
+unmodified supervision path exited with StorageUnavailable rather than
+starting another application. 185 contained tests ran, 2 expected skips;
+the intended recovery behavior and budget tests failed. This is a
+behavioral RED, not a ModuleNotFoundError.
+
+The first GREEN implementation at
+5dfc10b0a6f20132241aa45ba5801da0451eb141:
+  https://github.com/numpde/conix/actions/runs/43496859590
+passed 189 host repository checks and 185 contained tests, including the
+same real PostgreSQL interruption and recovery (2 expected skips).
+The SQLSTATE exclusion matrix was expanded at
+9e25af11c6f60e643f8725bfe1895e68fbb79bc2:
+  https://github.com/numpde/conix/actions/runs/43497491341
+to exclude transaction resolution unknown (08007), protocol violation
+(08P01), query cancellation, serialization conflicts, authentication,
+schema and SQL constraints, in addition to the separate
+CommitOutcomeUnknown application exception.
+
+Final executable/test revision:
+  0ae46b98937db87c531f7a85717c63f7ccfd5364
+  https://github.com/numpde/conix/actions/runs/43497867068
+Hosted checks: 189 repository tests, 186 contained tests (2 expected
+skips), installed Python image qualification and disposable-resource
+retirement. The extra actual PostgreSQL wire-reply test withheld
+COMMIT completion *after the server committed*. The original journal
+raised CommitOutcomeUnknown, T1-D1 did not start another application,
+and exactly one new block existed in the durable database.
+
+Concrete opt-in composition:
+  conix.resilience.database.supervise_with_database_recovery
+    -> existing T1-C supervise_with_reorg_recovery
+      -> existing T1-B supervise / T1-A bounded selected reads
+        -> original Tier-0 app.run / core.open_writer / Journal
+    -> on classified StorageUnavailable ONLY after full prior retirement,
+       wait 100 or 200 ms and invoke the SAME T1-C composition fresh.
+A fresh original writer/session/source check selects its durable basis,
+and only the original complete-block journal can publish. There is no
+replay of the previous SQL mutation, shared mutable connection, alternative
+scanner, extra PostgreSQL registry, new configuration or retry policy in
+the Tier-0 entrypoint. The combined wrapper is optional.
+
+The classification is deliberately finite: psycopg OperationalError
+causes with selected connection/shutdown SQLSTATEs (08000, 08001, 08003,
+08006, 57P01, 57P02, 57P03) or no server-provided SQLSTATE are eligible
+for at most two new application sessions. The no-SQLSTATE case cannot
+independently prove why libpq failed; it is an operational restart
+candidate, never a proof of durable mutation outcome. The original
+connection/source/journal admission still runs on every attempt.
+SQLSTATE 08007/08P01 and all unclassified StorageUnavailable cases are
+excluded; an unanswered COMMIT always remains CommitOutcomeUnknown.
+Retirement failure, stop, cancellation, provider/branch errors and
+operator-held blocked history do not grant database restart.
+
+These are GitHub-hosted rootful container qualifications, not a selected
+fw/rootless agentic runtime result. T1-D1 rootless qualification and
+independent operator review remain OPEN. A real backend termination is
+proven; a full PostgreSQL server/process restart and arbitrary network
+failures are not separately demonstrated. No automatic unknown-COMMIT
+reconciliation (T1-D2), cross-process orchestration, production activation
+or integration into main is claimed.
