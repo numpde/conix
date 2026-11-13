@@ -115,6 +115,17 @@ def inspect_prepared(name):
     return PreparedView(image=record["image"], volume=record["volume"])
 
 
+def inspect_reader_prepared(name):
+    """Expose only the Reader's admitted image/volume for acceptance consumers."""
+    folder = _directory(name)
+    _owned_directory(folder)
+    lock = folder / READER_LOCK_FILE
+    if not lock.exists() and not lock.is_symlink():
+        return None
+    receipt = _reader_lock(Declaration(name=name, docker_context=""))
+    return PreparedView(image=receipt["image"], volume=receipt["volume"])
+
+
 def clear_prepared(name, *, expected_volume):
     """Forget a prepared selection only after its exact volume was retired.
 
@@ -556,7 +567,8 @@ def reader_remove(name, docker):
     """Retire only the Reader's exact volume; preserve its lock on refusal."""
     with _locked(name):
         receipt = _reader_lock(Declaration(name=name, docker_context=""))
-        docker.require_rootless_engine()
+        # Recovery must work on the same selected Engine used for preparation,
+        # even when its daemon is not eligible to start a Reader process.
         docker.remove_inputs(receipt["volume"])
         (_directory(name) / READER_LOCK_FILE).unlink()
         print(f"Retired Reader input snapshot for deployment {name}; indexer unchanged.")

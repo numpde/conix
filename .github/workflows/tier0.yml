@@ -2,7 +2,7 @@ name: conix Tier 0 checks
 
 on:
   push:
-    branches: [main, 'main-tier-0-7-*-20261112', 'main-tier-1-*', 'main-reader-*']
+    branches: [main, 'main-tier-0-7-*-20261112', 'main-tier-1-*']
   pull_request:
 
 permissions:
@@ -84,3 +84,11 @@ jobs:
           install -m 600 "$owner" config/deployments/ci/secrets/owner.dsn
           make deployment/prepare DEPLOYMENT=ci
           make deployment/config/check DEPLOYMENT=ci
+          # Prepare a separate Reader snapshot from the same named source.
+          # Only the Reader DSN differs; CI's rootful Engine cannot activate
+          # a production Reader and never contacts external SQL/RPC services.
+          (umask 077; printf '%s\n' 'postgresql://conix_reader:disposable@postgres:5432/conix_test' > "$candidate/reader.dsn")
+          install -m 600 "$candidate/reader.dsn" config/deployments/ci/secrets/reader.dsn
+          make deployment/reader/prepare DEPLOYMENT=ci
+          make deployment/reader/status DEPLOYMENT=ci
+          make deployment/reader/remove DEPLOYMENT=ci
