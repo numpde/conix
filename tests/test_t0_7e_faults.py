@@ -18,6 +18,7 @@ import httpx
 from psycopg import AsyncConnection
 
 from anvil_catalog import FIXTURES, source_toml_for_anvil
+from pg_commit_reply import without_commit_reply
 
 
 class FaultRelay:
@@ -327,6 +328,47 @@ class InstalledTier07FaultAcceptance(unittest.IsolatedAsyncioTestCase):
         recovered = await self.start()
         await self.reach(recovered, height)
         await self.stop(recovered)
+        self.assertEqual(await self.event_count(transaction), 1)
+
+    async def test_uncertain_postgresql_commit_reconciles_on_explicit_restart(self):
+        """Lose a real COMMIT reply while the installed CLI publishes one block."""
+        _, initial = await self.baseline()
+        transaction, height = await self.emit_transfer()
+        credential_file = self.target / "connection.dsn"
+
+        try:
+            async with asyncio.timeout(20), without_commit_reply(self.dsn) as (relay_dsn, dropped):
+                credential_file.write_text(relay_dsn + "\n")
+                credential_file.chmod(0o600)
+
+                active = await self.start()
+                stdout, stderr = await asyncio.wait_for(active.communicate(), timeout=12)
+                self.assertNotEqual(active.returncode, 0)
+                self.assertIn(b"COMMIT", stderr)
+                self.assertNotIn(self.dsn.encode(), stdout + stderr)
+                self.assertNotIn(b'"block_number": ' + str(height).encode(), stdout)
+                await dropped
+        finally:
+            credential_file.write_text(self.dsn + "\n")
+            credential_file.chmod(0o600)
+
+        # Lost response does not establish an uncommitted transaction. Read
+        # actual PostgreSQL before making another write attempt.
+        observed = await self.progress()
+        self.assertIn(observed[0], (initial[0], height))
+        self.assertEqual(
+            await self.event_count(transaction),
+            0 if observed[0] == initial[0] else 1,
+        )
+        self.assertIsNone(observed[3])
+
+        # No replay-specific code path: a NEW ordinary application instance
+        # must consult the persisted checkpoint and finish without duplicates.
+        self.relay.verified.clear()
+        restarted = await self.start()
+        await asyncio.wait_for(self.relay.verified.wait(), timeout=10)
+        await self.reach(restarted, height)
+        await self.stop(restarted)
         self.assertEqual(await self.event_count(transaction), 1)
 
     async def test_detect_reorganization_then_explicitly_repair_and_resume(self):
