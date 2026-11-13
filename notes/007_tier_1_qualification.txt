@@ -56,20 +56,56 @@ selected-Engine evidence. The old main-tier-1 branch's standalone follow()
 loop is obsolete; it duplicates normal Tier-0 tip scheduling and is not
 a basis for new Tier-1 supervision.
 
-T1-B — Next independent slice
------------------------------
+T1-B — Session supervisor candidate (separate slice)
+-------------------------------------------------------
 
-Session supervision must invoke the SAME Tier-0 application (optionally
-composed with T1-A), await full session termination and owned-resource
-retirement, then start a NEW application session for specifically classified
-recoverable failures. Preserve source identity, PostgreSQL durable progress,
-request deadlines and cancellation. No second tip scheduler, alternate
-journal/repair algorithm or external progress registry. Never mistake
-RpcUnavailable as necessarily transient; it also represents provider
-rejection and expired work. COMMIT uncertainty and blocked history remain
-manual until independently qualified safe recovery in later slices.
+Executable revision: f9d6941bcc6325e6ee5e052361d4ac3aa8634685.
+Independent branch: main-tier-1-session-supervisor-20261113, based on
+T1-A integration 6cb47b6c65294ca2b4280b8497569b23e4631e53.
+RED contained run 43415249992 failed importing the absent supervisor.
+GREEN repository/contained CI at exact executable revision:
+  https://github.com/numpde/conix/actions/runs/43416086583
+  - 165 repository tests;
+  - 141 contained tests with 2 expected skips;
+  - offline image/input preparation and prospective deployment checks.
 
-Qualify with explicit RED/GREEN behavioral cases and a contained Anvil/
-PostgreSQL witness of real core execution, including no restart after
-cancellation, permanent errors and unconfirmed retirement. Rootless
-selected-Engine and deployed-supervisor tests are distinct further gates.
+Runtime composition:
+  conix.resilience.supervisor.supervise(catalog, database_dsn, stop)
+    -> conix.resilience.rpc_retry.run_with_read_retries(...)
+      -> ORIGINAL conix.app.run(...)
+        -> original core.open_writer / source identity and journal lock
+          -> original Writer.advance_one / RPC.call / Journal.publish_block.
+No new normal block loop, transport, journal, scanner, reader, source-specific
+algorithm, database progress registry, repair or external process orchestrator.
+The supervisor controls only when to RESTART this complete application call.
+
+Policy: only a caught RpcUnavailable with a ConnectError, ConnectTimeout,
+ReadError or ReadTimeout as its explicit cause is restartable. These are
+shared with T1-A's read classification; a TimeoutError from a single read
+can be retried inside its ORIGINAL T1-A deadline but may NOT restart the
+whole application when that deadline might be exhausted. Provider
+rejections, missing evidence, source/schema/branch conflicts, SQL
+unavailability, uncertain COMMIT and unconfirmed retirement remain errors.
+Two bounded restarts with 100 ms and 200 ms cancellable waits are allowed.
+The original error is re-raised on exhaustion or a concurrent stop.
+Cancellation propagates and cannot admit a subsequent session.
+
+Contained witness: injected THREE selected-log transport failures into
+the original RPC.call at one real Anvil block. T1-A exhausted its attempt
+budget; the previous original app.run/open_writer retired its SQL
+connection before T1-B invoked the same application in a fresh session.
+Observed original Journal.publish_block and retained source ID, block
+progress and history generation through independent SELECT-only SQL.
+Negative tests include provider HTTP rejections, unknown COMMIT, blocked
+history, request/deadline timeout, cancellation during active work and
+backoff, and failed retirement. All tests use existing disposable sources.
+
+Limits: this is an opt-in in-process APPLICATION SESSION supervisor,
+not a deployed supervisor, child-process manager, generalized SQL retry
+policy, automatic reorganization repair, or durable multi-process leader
+election. GitHub-hosted CI is NOT the selected rootless Engine. T1-B
+requires a revision-bound test/indexer/run on fw/rootless agentic, plus
+independent review, before integration. Tier 1-C/D still own checked
+reorganization automation and broader unattended recovery, including
+PostgreSQL restarts and unknown COMMIT reconciliation. Nothing is merged
+from the old main-tier-1 branch, whose follow() loop duplicated Tier 0.

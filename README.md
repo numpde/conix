@@ -324,3 +324,28 @@ composition passed selected-Engine tests on fw / rootless agentic at
 (2 expected skips) and confirmed owned-resource cleanup. Note 007 records
 the qualification, evidence location and limits. This is NOT qualification
 of a deployed Tier-1 service or unattended recovery.
+
+Tier 1-B candidate: supervised complete sessions
+------------------------------------------------
+The opt-in library function `conix.resilience.supervisor.supervise` invokes
+`run_with_read_retries`, and therefore the SAME `app.run` loop, until the
+application stops or a classified failure occurs. After an eligible
+connection/read transport failure, a new full application session may
+start only once the previous invocation has COMPLETELY terminated and the
+original `open_writer` context has retired the exclusive SQL journal and
+HTTP resources. There is no parallel worker or separate tip polling.
+
+Restartable means `RpcUnavailable` with an explicit `httpx.ConnectError`,
+`ConnectTimeout`, `ReadError` or `ReadTimeout` cause. It does NOT mean
+every `RpcUnavailable`: provider rejection, missing history, expired
+work, a single read's `TimeoutError`, branch conflicts, SQL failures and
+uncertain COMMIT all propagate. At most two new sessions are attempted,
+after cancellable 100 ms and 200 ms delays. A stop or cancellation never
+grants another session; retirement errors also block restart.
+
+T1-B is not wired into the default CLI or retained deployment. The
+contained PostgreSQL/Anvil suite has proven actual delegated publication,
+first-session retirement and durable-state continuity at `f9d6941`;
+the selected-rootless `fw/agentic` campaign remains to be executed.
+See Note 007. No automatic repair, provider failover, new indexing loop
+or production deployment behavior is introduced.
