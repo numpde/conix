@@ -21,6 +21,11 @@ from conix.catalog import Catalog
 # One writer per schema/database, regardless of configured contract selection.
 WRITER_LOCK = 0x434F4E4958
 
+# Only this explicit durable reason may trigger opt-in automatic fork
+# reconciliation. Other blocked_reason values remain operator-held even
+# if an independently observed chain reorganization also exists.
+REORGANIZATION_BLOCKED_REASON = "reorganization requires repair"
+
 
 class WriterBusy(RuntimeError):
     """Another session owns the selected database's raw-history publisher."""
