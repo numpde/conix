@@ -10,8 +10,10 @@ T0-1 ABI, T0-2 offline catalog/owner-only journal, T0-3 blockHash-pinned
 scanner and T0-4 checkpoint-bound reader are implemented. The owned dapp32
 campaign passed T0-5, and T0-6 qualification closed for the selected baseline.
 Note 004, section 8.8, owns T0-6 evidence and qualification scope.
-Section 11 now plans T0-7 as a complete standalone application. This variant
-branch implements a candidate, not yet a qualified retained deployment.
+Section 11 defines T0-7 as a complete standalone application. Its selected
+rootless retained-service and combined owned dapp32 acceptance gates have
+passed at their explicitly recorded revisions; see Note 004, sections 8.8
+and 11.5.1, for evidence and remaining qualification limits.
 Note 000 lists the protected operations that later tiers must execute.
 The experimental PayToPlay-only runtime was deleted without migration or adapters.
 

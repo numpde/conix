@@ -1463,9 +1463,36 @@ contained tests (2 skipped), including the installed-process lost-COMMIT
 reply case and the three-contract projection test. These results do not
 include the real owned dapp32 phase or rootless retained-deployment startup.
 
-Qualify only what was executed. Hosted CI covers the contained process
-scenarios and the new owned-campaign wiring, NOT the complete last dapp32 phase.
-The following selected-Engine gate requires an explicit rerun on fw/agentic:
+Qualification at accepted executable revision (2026-11-13)
+........................................................
+
+Executable revision: 01eca1a84a882ad8a834e9d8fdfde9466bd7a000.
+GitHub Actions run 43380747111 passed on that exact commit: 165 repository
+checks and 115 contained PostgreSQL/Anvil tests (2 skipped), plus offline
+image/input and prospective deployment checks. The previously reported
+cleanup/primary-failure regression is covered by the new paired-failure
+tests. CI does not itself run the owned dapp32 sibling fixture.
+
+The operator reports a separate successful selected-Engine campaign at
+01eca1a on fw, rootless Docker context agentic, using the maintained
+test/indexer/acceptance/owned/run target against an unchanged dapp32
+checkout. Its final installed continuous-service phase passed the
+PayToPlay, ERC-20 and ERC-721 event/transaction-identity assertions,
+later tip following and clean process shutdown; owned fixture and Conix
+resource cleanup were confirmed. The checkout was clean and no sibling
+source changes or branch merges were part of that qualification.
+
+Revision-bound, private operator evidence (not a tracked source input):
+  /home/ra/repos/conix/out/qualification/
+    01eca1a84a882ad8a834e9d8fdfde9466bd7a000/owned-dapp32.json
+
+The evidence location and reported result were provided by the operator;
+the private JSON contents were not independently inspected in this
+integration review. The selected-Engine combined T0-7e acceptance gate is
+satisfied for the specified revision and Engine, not for arbitrary
+providers, chains, host configurations or failure timing.
+
+The exact campaign entrypoint remains:
 
     make test/indexer/acceptance/owned/run DOCKER_CONTEXT=agentic \
       RUNNER_IMAGE=<qualified-evm-test-runner-image> DAPP32_DIR="$HOME/repos/dapp32"

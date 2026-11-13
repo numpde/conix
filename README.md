@@ -115,8 +115,10 @@ collections and filtered history, restarts in a fresh process, and exercises
 an Anvil reorganization with manual repair. A final owned phase now launches
 the installed continuous process, mines new PayToPlay/ERC-20/ERC-721
 transactions under that process, and checks the exact independent transaction
-receipts and later tip arrivals through the public Reader. That final phase requires its own
-selected-Engine rerun; GitHub CI only checks its source and admission paths.
+receipts and later tip arrivals through the public Reader. This combined
+phase passed on fw / rootless agentic at executable commit 01eca1a;
+Note 004, section 11.5.1, records its evidence and remaining limitations.
+GitHub CI alone does not exercise the owned dapp32 campaign.
 Borrowed-fixture mode runs only the nondestructive baseline.
 
 After explicit dependency acquisition and a verified rootless Docker context,
