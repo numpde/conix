@@ -28,6 +28,7 @@ class FaultRelay:
         self.mode = "pass"
         self.target_height = None
         self.entered = asyncio.Event()
+        self.verified = asyncio.Event()
         self.release = asyncio.Event()
         self.server = None
         self.client = None
@@ -59,6 +60,10 @@ class FaultRelay:
             message = json.loads(await reader.readexactly(sizes[0]))
             method = message["method"]
             params = message["params"]
+            if method == "eth_chainId":
+                # The installed CLI registers its signal handlers before
+                # opening the writer and verifying the selected chain.
+                self.verified.set()
             status = 200
 
             if self.mode == "offline":
@@ -211,6 +216,7 @@ class InstalledTier07FaultAcceptance(unittest.IsolatedAsyncioTestCase):
     async def baseline(self):
         head = int((await self.rpc("eth_getBlockByNumber", ["latest", False]))["number"], 16)
         process = await self.start()
+        await asyncio.wait_for(self.relay.verified.wait(), timeout=10)
         await self.reach(process, head)
         await self.stop(process)
         return head, await self.progress()
