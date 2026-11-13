@@ -303,8 +303,8 @@ def prepare_catalog(config_path: str | Path) -> Catalog:
     database_document = _keys(root["database"], {"dsn_file", "runtime_role"}, "database")
     if database_document["dsn_file"] != "/run/conix/connection.dsn":
         raise ConfigurationError("Database DSN must be supplied through the selected private input volume.")
-    if database_document["runtime_role"] != "conix_runtime":
-        raise ConfigurationError("Runtime role must be conix_runtime.")
+    if database_document["runtime_role"] not in ("conix_runtime", "conix_reader"):
+        raise ConfigurationError("Catalog role must be conix_runtime or conix_reader.")
     database = Database(**database_document)
     limits = _limits(root["limits"])
 

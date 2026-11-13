@@ -1,0 +1,44 @@
+# Ephemeral SELECT-only Reader check, not a persistent service.
+# Selected image and independent Reader inputs are immutable generated receipts.
+services:
+  reader:
+    image: ${CONIX_READER_IMAGE:?select the prepared Reader image}
+    pull_policy: never
+    entrypoint: [python]
+    command: [-I, -m, conix.reader_cli, check]
+    user: "65532:65532"
+    read_only: true
+    init: true
+    restart: "no"
+    labels:
+      io.conix.reader-check: ${CONIX_READER_TOKEN:?select the owned check token}
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 32
+    cpus: 0.5
+    mem_limit: 256m
+    memswap_limit: 256m
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=16m
+    volumes:
+      - type: volume
+        source: inputs
+        target: /run/conix
+        read_only: true
+        volume:
+          nocopy: true
+    networks: [database, rpc]
+    logging:
+      driver: local
+      options: {max-size: "1m", max-file: "1"}
+volumes:
+  inputs:
+    name: ${CONIX_READER_VOLUME:?select an independent Reader input volume}
+    external: true
+networks:
+  database:
+    name: ${CONIX_DATABASE_NETWORK:?select an existing database bridge}
+    external: true
+  rpc:
+    name: ${CONIX_RPC_NETWORK:?select an existing RPC bridge}
+    external: true

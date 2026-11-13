@@ -181,6 +181,19 @@ class NamedReaderContracts(unittest.TestCase):
         self.assertTrue((self.folder / "reader.lock.toml").exists())
         self.assertEqual(named._lock(named._read("pilot"))["volume"], VOLUME)
 
+    def test_reader_lock_cannot_retire_the_writer_owned_volume(self):
+        # Even an operator-owned but mistaken Reader lock grants no authority
+        # to delete the separately selected indexer input volume.
+        named._write_lock(
+            self.folder, {"version": 1, "image": IMAGE, "volume": VOLUME},
+            reader=True,
+        )
+        with self.assertRaises(OperationError):
+            self.dispatch("deployment/reader/remove")
+        self.assertTrue((self.folder / "reader.lock.toml").exists())
+        self.assertTrue((self.folder / "deployment.lock.toml").exists())
+        self.assertEqual(ReaderDocker.seen, [])
+
     def test_reader_status_never_prints_credentials(self):
         named._write_lock(
             self.folder, {"version": 1, "image": IMAGE, "volume": VOLUME_NEW},
