@@ -91,7 +91,11 @@ class ReorganizationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
         yield self.writer
 
     def source_catalog(self):
-        self.source = SimpleNamespace(chain=SimpleNamespace(rpc_url="http://selected.invalid"))
+        self.source = SimpleNamespace(
+            chain=SimpleNamespace(rpc_url="http://selected.invalid"),
+            limits=self.writer.catalog.limits,
+        )
+        self.writer.catalog = self.source
         return self.source
 
     async def invoke(self, *, blocked_only=False):
