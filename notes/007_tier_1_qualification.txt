@@ -173,9 +173,89 @@ refuses missing headers, exhausted ancestry, or contradictory source facts.
 No extra RPC decoder, scanner, SQL mutation, repair path, scheduler or
 configuration field was introduced.
 
-This is GitHub-hosted rootful container CI, NOT selected fw/rootless agentic
-qualification. The separately required selected-Engine run is still open.
+The GitHub-hosted run is rootful, not selected-Engine evidence.
+The operator separately reported selected fw/rootless agentic qualification
+at d6dab3179cb120e621ac1cfafd1c1bde0564e537: 189 repository checks,
+6 input checks and 152 contained tests (2 expected skips), including eight
+new T1-C1 tests and the genuine multiblock Anvil fork. Owned cleanup was
+confirmed. Its private revision-bound receipt is
+out/qualification/d6dab3179cb120e621ac1cfafd1c1bde0564e537/t1-c1.json.
+This record reflects the operator report; the local receipt was not remotely
+accessible for direct inspection.
 No T1-C2 repair orchestration, persisted-state recovery policy, production
 activation or integration into main has been performed. Automatic repair
 must still use the original Writer.repair_to under exclusive ownership and
 revalidate the selected basis and live canonical evidence at invocation.
+
+
+T1-C2 — Freshly checked repair and opt-in supervised resume (2026-11-13)
+-------------------------------------------------------------------------
+
+Unmerged continuation of main-tier-1-reorg-ancestor-20261113.
+No changes to default conix run, the original T1-B supervise() entrypoint,
+Tier-0 scanner/publisher, schema, operator commands or production deployment.
+
+RED test-only revision 2c2d23a8baa35ab5c27adc145e0885aaf7d16f06:
+  https://github.com/numpde/conix/actions/runs/43456621326
+The contained suite failed before the new recovery functions existed.
+GREEN initial implementation revision 8105af0f71a72e1f90ce08ebc356a32201218b35:
+  https://github.com/numpde/conix/actions/runs/43457393014
+189 host repository checks and 173 contained tests passed (2 skips).
+
+A separate source review found that an arbitrary persisted blocked_reason
+could be cleared when a genuine fork happened concurrently with an unrelated
+operator hold, including an unknown-SQL-COMMIT intervention. The focused
+regression at 27fb98ca93f3f4a4e6e2477d3106bef052f1de39 failed for this
+specific unsafe outcome:
+  https://github.com/numpde/conix/actions/runs/43458280365
+The correction admits only the journal's explicit
+REORGANIZATION_BLOCKED_REASON when a persisted HistoryConflict is recovered.
+Any other retained SQL hold refuses unattended repair, even after a previous
+BranchConflict. Tier 0 presently does NOT persist a reorganization marker
+when it detects a fork; it terminates, allowing an opt-in Tier-1 invocation
+to rediscover the conflict from PostgreSQL and RPC. The blocked-state
+restart acceptance explicitly installs the typed marker in disposable SQL.
+It proves recovery from such retained state, not marker production by Tier 0.
+
+Final executable/test revision 7dcf07cada0c40a65e7f572faa0e4dfc4fd46e61:
+  https://github.com/numpde/conix/actions/runs/43459444312
+189 repository checks passed, and 177 contained tests passed (2 expected
+skips). The real Anvil/PostgreSQL witness replaced a multiblock suffix
+containing a selected Transfer event, observed the original event indexed,
+required a new correctly indexed event after recovery, and proved the old
+Reader generation was invalidated. Instrumentation delegated to the actual
+app.run, original open_writer and Journal.repair_to, confirmed exactly one
+checked repair, no simultaneous writers and retired SQL sessions. Additional
+contracts covered a healed fork, missing tip/ancestor evidence, a changed
+ancestor, a changed durable basis, cancellation/stop before mutation, COMMIT
+uncertainty, unrelated operator holds, persisted reorg markers and finite
+recovery attempts.
+
+Delegation and admission:
+  conix.resilience.reorg.supervise_with_reorg_recovery
+    -> original T1-B supervisor.supervise
+      -> existing T1-A retry composition and original Tier-0 app.run
+    -> after full failed-session retirement, original core.open_writer
+      -> T1-C1 select_repair_ancestor (bounded retained facts + core RPC)
+      -> fresh ancestor canonicality and stale-tip conflict observation
+      -> fresh journal basis comparison
+      -> ORIGINAL Writer.repair_to (another canonicality check)
+        -> ORIGINAL Journal.repair_to guarded atomic suffix mutation
+    -> original T1-B supervised application reopens and re-reads the journal.
+
+A changed/unknown ancestor, missing canonical header, healed stored tip,
+SQL-basis mismatch, unrelated persisted blocked_reason, unknown COMMIT
+outcome, unconfirmed session retirement or cancellation cannot authorize
+repair. An already healed BranchConflict can permit a bounded new ordinary
+session without deleting history. A persisted HistoryConflict without a
+confirmed reorganization is not cleared. Recovery admits at most two
+confirmed fork attempts per invocation; normal tip scheduling remains
+the original app.run responsibility.
+
+The upstream canonical branch cannot be frozen across RPC and SQL; this
+is provider-relative revalidation, not an independent consensus or
+finality proof. Actual rootless fw/agentic qualification of T1-C2 remains
+OPEN, independently of the fully qualified T1-C1 revision. The local
+qualification receipt for T1-C2 cannot be declared until that run succeeds.
+No merge, branch retirement, external deployment or production activation
+is claimed by these hosted results.
