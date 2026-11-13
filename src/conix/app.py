@@ -28,10 +28,13 @@ async def wait_at_tip(stop, interval):
     except TimeoutError:
         pass
 
-async def run(catalog, database_dsn, stop, *, poll_interval=2.0):
+async def run(catalog, database_dsn, stop, *, poll_interval=2.0, writer_session=None):
     """Reuse the exclusive core writer while catching up; release at tip."""
+    # The default Tier-0 session remains selected unless a higher-tier owner
+    # explicitly composes the SAME checked writer and journal.
+    session = open_writer if writer_session is None else writer_session
     while not stop.is_set():
-        async with open_writer(
+        async with session(
             catalog=catalog, database_dsn=database_dsn, rpc_url=catalog.chain.rpc_url,
         ) as writer:
             while not stop.is_set():

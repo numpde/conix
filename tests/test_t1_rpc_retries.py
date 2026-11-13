@@ -228,22 +228,28 @@ class RetryingSessionContracts(unittest.IsolatedAsyncioTestCase):
         closed = []
 
         from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+        selected = SimpleNamespace(catalog=object(), journal=object(), rpc=object())
         @asynccontextmanager
         async def actual_writer(**_kwargs):
-            writer = type("WriterRecord", (), {"rpc": object()})()
-            opened.append(writer)
+            opened.append(selected)
             try:
-                yield writer
+                yield selected
             finally:
-                closed.append(writer)
+                closed.append(selected)
 
         with patch("conix.resilience.rpc_retry.open_writer", actual_writer):
             async with retrying_writer_session(
-                catalog=object(), database_dsn="private", rpc_url="http://source.invalid",
+                catalog=selected.catalog, database_dsn="private",
+                rpc_url="http://source.invalid",
             ) as writer:
-                self.assertIs(writer, opened[0])
+                self.assertIsInstance(writer, Writer)
+                self.assertIs(writer.catalog, selected.catalog)
+                self.assertIs(writer.journal, selected.journal)
+                self.assertIs(writer.rpc.base, selected.rpc)
                 self.assertIsInstance(writer.rpc, RetryingRPC)
         self.assertEqual(closed, opened)
+        self.assertIs(selected.rpc, opened[0].rpc)
 
     async def test_injected_writer_session_runs_the_original_app_loop(self):
         from contextlib import asynccontextmanager
