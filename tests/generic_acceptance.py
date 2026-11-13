@@ -7,6 +7,7 @@ campaign; the borrowed baseline remains non-destructive.
 import asyncio
 import json
 import os
+import signal
 from pathlib import Path
 import sys
 
@@ -240,9 +241,137 @@ async def baseline(descriptor, state, tokens):
     print("PASS: installed scanner and SELECT-only reader share the first complete checkpoint.")
 
 
+
+
+def stage_continuous_inputs(source_path, writer_dsn, target):
+    """Stage a test-only runtime snapshot without copying any owner credential."""
+    from conix.catalog import prepare_catalog
+
+    source = prepare_catalog(source_path)
+    if target.is_symlink() or not target.is_dir() or tuple(target.iterdir()):
+        raise ScenarioFailure("Continuous acceptance requires an empty private runtime tmpfs.")
+    if target.stat().st_uid != os.geteuid() or (target.stat().st_mode & 0o077):
+        raise ScenarioFailure("Continuous acceptance runtime tmpfs ownership is incorrect.")
+
+    (target / "abi").mkdir(mode=0o700)
+    staged = source_path.read_text(encoding="utf-8")
+    for alias in ("payment", "token20", "token721"):
+        original = source_path.parent / (alias + ".json")
+        selected = target / "abi" / (alias + ".json")
+        selected.write_bytes(original.read_bytes())
+        selected.chmod(0o600)
+        old = "abi_file = " + json.dumps(str(original))
+        if staged.count(old) != 1:
+            raise ScenarioFailure("The selected contract ABI cannot be projected for continuous acceptance.")
+        staged = staged.replace(old, "abi_file = " + json.dumps("abi/" + alias + ".json"))
+
+    config = target / "config.toml"
+    config.write_text(staged, encoding="utf-8")
+    config.chmod(0o600)
+    credential = target / "connection.dsn"
+    credential.write_text(writer_dsn + "\n", encoding="utf-8")
+    credential.chmod(0o600)
+    if prepare_catalog(config).source_id != source.source_id:
+        raise ScenarioFailure("Continuous acceptance source projection changed the selected ABI identity.")
+    return source
+
+
+async def continuous(descriptor, source_path, rpc_call, *, tokens, writer_dsn, reader_dsn):
+    """Prove continuous installed ingestion using the owned three-contract source.
+
+    Earlier phases establish real payment/ERC-20/ERC-721 history. This phase
+    launches the installed ordinary CLI in a separate process, then checks
+    two later tip arrivals through the same public reader.
+    """
+    from conix.reader import open_reader
+
+    target = Path("/run/conix")
+    source = stage_continuous_inputs(source_path, writer_dsn, target)
+    config = target / "config.toml"
+    credential = target / "connection.dsn"
+    process = None
+    try:
+        async with open_reader(catalog=source, database_dsn=reader_dsn,
+                               rpc_url=descriptor["rpcUrl"]) as reader:
+            before = await reader.checkpoint()
+            if before is None:
+                raise ScenarioFailure("Continuous acceptance has no retained checkpoint.")
+            prior_events = {}
+            for alias, signature in (
+                ("payment", VOUCHER_SIGNATURE),
+                ("token20", TRANSFER_SIGNATURE),
+                ("token721", TRANSFER_SIGNATURE),
+            ):
+                page = await reader.events(
+                    checkpoint=before, contract=alias, event=signature,
+                    where={}, limit=source.limits.max_page_size,
+                )
+                if not page.complete or not page.events:
+                    raise ScenarioFailure("Continuous acceptance lacks prior selected contract events.")
+                prior_events[alias] = tuple(event.transaction_hash for event in page.events)
+
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, "-I", "-m", "conix", "run",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+
+        # The first new block starts after the preceding owned campaign phase,
+        # not in an unqualified second writer or reconstructed scanner.
+        for arrival in (1, 2):
+            await rpc_call(descriptor, "evm_mine", [])
+            expected = before.block.number + arrival
+            async with asyncio.timeout(25):
+                while True:
+                    if process.returncode is not None:
+                        raise ScenarioFailure("The installed continuous process exited before tip arrival.")
+                    async with open_reader(
+                        catalog=source, database_dsn=reader_dsn,
+                        rpc_url=descriptor["rpcUrl"],
+                    ) as reader:
+                        current = await reader.checkpoint()
+                    if current is not None and current.block.number >= expected:
+                        if current.block.number != expected or current.generation != before.generation:
+                            raise ScenarioFailure("Continuous acceptance published a contradictory checkpoint.")
+                        break
+                    await asyncio.sleep(0.2)
+
+        async with open_reader(catalog=source, database_dsn=reader_dsn,
+                               rpc_url=descriptor["rpcUrl"]) as reader:
+            after = await reader.checkpoint()
+            for alias, signature in (
+                ("payment", VOUCHER_SIGNATURE),
+                ("token20", TRANSFER_SIGNATURE),
+                ("token721", TRANSFER_SIGNATURE),
+            ):
+                page = await reader.events(
+                    checkpoint=after, contract=alias, event=signature,
+                    where={}, limit=source.limits.max_page_size,
+                )
+                if not page.complete or tuple(event.transaction_hash for event in page.events) != prior_events[alias]:
+                    raise ScenarioFailure("Continuous tip following changed previously indexed contract events.")
+
+        process.send_signal(signal.SIGTERM)
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=12)
+        if process.returncode != 0 or b'"outcome": "stopped"' not in stdout:
+            raise ScenarioFailure("Continuous acceptance did not stop cleanly.")
+        if writer_dsn.encode() in stdout + stderr:
+            raise ScenarioFailure("Continuous acceptance disclosed a database credential.")
+        print("PASS: continuous Conix preserved PayToPlay, ERC-20 and ERC-721 history.", flush=True)
+    finally:
+        if process is not None and process.returncode is None:
+            process.kill()
+            await asyncio.wait_for(process.communicate(), timeout=10)
+        # These are private ephemeral test-container inputs, not deployment
+        # state, owned database history or producer resources.
+        for member in (target / "abi").iterdir():
+            member.unlink()
+        (target / "abi").rmdir()
+        config.unlink(missing_ok=True)
+        credential.unlink(missing_ok=True)
+
 async def main():
     if len(sys.argv) != 2 or sys.argv[1] not in (
-        "preflight", "prepare", "initialize", "baseline", "exercise", "resume", "reorg",
+        "preflight", "prepare", "initialize", "baseline", "exercise", "resume", "reorg", "continuous",
     ):
         raise FixtureError("Select an explicit generic acceptance phase.")
     phase = sys.argv[1]
@@ -290,9 +419,13 @@ async def main():
                 await t0_5_payment.resume(
                     descriptor, source, rpc, state=state, tokens=tokens, **arguments,
                 )
-            else:
+            elif phase == "reorg":
                 await t0_5_payment.reorganize(
                     descriptor, source, rpc, state=state, tokens=tokens, **arguments,
+                )
+            else:
+                await continuous(
+                    descriptor, source, rpc, tokens=tokens, **arguments,
                 )
     except Exception as error:
         # Cancellation and keyboard interruption are not failed assertions.

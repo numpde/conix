@@ -173,6 +173,19 @@ def admit(rendered_graph, *, runner_image, postgres_image, rpc_network):
             if connected_networks != required_networks:
                 raise CampaignError("Fixture service has an unexpected database/RPC network grant.")
 
+            if service_name == "consumer":
+                runtime_tmpfs = service.get("tmpfs", [])
+                if not any(
+                    type(mount) is str
+                    and mount.startswith("/run/conix:")
+                    and all(part in mount.split(",") for part in (
+                        "uid=65532", "gid=65532", "mode=0700",
+                        "size=16m", "nosuid", "nodev", "noexec",
+                    ))
+                    for mount in runtime_tmpfs
+                ):
+                    raise CampaignError("Owned continuous acceptance needs a private runtime tmpfs.")
+
         owner_environment = rendered_services["initialize"].get("environment", {})
         consumer_environment = rendered_services["consumer"].get("environment", {})
 
@@ -373,7 +386,7 @@ class PayToPlayTest:
                 output=self._file("conix-" + phase + ".out"),
                 error_file=self._file("conix-" + phase + ".err"),
                 env=self.compose_environment,
-                timeout=180 if phase == "exercise" else 120 if phase in ("prepare", "reorg") else 75,
+                timeout=180 if phase == "exercise" else 120 if phase in ("prepare", "reorg", "continuous") else 75,
                 payload=phase_payload,
                 label=f"Conix phase/{phase}",
             )
@@ -420,7 +433,7 @@ class PayToPlayTest:
                 "consumer", "exercise",
                 prior_receipt=self.preflight_record, expect_receipt=True,
             )
-            for phase in ("resume", "reorg"):
+            for phase in ("resume", "reorg", "continuous"):
                 self._phase(
                     "consumer", phase,
                     prior_receipt=observations, expect_receipt=False,

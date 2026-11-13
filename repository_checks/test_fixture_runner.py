@@ -41,7 +41,12 @@ def graph(fixture_image, postgres_image, rpc):
             "networks": networks, "environment": environment or {},
             "cpus": 0.5, "pids_limit": 64,
             "mem_limit": "256m", "memswap_limit": "256m",
-            "tmpfs": ["/tmp:rw,nosuid,nodev,noexec,size=16m"],
+            "tmpfs": [
+                "/tmp:rw,nosuid,nodev,noexec,size=16m",
+                *([
+                    "/run/conix:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=16m",
+                ] if "rpc" in networks else []),
+            ],
         }
     return {
         "services": {
@@ -164,6 +169,9 @@ class FixtureRunnerTests(unittest.TestCase):
             lambda d: d["services"]["consumer"].pop("mem_limit"),
             lambda d: d["services"]["consumer"].pop("memswap_limit"),
             lambda d: d["services"]["consumer"].update({"tmpfs": []}),
+            lambda d: d["services"]["consumer"].update({"tmpfs": [
+                "/tmp:rw,nosuid,nodev,noexec,size=16m",
+            ]}),
         ):
             candidate = json.loads(json.dumps(baseline))
             change(candidate)
@@ -337,7 +345,7 @@ class FixtureRunnerTests(unittest.TestCase):
                 owned.execute()
 
             self.assertEqual([entry[1] for entry in observed],
-                             ["baseline", "exercise", "resume", "reorg"])
+                             ["baseline", "exercise", "resume", "reorg", "continuous"])
             self.assertEqual(observed[0][2], owned.preflight_record)
             self.assertEqual(observed[1][2], owned.preflight_record)
             self.assertIs(observed[2][2], public_payment_receipt)
@@ -619,7 +627,7 @@ class GenericAcceptanceOperatorContracts(unittest.TestCase):
             )
             consumer.compose_environment = {}
 
-            for phase in ("preflight", "baseline", "exercise", "resume", "reorg"):
+            for phase in ("preflight", "baseline", "exercise", "resume", "reorg", "continuous"):
                 with self.subTest(phase=phase), patch.object(
                     runner, "owned_command", return_value=b""
                 ) as invoked:

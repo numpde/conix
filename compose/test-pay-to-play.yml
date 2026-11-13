@@ -109,6 +109,8 @@ services:
     memswap_limit: 512m
     tmpfs:
       - /tmp:rw,nosuid,nodev,noexec,mode=1777,size=16m
+      # The installed continuous CLI reads only this isolated runtime tmpfs.
+      - /run/conix:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=16m
     networks: [database, rpc]
 
 networks:

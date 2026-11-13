@@ -110,6 +110,14 @@ class FixtureContractTests(unittest.TestCase):
             with self.subTest(length=len(value)), self.assertRaises(FixtureError):
                 decode(value, fixture_id=IDENTITY)
 
+    def test_continuous_phase_reports_only_admitted_failure_fields(self):
+        original = ScenarioFailure("A verified continuous process exited unexpectedly.")
+        record = phase_failure_record("continuous", original)
+        description = parse_phase_failure(record, phase="continuous")
+        self.assertIn("continuous", record.decode("ascii"))
+        self.assertIsNotNone(description)
+        self.assertIsNone(parse_phase_failure(record, phase="reorg"))
+
     def test_safe_scenario_cause_is_carried_with_exact_phase(self):
         original = ScenarioFailure("Generic acceptance differs from the real evidence")
         record = phase_failure_record("baseline", original)
