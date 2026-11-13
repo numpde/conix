@@ -1416,6 +1416,66 @@ substituting mocks that only imitate an indexing result. Run actual
 environment checks before calling T0-7 qualified. The existing T0-6
 and experimental-branch green tests are not proof of this service.
 
+11.5.1. T0-7e coverage audit and executable follow-up (2026-11-13)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Do not conflate tests that reach the same result through different execution
+paths. Existing revision-bound qualifications are recorded in section 8.8:
+
+  * Named retained deployment on fw/agentic: actual Make startup, catch-up,
+    idle tip, arrivals, clean stop, restart, retained blocks/events and
+    ownership/cleanup.
+  * Owned dapp32 campaign: real PayToPlay, ERC-20, ERC-721 transaction events,
+    one-block Tier-0 scanner/reader, restart and explicit reorganization repair.
+  * Contained journal tests: interrupted publication, SIGKILL before COMMIT,
+    loss of a real PostgreSQL COMMIT completion and durable-state reconciliation.
+  * Installed CLI tests: process launch, normal SIGTERM and tip arrival.
+
+The independent passes above did not establish that the continuous application
+itself handled all T0-7e failure combinations. This acceptance branch adds:
+
+  * tests/test_t0_7e_faults.py: launch actual installed 'conix run' against
+    the owner-initialized PostgreSQL and Anvil fixture; reject wrong chain,
+    absent numbered block with a reported higher head, malformed selected
+    eth_getLogs, lost writer connection and SIGKILL during evidence acquisition.
+    Use real durable checkpoints and one mined Transfer receipt to prove no
+    false publication, omission or duplicate after explicit process restart.
+  * Same contained suite: withhold the actual COMMIT completion from the
+    installed process, read the durable basis independently, then restart the
+    normal executable and verify that its selected Transfer occurs exactly once.
+  * Same contained suite: replace an Anvil branch, require the installed
+    continuous application to reject the contradiction, invoke its installed
+    history inspect/repair CLI, then restart to index the replacement branch
+    with changed history generation.
+  * test/indexer/acceptance/owned/run: after its existing real dapp32
+    exercise/resume/reorg phases, launch the installed continuous 'conix run'
+    in a new test-owned runtime tmpfs against the same immutable three-contract
+    source. Follow two later empty blocks and confirm the public Reader still
+    returns the exact prior PayToPlay, ERC-20 and ERC-721 event identities.
+    Source projection and the confined Compose grant have independent tests.
+
+At candidate revision 6ec83ee39f2a9de2bb118c7a2e66796e02556c08,
+GitHub Actions run 43336788187 passed 165 repository checks and 113
+contained tests (2 skipped), including the installed-process lost-COMMIT
+reply case and the three-contract projection test. These results do not
+include the real owned dapp32 phase or rootless retained-deployment startup.
+
+Qualify only what was executed. Hosted CI covers the contained process
+scenarios and the new owned-campaign wiring, NOT the complete last dapp32 phase.
+The following selected-Engine gate requires an explicit rerun on fw/agentic:
+
+    make test/indexer/acceptance/owned/run DOCKER_CONTEXT=agentic \
+      RUNNER_IMAGE=<qualified-evm-test-runner-image> DAPP32_DIR="$HOME/repos/dapp32"
+
+Run the separate named retained acceptance target when qualifying lifecycle
+changes; its fixture and normal Make startup remain independent. Neither
+candidate extension makes Tier 0 retry, supervise, repair automatically or
+operate a different scanner/journal/reader. Publication-time cancellation and
+repair contention have direct-core PostgreSQL evidence; a single combined
+continuous-service fault campaign for every timing boundary is not implied.
+Public-chain finality, actual power-loss durability, an independent live-RPC
+source and Tier-1 unattended recovery remain outside these acceptance passes.
+
 11.6. Tier boundaries and excluded machinery
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
