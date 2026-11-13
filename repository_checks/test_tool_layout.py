@@ -20,6 +20,7 @@ TOOL_FILES = {
     "tools/containers/input_staging.py",
     "tools/containers/named.py",
     "tools/containers/operator.py",
+    "tools/containers/reader_deployment.py",
     "tools/containers/resources.py",
     "tools/fixtures/__init__.py",
     "tools/fixtures/pay_to_play.py",
