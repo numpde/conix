@@ -23,7 +23,7 @@ from conix import app
 from conix.core import BranchConflict, open_writer
 from conix.journal import (
     Block, CommitOutcomeUnknown, HistoryConflict, Journal, Progress,
-    RetainedAncestry, StorageUnavailable,
+    REORGANIZATION_BLOCKED_REASON, RetainedAncestry, StorageUnavailable,
 )
 from conix.reader import CursorInvalid, open_reader
 from conix.resilience import reorg, rpc_retry, supervisor
@@ -158,7 +158,9 @@ class ReorganizationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
         self.writer.repair_to.assert_not_awaited()
 
     async def test_existing_blocked_history_only_allows_verified_fork(self):
-        self.journal.basis = replace(self.basis, blocked_reason="repair required")
+        self.journal.basis = replace(
+            self.basis, blocked_reason=REORGANIZATION_BLOCKED_REASON,
+        )
         self.journal.retained_ancestry.return_value = RetainedAncestry(
             self.journal.basis, self.blocks,
         )
@@ -190,6 +192,23 @@ class ReorganizationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
             8: [block(8), block(8)],
         })
         self.assertIsNone(await self.invoke(blocked_only=True))
+        self.writer.repair_to.assert_not_awaited()
+        self.assertEqual(self.observed, [])
+
+    async def test_late_operator_hold_also_blocks_repair_after_branch_conflict(self):
+        """Never let a prior BranchConflict override a newer durable hold."""
+        self.journal.basis = replace(
+            self.basis, blocked_reason="operator retained uncertain COMMIT",
+        )
+        self.journal.retained_ancestry.return_value = RetainedAncestry(
+            self.journal.basis, self.blocks,
+        )
+        self.journal.inspect.return_value = self.journal.basis
+        self.set_observations({
+            9: [self.conflict, self.conflict],
+            8: [block(8), block(8)],
+        })
+        self.assertIsNone(await self.invoke(blocked_only=False))
         self.writer.repair_to.assert_not_awaited()
         self.assertEqual(self.observed, [])
 
@@ -629,7 +648,7 @@ class RealReorganizationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
         async with await AsyncConnection.connect(self.dsn, connect_timeout=5) as sql:
             await sql.execute(
                 "UPDATE conix.source_progress SET blocked_reason = %s WHERE singleton = 1",
-                ("previously observed reorganization",),
+                (REORGANIZATION_BLOCKED_REASON,),
             )
 
         recovered = await self.supervised_until(before.last_block.number, before.generation)
