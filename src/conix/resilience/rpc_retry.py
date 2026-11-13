@@ -20,11 +20,25 @@ from conix.rpc import RpcUnavailable
 # The continuous writer uses exactly these independently read-only RPCs.
 # Source admission occurs inside open_writer before this decorator is active.
 _RETRYABLE_READS = frozenset({"eth_getBlockByNumber", "eth_getLogs"})
-_TRANSIENT_TRANSPORT = (
+_CONNECTION_FAILURE = (
     httpx.ConnectError, httpx.ConnectTimeout,
     httpx.ReadError, httpx.ReadTimeout,
-    TimeoutError,  # RPC's per-request asyncio.timeout; not expired work.
 )
+_TRANSIENT_TRANSPORT = (*_CONNECTION_FAILURE,
+                        TimeoutError)  # Only an individual request timeout.
+
+
+def is_restartable_rpc_failure(error):
+    """Admit only connection/read failures for a NEW complete app session.
+
+    A timed-out individual request is eligible within T1-A's original
+    deadline, but the supervisor cannot extend that expired operation. It
+    therefore does not restart an application session on TimeoutError.
+    Provider rejection and deadline exhaustion have no eligible cause.
+    """
+    return isinstance(error, RpcUnavailable) and isinstance(
+        error.__cause__, _CONNECTION_FAILURE,
+    )
 _ATTEMPTS = 3
 _INITIAL_DELAY = 0.05
 
