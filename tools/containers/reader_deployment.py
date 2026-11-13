@@ -8,10 +8,14 @@ uniquely identified ephemeral container and retires it after admission.
 """
 
 import json
+import os
 import re
 import secrets
 import sys
+import subprocess
+import tempfile
 
+from tools.containers.diagnostics import explanation
 from tools.containers.client import IMAGE_ID, OperationError
 from tools.containers.resources import (
     ENGINE_ID, VOLUME_NAME, _admit_network, _admit_volume, _record,
@@ -104,6 +108,38 @@ def _check_candidates(docker, *, project, image, token):
     return ids
 
 
+def _run_reader(docker, arguments, environment):
+    """Admit the Reader record; retain unknown Docker stderr privately for recovery."""
+    try:
+        result = subprocess.run(
+            docker.docker_command_prefix + arguments,
+            cwd=named.ROOT, env=environment, timeout=90,
+            check=False, capture_output=True,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise OperationError("Reader check timed out; container retirement must be confirmed.") from error
+    except OSError as error:
+        raise OperationError(
+            f"Reader check could not start ({type(error).__name__}, errno={error.errno})."
+        ) from error
+    if result.returncode:
+        reason = explanation(result.stderr, result.returncode, phases={"reader_check"})
+        if reason is None:
+            # Docker may fail before Python starts. Keep that producer's prose
+            # private; ordinary Reader failures use the bounded record above.
+            try:
+                descriptor, receipt = tempfile.mkstemp(prefix="conix-reader-check-", suffix=".stderr")
+                with os.fdopen(descriptor, "wb") as stream:
+                    stream.write(result.stderr)
+                reason = f"exit={result.returncode}; no admitted diagnostic. Private receipt: {receipt}"
+            except OSError:
+                reason = f"exit={result.returncode}; no admitted diagnostic; private receipt unavailable"
+        raise OperationError("Reader check failed: " + reason, exit_code=result.returncode)
+    if len(result.stdout) > 65536:
+        raise OperationError("Reader check returned an oversized response.")
+    return result.stdout
+
+
 def check(docker, *, name, image, volume, database, rpc):
     """Check the actual Reader role/source, then retire only owned check work."""
     if IMAGE_ID.fullmatch(image or "") is None or VOLUME_NAME.fullmatch(volume or "") is None:
@@ -148,10 +184,10 @@ def check(docker, *, name, image, volume, database, rpc):
 
     primary = None
     try:
-        output = docker.run(
-            *compose, "run", "--rm", "--no-deps", "--pull", "never",
-            "-T", "--name", project + "-check", "reader",
-            capture=True, timeout=90, env=environment,
+        output = _run_reader(
+            docker, compose + ["run", "--rm", "--no-deps", "--pull", "never",
+                              "-T", "--name", project + "-check", "reader"],
+            environment,
         )
         try:
             record = json.loads(output)

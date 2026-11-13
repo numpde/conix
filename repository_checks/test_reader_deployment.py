@@ -4,6 +4,9 @@ import copy
 from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO
 import json
+from pathlib import Path
+import tempfile
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 import unittest
 
@@ -62,6 +65,49 @@ def container():
 
 
 class NamedReaderCheckContracts(unittest.TestCase):
+    def test_reader_failure_record_reaches_host_without_private_stderr(self):
+        """A real check failure retains its admitted phase, type, location and exit."""
+        temporary_receipt = tempfile.mkstemp
+        record = (b'CONIX-FAILURE-V1 {"phase":"reader_check","cause":"HistoryUnavailable",'
+                  b'"effect":"not_started","location":"reader.py:655"}\n')
+        for stderr, admitted in ((record, True), (b"password=do-not-report", False)):
+            with self.subTest(admitted=admitted):
+                docker = Mock()
+                docker.docker_environment = {}
+                docker.docker_command_prefix = ["docker"]
+                def run(*args, **kwargs):
+                    if "config" in args:
+                        return json.dumps(graph())
+                    if "run" in args:
+                        raise OperationError("Docker Compose run failed (exit 2).", exit_code=2)
+                    return ""
+                docker.run.side_effect = run
+                with (
+                    patch.object(reader_deployment.secrets, "token_hex", return_value=TOKEN),
+                    patch.object(reader_deployment, "_admit_volume"),
+                    patch.object(reader_deployment, "_admit_network"),
+                    tempfile.TemporaryDirectory() as receipts,
+                    patch.object(reader_deployment.tempfile, "mkstemp",
+                                 side_effect=lambda **kwargs: temporary_receipt(dir=receipts, **kwargs)),
+                    patch("subprocess.run", return_value=SimpleNamespace(
+                        returncode=2, stdout=b"", stderr=stderr,
+                    )),
+                    self.assertRaises(OperationError) as caught,
+                ):
+                    reader_deployment.check(
+                        docker, name="pilot", image=IMAGE, volume=VOLUME,
+                        database="db-conix", rpc="rpc-conix",
+                    )
+                message = str(caught.exception)
+                if admitted:
+                    self.assertIn("HistoryUnavailable", message)
+                    self.assertIn("reader.py:655", message)
+                    self.assertIn("reader check", message)
+                else:
+                    self.assertIn("no admitted diagnostic", message)
+                self.assertEqual(caught.exception.exit_code, 2)
+                self.assertNotIn("do-not-report", message)
+
     def test_rendered_graph_requires_only_external_bridges_private_volume_and_readonly_process(self):
         reader_deployment.admit_graph(
             graph(), image=IMAGE, volume=VOLUME,
@@ -120,6 +166,10 @@ class NamedReaderCheckContracts(unittest.TestCase):
             patch.object(reader_deployment, "_admit_volume") as admit_volume,
             patch.object(reader_deployment, "_admit_network") as admit_network,
             redirect_stdout(StringIO()) as out,
+            patch.object(reader_deployment, "_run_reader", return_value=json.dumps({
+                "outcome": "reader_ready", "source_id": "1" * 64,
+                "checkpoint": 7, "generation": "checked-generation",
+            })),
         ):
             actual = reader_deployment.check(
                 docker, name="pilot", image=IMAGE, volume=VOLUME,
@@ -159,6 +209,7 @@ class NamedReaderCheckContracts(unittest.TestCase):
             patch.object(reader_deployment, "_admit_network"),
             patch.object(reader_deployment, "_record", return_value=container()),
             redirect_stderr(StringIO()) as err,
+            patch.object(reader_deployment, "_run_reader", side_effect=failure),
             self.assertRaises(OperationError) as raised,
         ):
             reader_deployment.check(
@@ -197,6 +248,10 @@ class NamedReaderCheckContracts(unittest.TestCase):
             patch.object(reader_deployment, "_admit_network"),
             patch.object(reader_deployment, "_record", return_value=container()),
             redirect_stdout(StringIO()) as out,
+            patch.object(reader_deployment, "_run_reader", return_value=json.dumps({
+                "outcome": "reader_ready", "source_id": "1" * 64,
+                "checkpoint": None, "generation": None,
+            })),
             self.assertRaises(OperationError),
         ):
             reader_deployment.check(
