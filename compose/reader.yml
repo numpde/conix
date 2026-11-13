@@ -30,7 +30,8 @@ services:
     networks: [database, rpc]
     logging:
       driver: local
-      options: {max-size: "1m", max-file: "1"}
+      # The local driver cannot compress a rotation set with only one file.
+      options: {max-size: "1m", max-file: "1", compress: "false"}
 volumes:
   inputs:
     name: ${CONIX_READER_VOLUME:?select an independent Reader input volume}

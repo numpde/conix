@@ -15,7 +15,7 @@ import sys
 import subprocess
 import tempfile
 
-from tools.containers.diagnostics import explanation
+from tools.containers.diagnostics import PREFIX, explanation
 from tools.containers.client import IMAGE_ID, OperationError
 from tools.containers.resources import (
     ENGINE_ID, VOLUME_NAME, _admit_network, _admit_volume, _record,
@@ -57,6 +57,10 @@ def admit_graph(graph, *, image, volume, database, rpc, token):
             or set(service.get("security_opt", [])) != {"no-new-privileges:true"}
             or service.get("cap_add") or service.get("privileged")
             or service.get("ports") or service.get("build")
+            or service.get("logging") != {
+                "driver": "local",
+                "options": {"max-size": "1m", "max-file": "1", "compress": "false"},
+            }
             or service.get("environment")
             or service.get("devices") or service.get("network_mode")
             or service.get("pid") or service.get("ipc") or service.get("uts")
@@ -123,7 +127,12 @@ def _run_reader(docker, arguments, environment):
             f"Reader check could not start ({type(error).__name__}, errno={error.errno})."
         ) from error
     if result.returncode:
-        reason = explanation(result.stderr, result.returncode, phases={"reader_check"})
+        # Compose may surround the producer's record with lifecycle progress.
+        # Admit exactly one bounded record, never the surrounding prose.
+        records = [line for line in result.stderr.splitlines() if line.startswith(PREFIX)]
+        reason = None
+        if len(result.stderr) <= 65536 and len(records) == 1:
+            reason = explanation(records[0], result.returncode, phases={"reader_check"})
         if reason is None:
             # Docker may fail before Python starts. Keep that producer's prose
             # private; ordinary Reader failures use the bounded record above.

@@ -36,6 +36,9 @@ def graph():
                 "cpus": 0.5, "pids_limit": 32, "mem_limit": 268435456,
                 "memswap_limit": 268435456,
                 "tmpfs": ["/tmp:rw,nosuid,nodev,noexec,size=16m"],
+                "logging": {"driver": "local", "options": {
+                    "max-size": "1m", "max-file": "1", "compress": "false",
+                }},
                 "volumes": [{
                     "type": "volume", "source": "inputs", "target": "/run/conix",
                     "read_only": True, "volume": {"nocopy": True},
@@ -70,7 +73,10 @@ class NamedReaderCheckContracts(unittest.TestCase):
         temporary_receipt = tempfile.mkstemp
         record = (b'CONIX-FAILURE-V1 {"phase":"reader_check","cause":"HistoryUnavailable",'
                   b'"effect":"not_started","location":"reader.py:655"}\n')
-        for stderr, admitted in ((record, True), (b"password=do-not-report", False)):
+        for stderr, admitted in (
+            (record, True), (b"Container creating\n" + record, True),
+            (record + record, False), (b"password=do-not-report", False),
+        ):
             with self.subTest(admitted=admitted):
                 docker = Mock()
                 docker.docker_environment = {}
@@ -132,6 +138,22 @@ class NamedReaderCheckContracts(unittest.TestCase):
         ):
             candidate = copy.deepcopy(graph())
             change(candidate)
+            with self.subTest(change=change), self.assertRaises(OperationError):
+                reader_deployment.admit_graph(
+                    candidate, image=IMAGE, volume=VOLUME,
+                    database="db-conix", rpc="rpc-conix", token=TOKEN,
+                )
+
+    def test_reader_logging_requires_bounded_uncompressed_local_file(self):
+        """Single-file local logging must disable compression before container creation."""
+        for change in (
+            lambda value: value["options"].update(compress="true"),
+            lambda value: value["options"].pop("compress"),
+            lambda value: value.update(driver="syslog"),
+            lambda value: value["options"].update({"max-size": "0"}),
+        ):
+            candidate = graph()
+            change(candidate["services"]["reader"]["logging"])
             with self.subTest(change=change), self.assertRaises(OperationError):
                 reader_deployment.admit_graph(
                     candidate, image=IMAGE, volume=VOLUME,
