@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import time
 
 from conix.core import BranchConflict, open_writer
-from conix.journal import Block, HistoryConflict, Progress
+from conix.journal import Block, HistoryConflict, Progress, REORGANIZATION_BLOCKED_REASON
 from conix.resilience import supervisor
 from conix.rpc import RpcUnavailable
 
@@ -85,7 +85,10 @@ async def recover_reorganization(catalog, database_dsn, stop, *, blocked_only=Fa
     async with open_writer(
         catalog=catalog, database_dsn=database_dsn, rpc_url=catalog.chain.rpc_url,
     ) as writer:
-        if blocked_only and writer.journal.basis.blocked_reason is None:
+        if (
+            blocked_only
+            and writer.journal.basis.blocked_reason != REORGANIZATION_BLOCKED_REASON
+        ):
             return None
 
         selection = await select_repair_ancestor(writer)
