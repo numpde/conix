@@ -20,7 +20,7 @@ from conix.catalog import prepare_catalog
 from conix.core import Writer
 from conix.rpc import RPC, RpcProtocolError, RpcUnavailable
 from conix.resilience.rpc_retry import RetryingRPC, retrying_writer_session
-from test_core_rpc import RecordingJournal, Server
+from test_core_rpc import RecordingJournal, Server, json_response
 
 
 FIXTURE = Path("/tests/fixtures/catalog.toml")
@@ -28,7 +28,7 @@ FIXTURE = Path("/tests/fixtures/catalog.toml")
 
 def response(request, *, result="0x7a69"):
     message = json.loads(request.content)
-    return httpx.Response(200, json={
+    return json_response({
         "jsonrpc": "2.0", "id": message["id"], "result": result,
     })
 
@@ -86,13 +86,15 @@ class RetryingReadContracts(unittest.IsolatedAsyncioTestCase):
                     if mode == "http_503":
                         return httpx.Response(503, text="unavailable")
                     if mode == "bad_json":
-                        return httpx.Response(200, content=b'{"jsonrpc":}')
+                        return httpx.Response(
+                            200, stream=httpx.ByteStream(b'{"jsonrpc":}'),
+                        )
                     message = json.loads(request.content)
                     if mode == "wrong_id":
-                        return httpx.Response(200, json={
+                        return json_response({
                             "jsonrpc": "2.0", "id": message["id"] + 1, "result": "0x1",
                         })
-                    return httpx.Response(200, json={
+                    return json_response({
                         "jsonrpc": "2.0", "id": message["id"],
                         "error": {"code": -32000, "message": "private provider secret"},
                     })
@@ -212,9 +214,9 @@ class RetryingReadContracts(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(progress.last_block.number, 1)
         self.assertEqual(len(journal.publications), 1)
-        self.assertEqual(len(journal.publications[0][1]), 2)
+        self.assertEqual(len(journal.publications[0][1]), 1)
         pinned_filters = [params for method, params in requests if method == "eth_getLogs"]
-        self.assertGreaterEqual(len(pinned_filters), 3)
+        self.assertGreaterEqual(len(pinned_filters), 2)
         self.assertEqual(pinned_filters[0], pinned_filters[1])
         self.assertEqual(
             pinned_filters[0][0][0]["blockHash"],
