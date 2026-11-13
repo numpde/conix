@@ -15,6 +15,7 @@ from unittest.mock import patch
 import httpx
 import psycopg
 from psycopg import AsyncConnection
+from psycopg.conninfo import make_conninfo
 
 from anvil_catalog import catalog_for_anvil
 from pg_commit_reply import without_commit_reply
@@ -71,6 +72,7 @@ class DatabaseSessionContracts(unittest.IsolatedAsyncioTestCase):
             storage_error(psycopg.errors.ProtocolViolation("invalid PostgreSQL protocol")),
             storage_error(psycopg.errors.QueryCanceled("server cancelled operation")),
             storage_error(psycopg.errors.SerializationFailure("serialization rejected")),
+            storage_error(psycopg.OperationalError("SQLSTATE-free failure, provenance unknown")),
             StorageUnavailable("Cause and transport unconfirmed."),
             CommitOutcomeUnknown("COMMIT reply lost"),
             HistoryConflict("durable source blocked"),
@@ -200,6 +202,42 @@ class DatabaseSessionContracts(unittest.IsolatedAsyncioTestCase):
     "Requires installed owner-initialized disposable PostgreSQL and Anvil",
 )
 class RealPostgreSQLDisconnectionContracts(unittest.IsolatedAsyncioTestCase):
+    async def test_actual_wrong_password_must_not_restart_when_sqlstate_is_absent(self):
+        """The real libpq connection error may have no SQLSTATE for bad credentials."""
+        url = os.environ["CONIX_TEST_ANVIL_URL"]
+        dsn = os.environ["CONIX_TEST_ANVIL_DSN"]
+        async with httpx.AsyncClient(trust_env=False, timeout=5) as http:
+            reply = await http.post(
+                url, json={
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "eth_getBlockByNumber", "params": ["0x0", False],
+                },
+            )
+            reply.raise_for_status()
+            result = reply.json()
+            self.assertNotIn("error", result)
+            catalog = catalog_for_anvil(genesis_hash=result["result"]["hash"], rpc_url=url)
+
+        # Keep the real selected host/database/user but deliberately use an
+        # invalid password. Never include either DSN in a failure message.
+        invalid_dsn = make_conninfo(dsn, password="conix-intentionally-invalid-test-password")
+        attempts = []
+        original = database.supervise_with_reorg_recovery
+
+        async def observed(*args):
+            attempts.append(True)
+            return await original(*args)
+
+        with patch.object(database, "supervise_with_reorg_recovery", observed):
+            with self.assertRaises(StorageUnavailable) as failure:
+                await database.supervise_with_database_recovery(
+                    catalog, invalid_dsn, asyncio.Event(),
+                )
+
+        self.assertIsInstance(failure.exception.__cause__, psycopg.OperationalError)
+        self.assertFalse(database.is_restartable_database_failure(failure.exception))
+        self.assertEqual(attempts, [True], "Bad credentials must never start another application.")
+
     async def test_killed_writer_backend_recovers_with_original_reader_and_journal(self):
         """The RED is an actual failed recovery decision, not a missing symbol."""
         url = os.environ["CONIX_TEST_ANVIL_URL"]
