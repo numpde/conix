@@ -145,6 +145,15 @@ class ReorganizationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
             await self.invoke()
         self.writer.repair_to.assert_not_awaited()
 
+    async def test_missing_current_tip_at_final_check_refuses_repair(self):
+        self.set_observations({
+            9: [self.conflict, None],
+            8: [block(8), block(8)],
+        })
+        with self.assertRaises(RpcUnavailable):
+            await self.invoke()
+        self.writer.repair_to.assert_not_awaited()
+
     async def test_changed_basis_between_selection_and_repair_refuses_mutation(self):
         self.journal.inspect.side_effect = [
             self.basis,
@@ -245,6 +254,27 @@ class ReorganizationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
             return value
 
         self.writer._block = stop_during_ancestor
+        self.assertIsNone(await self.invoke())
+        self.writer.repair_to.assert_not_awaited()
+
+    async def test_stop_after_final_evidence_prevents_mutation(self):
+        self.set_observations({
+            9: [self.conflict, self.conflict],
+            8: [block(8), block(8)],
+        })
+        self.journal.inspect.side_effect = [
+            self.basis,
+            self.basis,
+        ]
+        original_inspect = self.journal.inspect
+
+        async def stop_before_repair():
+            observed = await original_inspect()
+            if original_inspect.await_count == 2:
+                self.stop.set()
+            return observed
+
+        self.journal.inspect = stop_before_repair
         self.assertIsNone(await self.invoke())
         self.writer.repair_to.assert_not_awaited()
 
@@ -537,7 +567,10 @@ class RealReorganizationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
                 checkpoint=old_checkpoint, contract="token",
                 event=TRANSFER_SIGNATURE,
             )
-            self.assertTrue(old_page.events)
+            self.assertIn(
+                bytes.fromhex(original_hash[2:]),
+                {event.transaction_hash for event in old_page.events},
+            )
 
         self.assertTrue(await self.rpc("evm_revert", [snapshot]))
         await self.rpc("evm_increaseTime", [60])
