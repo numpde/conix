@@ -1,7 +1,7 @@
 Conix — Tier 1 qualification and continuation
 ============================================
 
-13 November 2026. T1-A selected-Engine qualification recorded before integration.
+13 November 2026. T1-A and T1-B selected-Engine evidence recorded before integration.
 This is the authority for Tier 1 revision-bound implementation evidence; Note
 000 governs protected concrete delegation, and Note 004 remains the Tier-0
 source/evidence authority. Note 001 section 4 is historical T1 planning.
@@ -56,7 +56,7 @@ selected-Engine evidence. The old main-tier-1 branch's standalone follow()
 loop is obsolete; it duplicates normal Tier-0 tip scheduling and is not
 a basis for new Tier-1 supervision.
 
-T1-B — Session supervisor candidate (separate slice)
+T1-B — Qualified opt-in session supervisor
 -------------------------------------------------------
 
 Executable revision: f9d6941bcc6325e6ee5e052361d4ac3aa8634685.
@@ -103,9 +103,45 @@ backoff, and failed retirement. All tests use existing disposable sources.
 Limits: this is an opt-in in-process APPLICATION SESSION supervisor,
 not a deployed supervisor, child-process manager, generalized SQL retry
 policy, automatic reorganization repair, or durable multi-process leader
-election. GitHub-hosted CI is NOT the selected rootless Engine. T1-B
-requires a revision-bound test/indexer/run on fw/rootless agentic, plus
-independent review, before integration. Tier 1-C/D still own checked
+election. GitHub-hosted CI is NOT the selected rootless Engine. The
+selected-Engine qualification and independent review are recorded below.
+Tier 1-C/D still own checked
 reorganization automation and broader unattended recovery, including
 PostgreSQL restarts and unknown COMMIT reconciliation. Nothing is merged
 from the old main-tier-1 branch, whose follow() loop duplicated Tier 0.
+
+
+T1-B selected-Engine qualification and integration (2026-11-13)
+--------------------------------------------------------------
+
+Qualified revision: 455ecfd0e0df97751945702ed202e6ebc2dacbf3.
+Exact-head CI run 43416802908 passed:
+  https://github.com/numpde/conix/actions/runs/43416802908
+On fw, rootless Docker context agentic selected
+unix:///run/user/1000/docker-engines/agentic/docker.sock.
+The offline test runner was
+sha256:b0067d0b78b673ba259db3ab241c9858446939f0e9c7461a43c5f17df3c093d4.
+The maintained test/indexer/run passed 141 contained tests with 2 expected
+skips. Its real Anvil/PostgreSQL witness exhausted three T1-A attempts,
+observed closure of the first writer connection before the next writer
+entered, and confirmed publication through the original application and
+journal using retained source identity and history generation. Restart
+budget, excluded failure classes, stop and cancellation contracts passed.
+Owned fixture containers, network and database volume were retired;
+unrelated shared-Engine resources were preserved.
+
+Independent source review checked classification, the bounded restart
+loop, original application delegation, cancellation, and retirement before
+restart. No new blocker was found in those inspected paths.
+Private revision-bound evidence and the full contained log are under:
+  out/qualification/455ecfd0e0df97751945702ed202e6ebc2dacbf3/t1-b.json
+  out/qualification/455ecfd0e0df97751945702ed202e6ebc2dacbf3/contained.log
+These are local operator receipts, not required build inputs.
+
+Integration incorporates main's independent README rewrite at b18acb3 and
+retains that text, adding a brief opt-in resilience section. Only README.md
+and this evidence record differ from the qualified T1-B executable inputs.
+Integration CI is distinct from the selected-Engine result above. This
+qualification does not activate a deployed Tier-1 service, establish T1-C
+automatic repair or T1-D unattended recovery, or qualify arbitrary Engines,
+providers, process supervisors or production environments.
