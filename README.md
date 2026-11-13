@@ -245,7 +245,9 @@ The implemented consumer interface is a Python API providing `checkpoint()`, `ev
 
 The current indexer records selected raw contract logs, transaction identifiers, and block headers. Full transaction/receipt acquisition, broader query capabilities, and an HTTP API should not be assumed to exist merely because they are possible end-state extensions.
 
-The remaining integration requirement is a maintained way to connect independently deployed Readers to a named Conix deployment, supplying its selected catalog and ABI files, a separate read-only database credential, and the required network access without duplicating configuration or exposing the indexer's private credentials.
+On `main`, the remaining integration requirement is a maintained way to connect independently deployed Readers to a named Conix deployment, supplying its selected catalog and ABI files, a separate read-only database credential, and the required network access without duplicating configuration or exposing the indexer's private credentials.
+
+An unmerged branch, `main-reader-deployment-20261113`, implements named Reader preparation, connection checks, status, and removal using a separate Reader input volume. Those commands are not yet available on `main`.
 
 
 ### Optional Tier 1 resilience
