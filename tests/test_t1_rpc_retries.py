@@ -138,6 +138,36 @@ class RetryingReadContracts(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(deadline == original for _, _, deadline in calls))
         self.assertIs(failure.exception.__cause__, cause)
 
+    async def test_request_timeout_retries_only_while_absolute_budget_remains(self):
+        invocations = []
+        class RequestTimedOut:
+            async def call(self, method, params, *, deadline):
+                invocations.append(deadline)
+                if len(invocations) == 1:
+                    raise RpcUnavailable("individual RPC request expired") from TimeoutError()
+                return {"selected": "original base result"}
+
+        deadline = time.monotonic() + 1
+        actual = await RetryingRPC(RequestTimedOut()).call(
+            "eth_getLogs", [{"blockHash": "0x" + "1" * 64}], deadline=deadline,
+        )
+        self.assertEqual(actual, {"selected": "original base result"})
+        self.assertEqual(invocations, [deadline, deadline])
+
+    async def test_not_enough_deadline_to_wait_never_starts_another_attempt(self):
+        calls = []
+        class ConnectionRefused:
+            async def call(self, method, params, *, deadline):
+                calls.append(deadline)
+                raise RpcUnavailable("transport refused") from httpx.ConnectError("no route")
+
+        deadline = time.monotonic() + 0.02
+        with self.assertRaises(RpcUnavailable):
+            await RetryingRPC(ConnectionRefused()).call(
+                "eth_getBlockByNumber", ["0x1", False], deadline=deadline,
+            )
+        self.assertEqual(calls, [deadline])
+
     async def test_cancellation_during_retry_wait_stops_new_attempts(self):
         entered = asyncio.Event()
         attempts = []

@@ -283,3 +283,40 @@ Failure retains private logs and a result under `out/deployment-acceptance/`.
 If the consumer cannot be retired, its SQL/RPC dependencies stay available for
 inspection. Inspect those records before explicitly retiring stale resources;
 the next run never silently adopts or deletes them.
+
+
+Tier 1-A candidate: bounded selected-read retry
+------------------------------------------------
+The optional Tier-1 composition is `conix.resilience.rpc_retry.run_with_read_retries`.
+It delegates to the SAME `conix.app.run` catch-up, tip-following and
+writer-retirement loop, supplying a single selected `writer_session` factory.
+That factory enters the ORIGINAL `conix.core.open_writer` (including source
+verification and exclusive PostgreSQL journal acquisition), then constructs
+the original Tier-0 `Writer` with the same catalog and journal and a
+`RetryingRPC` around its existing `RPC.call`. It neither monkey-patches
+core methods nor creates another HTTP transport, decoder or publisher.
+
+Only `eth_getBlockByNumber` and `eth_getLogs` are method-eligible;
+the Tier-0 writer always supplies blockHash-pinned selected-log filters.
+Retries occur only when the concrete `RPC.call` raised `RpcUnavailable`
+from an `httpx.ConnectError`, `httpx.ConnectTimeout`, `httpx.ReadError`,
+`httpx.ReadTimeout`, or a per-request `TimeoutError` with remaining
+absolute operation time. Each attempt delegates the same method, params,
+selected URL and original absolute `deadline` to the existing decoder.
+There are at most three total attempts, with 50 ms then 100 ms
+cancellable waits, and NO further attempt if its wait would exhaust
+that deadline. Cancellation never spawns or shields another attempt.
+
+Not retryable: expired operation deadline, JSON-RPC provider rejection,
+HTTP non-200 (including 429/502/503/504), malformed/uncorrelated evidence,
+missing history, wrong source, branch conflict, historical calls, mutation
+methods, schema operations and all PostgreSQL publication/COMMIT activity.
+Only the selected ongoing block reads are decorated: chain/genesis
+admission inside `open_writer` is deliberately outside T1-A.
+
+Ordinary `python -I -m conix run` and existing deployed Make lifecycle
+keep the original Tier-0 default. T1-A is an explicit candidate composition,
+not a deployed service, T1-B supervisor, automatic repair or runtime
+policy switch. The contained tests qualify delegated calls, real Tier-0
+scanner/journal publication, deadlines and cancellation. Selected rootless
+Engine qualification and unattended fault recovery are separate gates.
