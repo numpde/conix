@@ -85,10 +85,10 @@ async def recover_reorganization(catalog, database_dsn, stop, *, blocked_only=Fa
     async with open_writer(
         catalog=catalog, database_dsn=database_dsn, rpc_url=catalog.chain.rpc_url,
     ) as writer:
-        if (
-            blocked_only
-            and writer.journal.basis.blocked_reason != REORGANIZATION_BLOCKED_REASON
-        ):
+        reason = writer.journal.basis.blocked_reason
+        if reason not in (None, REORGANIZATION_BLOCKED_REASON):
+            return None
+        if blocked_only and reason != REORGANIZATION_BLOCKED_REASON:
             return None
 
         selection = await select_repair_ancestor(writer)
