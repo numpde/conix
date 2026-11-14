@@ -143,7 +143,7 @@ class NamedDeploymentContracts(unittest.TestCase):
         folder = self.init()
         # Populate ONLY the editable deployment TOML with a source selection.
         root = SOURCE.copy()
-        body = named._render_deployment(root)
+        body = named.render_deployment(root)
         (folder / "deployment.toml").write_text(body, encoding="utf-8")
         (folder / "deployment.toml").chmod(0o600)
         (folder / "abi" / "token.json").write_text("[]\n")

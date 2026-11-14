@@ -1,0 +1,45 @@
+# Test-only PostgreSQL plus a fixed-upstream read-only Fuji gateway.
+services:
+  postgres:
+    extends: {file: compose/tests.yml, service: postgres}
+    labels: {io.conix.acceptance-owner: "${CONIX_ACCEPTANCE_OWNER:?owner required}"}
+  bootstrap:
+    extends: {file: compose/tests.yml, service: bootstrap}
+    labels: {io.conix.acceptance-owner: "${CONIX_ACCEPTANCE_OWNER:?owner required}"}
+  gateway:
+    image: ${CONIX_TEST_RUNNER_IMAGE:?select exact installed test image}
+    pull_policy: never
+    entrypoint: [python, -I, /tests/fuji_rpc.py]
+    environment: {CONIX_FUJI_VIEW: "${CONIX_FUJI_VIEW:?explicit source view required}"}
+    init: true
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    cpus: 1
+    mem_limit: 256m
+    memswap_limit: 256m
+    stop_grace_period: 15s
+    tmpfs: ["/tmp:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=8m"]
+    labels: {io.conix.acceptance-owner: "${CONIX_ACCEPTANCE_OWNER:?owner required}"}
+    networks: [rpc, egress]
+    logging: {driver: local, options: {max-size: 64k, max-file: "1", compress: "false"}}
+    healthcheck:
+      test: [CMD, python, -I, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).close()"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+networks:
+  tests:
+    internal: true
+    labels: {io.conix.acceptance-owner: "${CONIX_ACCEPTANCE_OWNER:?owner required}"}
+  rpc:
+    internal: true
+    labels: {io.conix.acceptance-owner: "${CONIX_ACCEPTANCE_OWNER:?owner required}"}
+  egress:
+    internal: false
+    labels: {io.conix.acceptance-owner: "${CONIX_ACCEPTANCE_OWNER:?owner required}"}
+volumes:
+  pgdata:
+    labels: {io.conix.acceptance-owner: "${CONIX_ACCEPTANCE_OWNER:?owner required}"}

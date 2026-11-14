@@ -437,7 +437,7 @@ def main():
         "wheelhouse/check", "wheelhouse/acquire",
         "image/indexer/build", "image/test-runner/build", "image/evm-test-runner/build",
         "image/indexer/check", "image/evm-test-runner/check",
-        "test/indexer/run", "test/deployment/acceptance/run", "test/input-staging/run",
+        "test/indexer/run", "test/deployment/acceptance/run", "test/indexer/acceptance/fuji/run", "test/input-staging/run",
         "history/block/advance",
         "deployment/inputs/stage", "deployment/inputs/remove",
         "deployment/config/init", "deployment/prepare", "deployment/database/schema/init",
@@ -480,6 +480,12 @@ def main():
             options.deployment = make_inputs["DEPLOYMENT"]
             options.database_network = make_inputs["DATABASE_NETWORK"]
             options.rpc_network = make_inputs["RPC_NETWORK"]
+
+        if options.action == "test/indexer/acceptance/fuji/run":
+            from tools.fixtures.fuji import run_acceptance
+
+            run_acceptance(options, client_cls=Docker, pinned_images=pinned_images)
+            return
 
         if options.action == "test/deployment/acceptance/run":
             from tools.fixtures.deployment import run_acceptance
@@ -563,6 +569,9 @@ def main():
                 wheel_pool = SharedWheelhouse(docker, image_manifest, options.wheelhouse)
                 print(wheel_pool.build(image_role))
     except (OperationError, PoolError, OSError) as error:
+        from tools.containers.diagnostics import error_record
+
+        print(error_record(error).decode("ascii"), file=sys.stderr)
         raise SystemExit(f"Conix container operation failed ({type(error).__name__}): {error}") from None
 
 

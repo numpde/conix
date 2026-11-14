@@ -103,5 +103,67 @@ class RetainedAncestryContracts(unittest.IsolatedAsyncioTestCase):
             )
 
 
+@unittest.skipUnless(os.getenv("CONIX_TEST_DSN"), "Requires owner-initialized PostgreSQL")
+class HistoryObservationContracts(unittest.TestCase):
+    def test_snapshot_keeps_one_durable_view_during_a_real_publication(self):
+        """A concurrent commit cannot combine old progress with new raw rows."""
+        import asyncio
+        from unittest.mock import patch
+        import psycopg
+        import history_observations
+        from abi_golden_vectors import ERC20
+        from conix.journal import RawEvent
+
+        catalog = prepare_catalog(Path(__file__).parent / "fixtures/catalog.toml")
+        dsn = os.environ["CONIX_TEST_DSN"]
+        event = RawEvent(b"\xad" * 32, 2, 7, catalog.contract("token").address, ERC20.topics, ERC20.data)
+
+        async def publish():
+            async with open_journal(catalog=catalog, database_dsn=dsn) as writer:
+                basis = await writer.inspect()
+                parent = basis.last_block
+                height = parent.number + 1 if parent else catalog.chain.start_block
+                block = Block(height, hashlib.sha256(f"snapshot-{height}".encode()).digest(),
+                              parent.hash if parent else bytes(32), 1700000000 + height)
+                await writer.publish_block(block=block, events=(event,))
+                return block
+
+        first = asyncio.run(publish())
+        real_connect = psycopg.connect
+        published = []
+
+        class ObservedConnection:
+            def __enter__(self):
+                self.db = real_connect(dsn, connect_timeout=5, options="-c default_transaction_read_only=on")
+                return self
+
+            def __exit__(self, *args):
+                return self.db.__exit__(*args)
+
+            @property
+            def isolation_level(self):
+                return self.db.isolation_level
+
+            @isolation_level.setter
+            def isolation_level(self, value):
+                self.db.isolation_level = value
+
+            def execute(self, sql):
+                if "FROM conix.blocks" in sql:
+                    published.append(asyncio.run(publish()))
+                return self.db.execute(sql)
+
+        with patch.object(history_observations.psycopg, "connect", return_value=ObservedConnection()):
+            observed = history_observations.snapshot(dsn)
+        self.assertEqual(len(published), 1)
+        self.assertEqual(observed["height"], first.number)
+        self.assertEqual(observed["blocks"][-1], (first.number, first.hash.hex(), first.parent_hash.hex(), first.timestamp))
+        self.assertEqual(observed["events"][-1], (
+            first.number, event.transaction_hash.hex(), event.log_index, event.transaction_index,
+            event.address.hex(), *(topic.hex() for topic in event.topics), None, event.data.hex(),
+        ))
+        self.assertEqual(history_observations.snapshot(dsn)["height"], published[0].number)
+
+
 if __name__ == "__main__":
     unittest.main()

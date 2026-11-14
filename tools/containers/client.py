@@ -15,11 +15,12 @@ CONTEXT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 IMAGE_ID = re.compile(r"sha256:[a-f0-9]{64}\Z")
 
 class OperationError(Exception):
-    """Operator-safe failure with an optional subprocess exit code."""
+    """Operator-safe failure with optional exit and admitted producer evidence."""
 
-    def __init__(self, detail, *, exit_code=None):
+    def __init__(self, detail, *, exit_code=None, diagnostic=None):
         super().__init__(detail)
         self.exit_code = exit_code
+        self.diagnostic = diagnostic
 
 
 def local_socket(endpoint):

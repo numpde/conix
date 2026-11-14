@@ -168,6 +168,9 @@ class OfflineInputChecks(unittest.TestCase):
         ]
         expected = {
             "!Dockerfile", "!pyproject.toml",
+            "!config/", "!config/deployments/", "!config/deployments/fuji-acceptance/",
+            "!config/deployments/fuji-acceptance/abi/",
+            "!config/deployments/fuji-acceptance/abi/pay_to_play.json",
             "!requirements/", "!requirements/runtime.lock", "!requirements/build.lock",
             "!src/", "!src/**", "!tests/", "!tests/**/*.py",
             "!tests/fixtures/catalog.toml",

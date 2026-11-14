@@ -182,7 +182,8 @@ class InputStaging:
                 )
                 raise OperationError(
                     f"Conix input staging failed: "
-                    f"{reason or f'exit={staging_result.returncode}; effect=unconfirmed; no admitted diagnostic'}."
+                    f"{reason or f'exit={staging_result.returncode}; effect=unconfirmed; no admitted diagnostic'}.",
+                    diagnostic=staging_result.stderr if reason is not None else None,
                 )
 
             self.verify_inputs(image, input_volume_name)
@@ -245,6 +246,7 @@ class InputStaging:
                 "Conix input verification failed: "
                 + (reason or f"exit={result.returncode}; no admitted diagnostic."),
                 exit_code=result.returncode,
+                diagnostic=result.stderr if reason is not None else None,
             )
 
     def remove_inputs(self, volume, *, token=None):

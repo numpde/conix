@@ -9,6 +9,7 @@ import sys
 
 from conix.input_staging import InputError, MAX_DSN, _credential_text, load_runtime_inputs
 from conix.schema import SchemaError, initialize
+from conix.process_diagnostic import emit_unexpected
 
 
 def main():
@@ -19,11 +20,13 @@ def main():
         catalog, _runtime_dsn = load_runtime_inputs()
         asyncio.run(initialize(owner, catalog))
     except (InputError, SchemaError) as error:
+        emit_unexpected(phase="schema_init", error=error, effect="unconfirmed")
         raise SystemExit(
             f"Conix owner initialization refused ({type(error).__name__}); "
             "inspect the selected schema and owner privilege."
         ) from None
     except Exception as error:
+        emit_unexpected(phase="schema_init", error=error, effect="unconfirmed")
         raise SystemExit(
             f"Conix owner initialization failed ({type(error).__name__}); "
             "inspect durable database state before retrying."

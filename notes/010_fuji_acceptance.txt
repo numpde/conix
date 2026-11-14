@@ -1,0 +1,118 @@
+Read-only Fuji PayToPlay acceptance
+==================================
+
+Selected scope: original Tier-0 application, all 17 ABI events and original
+Reader calls for the November-8 PayToPlay deployment. No chain writes,
+financial interpretation, sibling source changes or new recovery algorithm.
+
+The committed fuji-acceptance deployment is the sole historical source
+definition and ABI snapshot. Public source provenance and independent
+creation-receipt observations live in tests/fixtures/evm/fuji_pay_to_play.json.
+The ABI is pinned to dapp32 0c33dceb4697fe5b7b5ba0d14d4bb0d61b6b3696.
+Creation block 60737751 contains OwnershipTransferred and ChannelCreated.
+No real VoucherCollected has been identified; live coverage must not claim it.
+
+A separate fixture campaign owns disposable PostgreSQL and a fixed-upstream,
+read-method-only HTTPS gateway. Indexer/Reader use only two internal bridges;
+only the gateway receives egress. No host ports or signing inputs are granted.
+The ordinary named Make lifecycle boots and retires both application phases.
+
+Historical replay uses a labelled bounded RPC head at the creation block,
+forwarding genuine source headers, logs and state. This is a test projection,
+not evidence that Fuji itself stopped there. Recent following uses the genuine
+head and records lag instead of claiming an artificial tip is current.
+
+The recent phase creates fuji-tip-acceptance through normal config/init from
+the historical definition, changing only its explicit observed start and
+selecting the fixture's separate conix_rpc_test database. The generated
+configuration is a test-owned immutable snapshot, not another editable
+authority. It is removed only after confirmed resource retirement; failure
+keeps recovery evidence. History is never skipped within an initialized DB.
+
+Use public named configuration rendering, existing process ownership, input
+staging, Reader preparation and resource admission. Do not subclass the Anvil
+campaign or add a general campaign framework. Gateway and probe are test-
+runner-only helpers; never part of the installed runtime.
+
+The online Fuji lane remains separate from ordinary offline CI. Required
+proof includes fixed upstream/method admission and actual write denial, exact
+creation logs against independently pinned receipt fields, original Reader
+asset/viewPosition calls, recent genuine blocks, fresh process restart,
+unchanged durable prefix, explicit budgets and owned cleanup.
+
+Implement and qualify on tier-0, then merge upward into tier-1 and qualify
+its source tree. This tests the default CLI on either branch. Selecting a
+retained Tier-1 composition remains a separate operator-interface decision;
+this campaign must not claim that default deployment activates D2. Main stays
+stable until a separate promotion.
+
+Adjacent-defect audit
+--------------------
+The initial live candidate exposed an expected empty-action representation
+mismatch and a cleanup phase replacing the failed operation. Review then
+followed the same boundaries through child diagnostics, receipt publication,
+resource retirement, networking and durable observations.
+
+Confirmed corrections:
+- Original exceptions survive failed cleanup, missing diagnostic receipts,
+  failed receipt publication and broken terminal output. Receipt publication
+  is private and atomic; a failed replacement preserves earlier evidence.
+- Named child failures preserve admitted producer phase, cause, effect and
+  source location. Arbitrary stderr and provider explanations remain private.
+- Gateway admission refusal and upstream failure remain distinct; bounded
+  upstream category/status and known source-check identities reach the host.
+- Historical height, hash, raw events, asset and each position field have
+  separate comparisons, so an expected-value defect is distinguishable.
+- Cleanup identifies the actual deployment/action, retains dependencies on
+  uncertain retirement and requires exact project-derived resource names.
+- Missing DNS cannot qualify TCP denial. Each resolved destination is tested;
+  unavailable or incomplete evidence fails qualification.
+- The shared test observer uses a repeatable-read, read-only transaction and
+  includes complete block/event fields, so concurrent publication cannot
+  mix durable states or conceal changed raw payloads during restart checks.
+
+These are acceptance and diagnostic corrections, not alternate scanning,
+publication, reconciliation or Reader algorithms. No production deployment,
+Fuji transaction, sibling modification or Tier-1 recovery activation occurs.
+
+The first audited live run at 5cc1215 correctly refused qualification because
+the internal helper could not resolve public DNS. This demonstrates why the
+preceding broad OSError catch was insufficient TCP evidence. The gateway now
+provides a bounded snapshot of only its fixed public upstream's resolved
+addresses. The internal probe admits those numeric public targets and tests
+each directly; the receipt retains the tested address snapshot. This proves
+denied direct TCP to those targets, not universal runtime egress isolation.
+
+Tier-0 qualification — 14 November 2026
+---------------------------------------
+Local rootless agentic qualification passed on the clean source at
+ e0a52e3fb6f4cc4fbeaf0ee31e010e635b1de75b.
+Two unpushed commits were subsequently regrouped without changing any file:
+331d01598310131185377963b11d631d56b1e44e has the identical Git tree
+ e61d94eca43037c76440cc74c9fa4ad76b7b8a92.
+This is source-content qualification, not a claim that the earlier receipt
+names the regrouped commit. The following qualification record is docs only.
+
+Local checks: 206 repository tests; six input checks; 141 contained tests
+with two expected skips, plus both owner-only initialization tests.
+The remaining maintained workflow steps passed locally: pinned image/pool
+checks, offline runtime/test/EVM images, private staging, named preparation,
+prospective Compose admission and independent Reader prepare/status/remove.
+CI's generated selection and profile were retired. No hosted CI was used.
+
+The read-only live campaign passed with source_dirty=false and no cleanup
+errors. Private receipt:
+ out/fuji-acceptance/adb9f389ec82c7648e504cc6/result.json
+Historical checkpoint: 60737751, exactly two creation events plus matching
+asset and complete zero-customer/channel-zero viewPosition result.
+Recent start: 61080221; observed head at initial startup: 61080226.
+Before restart: 61080228; resumed observation: 61080229.
+Final Reader checkpoint: 61080230; subsequently observed head: 61080262.
+Measured lag: 32 blocks. Four resolved upstream addresses were denied direct
+TCP access from the confined helper; gateway reads and local write denial
+passed. Normal named lifecycle and independent Reader cleanup passed.
+
+Limits: two observed event kinds out of 17 selected; no live collection
+witness, full deployment-history backfill or sustained moving-tip claim.
+This is the ordinary Tier-0 CLI, not activated Tier-1 recovery. No production
+activation, signing, chain writes, main promotion or remote push occurred.

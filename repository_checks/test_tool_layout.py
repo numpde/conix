@@ -27,6 +27,7 @@ TOOL_FILES = {
     "tools/fixtures/protocol.py",
     "tools/fixtures/process.py",
     "tools/fixtures/deployment.py",
+    "tools/fixtures/fuji.py",
     "tools/wheelhouse/__init__.py",
     "tools/wheelhouse/acquire_tool.py",
     "tools/wheelhouse/locks.py",

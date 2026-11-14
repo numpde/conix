@@ -20,7 +20,7 @@ override export CONIX_MAKE_DEPLOYMENT := $(value DEPLOYMENT)
 override export CONIX_MAKE_DATABASE_NETWORK := $(value DATABASE_NETWORK)
 override export CONIX_MAKE_RPC_NETWORK := $(value RPC_NETWORK)
 
-.PHONY: test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/indexer/run test/deployment/acceptance/run test/input-staging/run test/indexer/acceptance/borrowed/run test/indexer/acceptance/owned/run history/block/advance deployment/inputs/stage deployment/inputs/remove deployment/config/init deployment/prepare deployment/database/schema/init deployment/config/check deployment/up deployment/status deployment/logs deployment/down deployment/reader/prepare deployment/reader/check deployment/reader/status deployment/reader/remove help
+.PHONY: test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/indexer/run test/deployment/acceptance/run test/indexer/acceptance/fuji/run test/input-staging/run test/indexer/acceptance/borrowed/run test/indexer/acceptance/owned/run history/block/advance deployment/inputs/stage deployment/inputs/remove deployment/config/init deployment/prepare deployment/database/schema/init deployment/config/check deployment/up deployment/status deployment/logs deployment/down deployment/reader/prepare deployment/reader/check deployment/reader/status deployment/reader/remove help
 
 # Each action's declaration is also the help authority. Recipes share the
 # literal-value dispatchers; no Make target aliases or duplicate help list.
@@ -78,6 +78,9 @@ test/indexer/run: ## Run installed indexer/CLI suite in disposable PostgreSQL/An
 	$(RUN_OPERATOR)
 
 test/deployment/acceptance/run: ## Test catch-up, tip-following, restart continuity and shutdown; owns disposable SQL/RPC; uses saved deployment-acceptance profile
+	$(RUN_OPERATOR)
+
+test/indexer/acceptance/fuji/run: ## Read-only Fuji deployment acceptance; owns disposable SQL and gateway; uses saved fuji-acceptance profile
 	$(RUN_OPERATOR)
 
 test/input-staging/run: ## Stage catalog/ABIs/runtime DSN, verify confinement, then retire test volume; INDEXER_IMAGE=<sha256:id> CONFIG_FILE=<catalog path> DSN_FILE=<private path>

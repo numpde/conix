@@ -210,7 +210,7 @@ def _table(label, data):
     return "".join(rows) + "\n"
 
 
-def _render_deployment(document):
+def render_deployment(document):
     """Render editable deployment data without inventing any source settings."""
     keys = ("version", "docker_context", "wheelhouse", "database_network", "rpc_network")
     output = []
@@ -600,10 +600,16 @@ def database_init(decl, docker, receipt):
     except OSError as error:
         raise OperationError("Could not launch the contained owner-only initializer.") from error
     if result.returncode:
+        from tools.containers.diagnostics import PREFIX, explanation
+
+        records = [line for line in result.stderr.splitlines() if line.startswith(PREFIX)]
+        diagnostic = records[0] if len(result.stderr) <= 65536 and len(records) == 1 else None
+        reason = explanation(diagnostic, result.returncode, phases={"schema_init"})
         raise OperationError(
-            f"Schema initializer failed (exit {result.returncode}); "
-            "inspect the selected database before retrying."
+            "Schema initializer failed: " + (reason or f"exit={result.returncode}; inspect durable state before retrying."),
+            exit_code=result.returncode, diagnostic=diagnostic if reason else None,
         )
+
     print(f"Initialized fresh Conix history for deployment {decl.name}.")
     print(f"Next: make deployment/up DEPLOYMENT={decl.name}")
 

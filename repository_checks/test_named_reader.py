@@ -50,7 +50,7 @@ class NamedReaderContracts(unittest.TestCase):
         (self.folder / "abi").mkdir(mode=0o700)
         (self.folder / "secrets").mkdir(mode=0o700)
         cfg = self.folder / "deployment.toml"
-        cfg.write_text(named._render_deployment(SOURCE))
+        cfg.write_text(named.render_deployment(SOURCE))
         cfg.chmod(0o600)
         (self.folder / "abi" / "token.json").write_text("[]\n")
         (self.folder / "abi" / "token.json").chmod(0o600)

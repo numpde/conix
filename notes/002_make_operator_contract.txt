@@ -155,6 +155,29 @@ resources or locks are refused before mutation; uncertainty retains private
 evidence under out/deployment-acceptance/ and blocks automatic reuse. The test
 never tears down SQL/RPC while the retained consumer may still be alive.
 
+Read-only Fuji acceptance
+------------------------
+test/indexer/acceptance/fuji/run selects the committed fuji-acceptance
+profile, its pinned deployed PayToPlay ABI and all 17 event signatures.
+It owns disposable PostgreSQL plus a fixed-upstream read-method gateway in
+compose/fuji-test.yml; no signing inputs, chain mutations or host ports.
+Only the gateway receives external networking. Normal named deployment and
+Reader commands prepare, start, inspect and retire Conix.
+
+The creation-block phase uses an explicitly bounded head and independently
+pinned receipt/state expectations. The recent phase creates an ordinary
+fuji-tip-acceptance snapshot with a separately initialized database, observes
+genuine moving-head blocks, restarts the process, and compares complete
+durable history. It records head lag rather than requiring or claiming that
+the service keeps pace with Fuji. Its progress budget is 64 stored blocks
+and 240 seconds per wait. It does not backfill the entire deployed history
+or prove an emitted event for every selected signature.
+
+Each run retains private evidence under out/fuji-acceptance/<owner>/.
+Unexpected existing locks/resources are refused. Unconfirmed consumer or
+input retirement preserves dependencies and recovery records. The generated
+recent profile is removed only after confirmed resource retirement.
+
 Blind Make naming workshop — 13 November 2026
 ---------------------------------------------
 The first slice aligned all acceptance entry points under test/:

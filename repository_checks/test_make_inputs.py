@@ -28,6 +28,7 @@ PARAMETERS = {
     "image/evm-test-runner/check": "IMAGE",
     "test/indexer/run": "RUNNER_IMAGE",
     "test/deployment/acceptance/run": "DEPLOYMENT",
+    "test/indexer/acceptance/fuji/run": "DEPLOYMENT",
     "test/input-staging/run": "DSN_FILE",
     "test/indexer/acceptance/borrowed/run": "FIXTURE_DESCRIPTOR",
     "test/indexer/acceptance/owned/run": "DAPP32_DIR",
