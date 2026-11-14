@@ -277,6 +277,10 @@ consumer deployments on other hosts.
 
 ### Optional Tier 1 resilience
 
+The following compositions are available on `tier-1` and `main`. The
+`tier-0` branch provides the standalone core without the resilience package
+or its extension tests. See [branch policy](notes/009_branch_policy.txt).
+
 The default `conix run` remains the Tier 0 application. Opt-in Python
 compositions include: `conix.resilience.rpc_retry.run_with_read_retries`
 adds bounded selected-read retries; `conix.resilience.supervisor.supervise`
