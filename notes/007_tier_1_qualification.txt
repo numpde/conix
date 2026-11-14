@@ -576,3 +576,60 @@ This is exact-head GitHub-hosted evidence, not selected fw/rootless agentic
 qualification of the revised branch head. Independent rootless requalification,
 retained-service and owned dapp32 acceptance campaigns, and promotion to
 main remain open. No production activation is implied.
+
+
+Continuation-first T1-D2 — independent selected-rootless qualification
+---------------------------------------------------------------------
+
+Qualified executable/test revision (14 November 2026):
+  ebfa02f1613f86933adf46c9d958bcf54397e933
+The clean tier-1 checkout was fast-forwarded to this exact revision. Main
+remained cf7c013 and tier-0 remained 6ea642f. No application source changed
+during qualification. This record is subsequent documentation only.
+
+On fw, Docker context agentic selected
+unix:///run/user/1000/docker-engines/agentic/docker.sock; Engine inspection
+confirmed rootless, seccomp and cgroup namespace security options. The
+explicit shared wheelhouse was /home/ra/Downloads/wheelhouse.
+
+The entire maintained CI workflow was replayed locally: 189 repository
+checks, 6 input checks and 204 contained tests with 2 expected skips passed,
+including both real publication-COMMIT outcomes and the intervening-writer
+regression. Offline indexer/test/EVM image preparation, staged inputs, named
+configuration and Reader preparation/status/removal passed. The contained
+stack, exact CI staging volume and temporary CI profile were retired.
+
+The maintained test/deployment/acceptance/run passed catch-up, tip-following,
+clean shutdown, fresh-container restart, durable-prefix continuity and live
+Reader checking with an independent input volume. Its owned resources were
+retired and its generated deployment/Reader locks removed.
+
+The maintained test/indexer/acceptance/owned/run passed real dapp32 contract
+transactions, restart, manual reorganization repair and the final continuous
+PayToPlay/ERC-20/ERC-721 phase. Consumer SQL/network resources were retired
+before successful producer fixture/down. The sibling source remained clean
+and unchanged at a146b5ec272e10108dc2900695d02e7ba2b5a846.
+
+Independent source review found no blocker. The revised policy preserves
+original application/writer/scanner/journal execution, reliable publication
+provenance, cancellation, retirement and stop semantics. The real intervening
+writer witness establishes why strict attempt matching was an unnecessary
+continuation gate. No Tier-0 executable change is part of this revision.
+
+D2 permits at most three complete D1/C/B compositions, including the initial
+one. Nested budgets can multiply to at most 81 original app.run invocations
+per outer D2 call (3 x 3 x 3 x 3). This does not bound ordinary healthy
+writer sessions or tip polling; T1-A separately bounds eligible physical
+read attempts within each operation deadline.
+
+Scope: the contained tests directly exercise the opt-in D2 composition.
+The retained-service and dapp32 campaigns run default conix run, which calls
+the original Tier-0 app directly. Those campaigns establish regression
+acceptance at this source revision, not deployed D2 activation or unattended
+D2 service qualification. No production resource was activated or retired.
+No promotion to main, change to tier-0 or remote-CI replay is claimed.
+
+Private exact-revision logs, retained deployment observations and machine-
+readable receipt:
+  out/qualification/ebfa02f1613f86933adf46c9d958bcf54397e933/rootless-20261114T175037Z/
+These are local operator receipts, not required build inputs.
