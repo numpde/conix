@@ -268,7 +268,7 @@ from abi_golden_vectors import ERC20
 from pg_commit_reply import without_commit_reply
 from conix import app
 from conix.core import open_writer
-from conix.journal import Journal
+from conix.journal import Journal, open_journal
 from conix.reader import open_reader
 
 
@@ -381,3 +381,135 @@ class RealPublicationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(page.complete)
                 self.assertEqual(page.events[:-1], prefix.events)
                 self.assertEqual(sum(event.transaction_hash.hex() == transaction[2:] for event in page.events), 1)
+
+
+    async def test_intervening_original_writer_progress_does_not_block_recovery(self):
+        """A successful authorized advance is not a reason to stop D2."""
+        url = os.environ["CONIX_TEST_ANVIL_URL"]
+        dsn = os.environ["CONIX_TEST_ANVIL_DSN"]
+        reader_dsn = os.environ["CONIX_TEST_ANVIL_READ_DSN"]
+
+        async with httpx.AsyncClient(trust_env=False, timeout=5) as http:
+            async def rpc(method, params):
+                response = await http.post(
+                    url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+                )
+                response.raise_for_status()
+                result = response.json()
+                self.assertNotIn("error", result)
+                return result["result"]
+
+            genesis = await rpc("eth_getBlockByNumber", ["0x0", False])
+            catalog = catalog_for_anvil(genesis_hash=genesis["hash"], rpc_url=url)
+            await rpc("evm_mine", [])
+            async with open_writer(catalog=catalog, database_dsn=dsn, rpc_url=url) as writer:
+                while await writer.advance_one() is not None:
+                    pass
+
+            # Use the same real selected ERC-20 event as the normal D2 witness.
+            token = "0x" + "11" * 20
+            runtime = (b"\x7f" + ERC20.data + b"\x60\x00\x52"
+                       + b"".join(b"\x7f" + topic for topic in reversed(ERC20.topics))
+                       + b"\x60\x20\x60\x00\xa3\x00")
+            await rpc("anvil_setCode", [token, "0x" + runtime.hex()])
+            account = (await rpc("eth_accounts", []))[0]
+
+            async with open_reader(catalog=catalog, database_dsn=reader_dsn, rpc_url=url) as reader:
+                before = await reader.checkpoint()
+                prefix = await reader.events(
+                    checkpoint=before, contract="token",
+                    event="Transfer(address,address,uint256)", limit=catalog.limits.max_page_size,
+                )
+                self.assertTrue(prefix.complete)
+
+            transaction = await rpc("eth_sendTransaction", [{
+                "from": account, "to": token, "gas": "0x100000",
+            }])
+            receipt = await rpc("eth_getTransactionReceipt", [transaction])
+            self.assertEqual(receipt["status"], "0x1")
+            self.assertEqual(len(receipt["logs"]), 1)
+            candidate_height = int(receipt["blockNumber"], 16)
+            self.assertEqual(candidate_height, before.block.number + 1)
+
+            original_application = publication.supervise_with_database_recovery
+            original_reconcile = Journal.reconcile_publication
+            original_report = app.report
+            attempts, supervisor_inspections, intervening_advances = [], [], []
+            stop = asyncio.Event()
+
+            async def inspected(journal, attempt):
+                supervisor_inspections.append(True)
+                return await original_reconcile(journal, attempt)
+
+            def report(progress):
+                original_report(progress)
+                if progress.last_block.number >= candidate_height + 2:
+                    stop.set()
+
+            async with without_commit_reply(dsn) as (relay_dsn, dropped):
+                async def supervised_application(source, _dsn, signal):
+                    attempts.append(True)
+                    try:
+                        return await original_application(
+                            source, relay_dsn if len(attempts) == 1 else dsn, signal,
+                        )
+                    except PublicationOutcomeUnknown as failure:
+                        self.assertEqual(len(attempts), 1)
+                        self.assertEqual(failure.attempt.block.number, candidate_height)
+                        await dropped
+
+                        # The original failed app has retired. A different,
+                        # authorized original writer must reacquire its lock,
+                        # inspect actual progress and publish the next block.
+                        await rpc("evm_mine", [])
+                        async with open_writer(
+                            catalog=catalog, database_dsn=dsn, rpc_url=url,
+                        ) as writer:
+                            progress = await writer.advance_one()
+                            self.assertEqual(progress.last_block.number, candidate_height + 1)
+                            intervening_advances.append(progress)
+                            self.assertIsNone(await writer.advance_one())
+
+                        # Verify why the old strict gate refuses: legitimate
+                        # progress has moved past the attempted revision.
+                        # This inspection is test-only, not a D2 prerequisite.
+                        async with open_journal(catalog=catalog, database_dsn=dsn) as journal:
+                            self.assertIs(
+                                await original_reconcile(journal, failure.attempt),
+                                PublicationObservation.OTHER_DURABLE_STATE,
+                            )
+                        await rpc("evm_mine", [])
+                        raise
+
+                with (
+                    patch.object(publication, "supervise_with_database_recovery", supervised_application),
+                    patch.object(Journal, "reconcile_publication", inspected),
+                    patch.object(app, "report", report),
+                ):
+                    outcome = await asyncio.wait_for(
+                        publication.supervise_with_publication_recovery(catalog, dsn, stop),
+                        timeout=30,
+                    )
+                await dropped
+
+            self.assertIs(outcome, RunOutcome.STOPPED_AFTER_ADVANCE)
+            self.assertEqual(len(attempts), 2)
+            self.assertEqual(len(intervening_advances), 1)
+            self.assertEqual(supervisor_inspections, [],
+                             "D2 must not require an attempt-specific journal observation.")
+
+            async with open_reader(catalog=catalog, database_dsn=reader_dsn, rpc_url=url) as reader:
+                after = await reader.checkpoint()
+                page = await reader.events(
+                    checkpoint=after, contract="token",
+                    event="Transfer(address,address,uint256)", limit=catalog.limits.max_page_size,
+                )
+            self.assertEqual(after.block.number, candidate_height + 2)
+            self.assertEqual(after.generation, before.generation)
+            self.assertEqual(after.revision, before.revision + 3)
+            self.assertTrue(page.complete)
+            self.assertEqual(page.events[:-1], prefix.events)
+            self.assertEqual(
+                sum(event.transaction_hash.hex() == transaction[2:] for event in page.events),
+                1,
+            )
