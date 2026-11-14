@@ -16,8 +16,11 @@ their presence does not make those implementations part of Tier 0.
 
 Tier 1 composes the original core and application with bounded recovery
 policy. It must not replace authoritative implementations. Note 000 governs
-concrete delegation; Note 008 discusses uncertain publication, without
-implementing it. Branch placement does not waive protected-core review.
+concrete delegation; Note 008 records the implemented, journal-owned
+uncertain-publication observation and the revised continuation-first Tier-1
+policy plan. The currently qualified Tier-1 code still requires exact
+observation until that policy revision is implemented and tested.
+Branch placement does not waive protected-core review.
 
 Make core corrections on tier-0, qualify them there, then merge tier-0 into
 tier-1. Make extension changes and their tests on tier-1. Keep changes to
@@ -30,11 +33,12 @@ passing hosted workflow is a production activation or selected-Engine proof.
 Run maintained CI locally on the selected Engine as primary evidence; record
 exact revisions and qualification limits in the owning evidence note.
 
-The branch split preserves current Tier-0 Reader and deployment improvements
-that were historically developed alongside Tier 1. The original Tier-0 application now owns the narrow writer-session composition
-seam. Tier 1 still carries reorganization-reason vocabulary; that difference
-requires continued boundary review.
-No new recovery algorithm is introduced by establishing these branches.
+The branch split preserves Tier-0 Reader and deployment improvements
+that were historically developed alongside Tier 1. The original Tier-0
+application owns the narrow writer-session composition seam. Tier 1 still
+carries reorganization-reason vocabulary; that difference requires continued
+boundary review. No new recovery algorithm is introduced merely by
+establishing these branches.
 
 The dated archive/* tags preserve historical alternatives, not maintained
 Tier-0/Tier-1 baselines. Do not merge the archived follow-loop experiment as
