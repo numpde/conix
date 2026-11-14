@@ -7,6 +7,9 @@ or submit a transaction. This is transport policy, not indexing evidence.
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import ipaddress
+import socket
+from urllib.parse import urlsplit
 import os
 from pathlib import Path
 import re
@@ -101,6 +104,18 @@ def forward(client, request):
     return result
 
 
+def upstream_addresses():
+    """Resolve only the selected public upstream for the confined TCP control."""
+    try:
+        addresses = socket.getaddrinfo(urlsplit(SOURCE["rpc_url"]).hostname, 443, type=socket.SOCK_STREAM)
+        selected = list(dict.fromkeys(str(ipaddress.ip_address(value[4][0])) for value in addresses))
+        if not selected or len(selected) > 8 or any(not ipaddress.ip_address(value).is_global for value in selected):
+            raise ValueError("Selected upstream has no bounded public address evidence.")
+        return selected
+    except (OSError, ValueError) as error:
+        raise UpstreamFailure("dns_evidence") from error
+
+
 def serve():
     """Serve only the fixture's internal peers with finite request resources."""
     mode = os.environ.get("CONIX_FUJI_VIEW")
@@ -126,7 +141,13 @@ def serve():
             self.wfile.write(payload)
 
         def do_GET(self):
-            self.reply(200 if self.path == "/healthz" else 404, {"view": mode})
+            if self.path == "/upstream-addresses":
+                try:
+                    self.reply(200, {"addresses": upstream_addresses()})
+                except UpstreamFailure:
+                    self.reply(502, {"error": "Selected upstream DNS evidence is unavailable."})
+            else:
+                self.reply(200 if self.path == "/healthz" else 404, {"view": mode})
 
         def do_POST(self):
             self.connection.settimeout(12)

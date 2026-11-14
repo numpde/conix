@@ -74,3 +74,11 @@ Confirmed corrections:
 These are acceptance and diagnostic corrections, not alternate scanning,
 publication, reconciliation or Reader algorithms. No production deployment,
 Fuji transaction, sibling modification or Tier-1 recovery activation occurs.
+
+The first audited live run at 5cc1215 correctly refused qualification because
+the internal helper could not resolve public DNS. This demonstrates why the
+preceding broad OSError catch was insufficient TCP evidence. The gateway now
+provides a bounded snapshot of only its fixed public upstream's resolved
+addresses. The internal probe admits those numeric public targets and tests
+each directly; the receipt retains the tested address snapshot. This proves
+denied direct TCP to those targets, not universal runtime egress isolation.

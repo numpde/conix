@@ -163,32 +163,66 @@ class FujiGatewayContracts(unittest.TestCase):
         self.assertNotIn("0x1", str(caught.exception))
 
 
-    def test_missing_dns_does_not_prove_direct_upstream_denial(self):
-        import socket
+
+    def test_missing_gateway_dns_does_not_prove_direct_upstream_denial(self):
+        import urllib.error
         from unittest.mock import patch
         import fuji_probe
-        with patch.object(fuji_probe.socket, "getaddrinfo", side_effect=socket.gaierror("private")):
+        with patch.object(fuji_probe.urllib.request, "urlopen", side_effect=urllib.error.URLError("private")):
             with self.assertRaises(fuji_probe.CheckFailed) as caught:
                 fuji_probe.direct_upstream_denied()
         self.assertEqual(caught.exception.check, "upstream_dns")
 
     def test_direct_denial_requires_every_resolved_destination_to_refuse(self):
-        import socket
+        import io
         from unittest.mock import MagicMock, patch
         import fuji_probe
-        addresses = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2." + str(i), 443)) for i in (1, 2)]
+        addresses = ["1.1.1.1", "8.8.8.8"]
         for outcomes in ((OSError("unreachable"), OSError("unreachable")), (OSError("unreachable"), None)):
             peers = [MagicMock() for _ in outcomes]
             for peer, outcome in zip(peers, outcomes):
                 peer.__enter__.return_value = peer
                 peer.connect.side_effect = outcome
-            with patch.object(fuji_probe.socket, "getaddrinfo", return_value=addresses):
+            response = io.BytesIO(json.dumps({"addresses": addresses}).encode())
+            with patch.object(fuji_probe.urllib.request, "urlopen", return_value=response):
                 with patch.object(fuji_probe.socket, "socket", side_effect=peers):
                     if outcomes[-1] is None:
                         with self.assertRaises(fuji_probe.CheckFailed) as caught:
                             fuji_probe.direct_upstream_denied()
                         self.assertEqual(caught.exception.check, "direct_egress")
                     else:
-                        self.assertEqual(fuji_probe.direct_upstream_denied()["direct_upstream_tcp"], "blocked")
+                        result = fuji_probe.direct_upstream_denied()
+                        self.assertEqual(result["direct_upstream_tcp"], "blocked")
+                        self.assertEqual(result["upstream_addresses"], addresses)
             for peer, address in zip(peers, addresses):
-                peer.connect.assert_called_once_with(address[-1])
+                peer.connect.assert_called_once_with((address, 443))
+
+    def test_address_evidence_is_fixed_to_public_upstream_and_admitted_before_use(self):
+        import io
+        import socket
+        from unittest.mock import patch
+        import fuji_probe
+        records = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("1.1.1.1", 443))]
+        with patch.object(fuji_rpc.socket, "getaddrinfo", return_value=records) as resolve:
+            self.assertEqual(fuji_rpc.upstream_addresses(), ["1.1.1.1"])
+        self.assertEqual(resolve.call_args.args[1], 443)
+        self.assertIn(resolve.call_args.args[0], fuji_rpc.SOURCE["rpc_url"])
+        for addresses in ([], ["127.0.0.1"], ["private"], [1], ["1.1.1.1"] * 9):
+            with patch.object(fuji_probe.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps({"addresses": addresses}).encode())):
+                with patch.object(fuji_probe.socket, "socket") as connect:
+                    with self.assertRaises(fuji_probe.CheckFailed):
+                        fuji_probe.direct_upstream_denied()
+                    connect.assert_not_called()
+
+
+    def test_unreadable_gateway_error_body_keeps_the_http_failure(self):
+        import urllib.error
+        from unittest.mock import patch
+        import fuji_probe
+        error = urllib.error.HTTPError("http://gateway", 502, "private", {}, None)
+        with patch.object(error, "read", side_effect=OSError("private")):
+            with patch.object(fuji_probe.urllib.request, "urlopen", side_effect=error):
+                with self.assertRaises(fuji_probe.ReadRejected) as caught:
+                    fuji_probe.rpc("eth_getLogs", [])
+        self.assertEqual(caught.exception.code, 502)
+        self.assertIsNone(caught.exception.upstream)

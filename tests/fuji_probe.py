@@ -2,13 +2,13 @@
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 from pathlib import Path
 import sys
 import socket
 import re
 import time
-from urllib.parse import urlsplit
 import traceback
 import urllib.error
 import urllib.request
@@ -59,7 +59,7 @@ def rpc(method, params):
                 upstream = cause
                 if type(status) is int and 100 <= status <= 599:
                     upstream += " status " + str(status)
-        except (ValueError, TypeError, AttributeError):
+        except (OSError, ValueError, TypeError, AttributeError):
             pass  # Unadmitted gateway content never contributes to diagnostics.
         raise ReadRejected(method, "HTTP", error.code, upstream=upstream) from error
     if len(raw) > 2 * 1024 * 1024:
@@ -84,26 +84,37 @@ def position_record(fields, values):
 
 def direct_upstream_denied():
     """Missing DNS is unavailable evidence; test every resolved TCP destination."""
-    upstream = urlsplit(SOURCE["rpc_url"])
     try:
-        addresses = socket.getaddrinfo(upstream.hostname, 443, type=socket.SOCK_STREAM)
-    except socket.gaierror as error:
+        # Internal peers intentionally need no public DNS. The fixed gateway
+        # supplies public numeric targets; it cannot select another hostname.
+        with urllib.request.urlopen("http://gateway:8080/upstream-addresses", timeout=5) as response:
+            raw = response.read(4097)
+        if len(raw) > 4096:
+            raise ValueError("Oversized address evidence.")
+        document = json.loads(raw)
+        addresses = document["addresses"]
+        if type(document) is not dict or set(document) != {"addresses"} or type(addresses) is not list or not 0 < len(addresses) <= 8:
+            raise ValueError("Unusable address evidence.")
+        addresses = [ipaddress.ip_address(value) for value in addresses if type(value) is str]
+        if len(addresses) != len(document["addresses"]) or any(not address.is_global for address in addresses):
+            raise ValueError("Nonpublic address evidence.")
+    except (OSError, ValueError, KeyError, TypeError) as error:
         raise CheckFailed("upstream_dns") from error
-    if not addresses or len(addresses) > 8:
-        raise CheckFailed("upstream_dns")
     deadline = time.monotonic() + 8
-    for family, kind, protocol, _name, address in addresses:
+    for address in addresses:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise CheckFailed("network_deadline")
-        with socket.socket(family, kind, protocol) as direct:
+        with socket.socket(socket.AF_INET if address.version == 4 else socket.AF_INET6, socket.SOCK_STREAM) as direct:
             direct.settimeout(min(1, remaining))
             try:
-                direct.connect(address)
+                direct.connect((str(address), 443))
             except OSError:
                 continue
         raise CheckFailed("direct_egress")
-    return {"gateway_read": "passed", "upstream_dns": "resolved", "direct_upstream_tcp": "blocked"}
+    return {"gateway_read": "passed", "upstream_dns": "resolved_by_gateway",
+            "upstream_addresses": [str(address) for address in addresses], "upstream_port": 443,
+            "direct_upstream_tcp": "blocked"}
 
 
 async def reader_observation(request):
