@@ -294,8 +294,15 @@ It revalidates the ancestor, stored-tip conflict and durable basis, invokes
 the original repair, then restarts the ordinary supervised application.
 Unrelated operator holds, unavailable evidence and uncertain COMMIT do not
 authorize repair. C1 and C2 passed selected-rootless qualification at their
-recorded revisions. This does not enable recovery in the default CLI or
-qualify unattended T1-D operation.
+recorded revisions. This does not enable recovery in the default CLI.
+
+The opt-in `conix.resilience.database.supervise_with_database_recovery`
+composition adds at most two fresh application sessions after explicitly
+classified PostgreSQL connection/shutdown failures. An absent SQLSTATE does
+not authorize recovery: real authentication failures may lack one.
+Uncertain COMMIT outcomes, unrelated SQL failures and unconfirmed writer
+retirement remain fatal. T1-D1 has not been activated in the default CLI;
+automatic uncertain-COMMIT reconciliation (T1-D2) is not implemented.
 
 [Note 007](notes/007_tier_1_qualification.txt) records policies, exact revisions,
 CI evidence and qualification limits.
