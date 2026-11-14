@@ -563,6 +563,9 @@ def main():
                 wheel_pool = SharedWheelhouse(docker, image_manifest, options.wheelhouse)
                 print(wheel_pool.build(image_role))
     except (OperationError, PoolError, OSError) as error:
+        from tools.containers.diagnostics import error_record
+
+        print(error_record(error).decode("ascii"), file=sys.stderr)
         raise SystemExit(f"Conix container operation failed ({type(error).__name__}): {error}") from None
 
 

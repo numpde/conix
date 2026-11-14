@@ -145,6 +145,7 @@ class NamedReaderCheckContracts(unittest.TestCase):
                     )
                 message = str(caught.exception)
                 if admitted:
+                    self.assertEqual(caught.exception.diagnostic, record.rstrip(b"\n"))
                     self.assertIn("HistoryUnavailable", message)
                     self.assertIn("reader.py:655", message)
                     self.assertIn("reader check", message)

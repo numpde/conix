@@ -58,5 +58,26 @@ class ProcessDiagnosticContracts(unittest.TestCase):
         self.assertIn("phase=staging", explanation(payload, 2, phases={"staging"}))
 
 
+    def test_operator_record_preserves_the_admitted_producer_failure(self):
+        from tools.containers.client import OperationError
+        from tools.containers.diagnostics import error_record
+        record = b'CONIX-FAILURE-V1 {"phase":"reader_check","cause":"StorageUnavailable","effect":"unconfirmed"}'
+        error = OperationError("Reader check failed.", diagnostic=record, exit_code=2)
+        self.assertEqual(admitted(error_record(error)), admitted(record))
+
+    def test_host_fallback_does_not_stringify_exception_values(self):
+        from tools.containers.diagnostics import error_record
+        class HostileFailure(RuntimeError):
+            def __str__(self):
+                raise AssertionError("Do not stringify private values.")
+        try:
+            raise HostileFailure()
+        except HostileFailure as error:
+            record = admitted(error_record(error))
+        self.assertEqual(record["cause"], "HostileFailure")
+        self.assertEqual(record["phase"], "operator")
+        self.assertIn("test_process_diagnostics.py:", record["location"])
+
+
 if __name__ == "__main__":
     unittest.main()

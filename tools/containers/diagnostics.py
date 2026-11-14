@@ -8,9 +8,11 @@ without redacting or forwarding exception messages.
 
 import json
 import re
+from pathlib import Path
+import traceback
 
 PREFIX = b"CONIX-FAILURE-V1 "
-PHASES = frozenset({"staging", "verification", "staged_inputs", "advance", "reader_check"})
+PHASES = frozenset({"staging", "verification", "staged_inputs", "advance", "reader_check", "operator", "schema_init"})
 CAUSES = frozenset({
     "InputError", "OSError", "CommitOutcomeUnknown",
     "BranchConflict", "HistoryConflict", "StorageUnavailable", "WriterBusy",
@@ -76,3 +78,18 @@ def explanation(stderr, exit_code, *, phases):
     }[fields["effect"]]
     location = f"; location={fields['location']}" if "location" in fields else ""
     return f"phase={phase}; cause={fields['cause']}; effect={effect}{location}; exit={exit_code}"
+
+
+def error_record(error):
+    """Preserve an admitted producer record or describe the host failure safely."""
+    previous = getattr(error, "diagnostic", None)
+    if admitted(previous) is not None:
+        return previous
+    category = type(error).__name__
+    category = category if CAUSE_NAME.fullmatch(category) else "UnexpectedError"
+    frames = traceback.extract_tb(error.__traceback__)
+    location = f"{Path(frames[-1].filename).name}:{frames[-1].lineno}" if frames else "unavailable"
+    if SOURCE_LOCATION.fullmatch(location) is None:
+        location = "unavailable"
+    fields = {"phase": "operator", "cause": category, "effect": "unconfirmed", "location": location}
+    return PREFIX + json.dumps(fields, separators=(",", ":")).encode()

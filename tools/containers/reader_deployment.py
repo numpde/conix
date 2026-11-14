@@ -133,8 +133,10 @@ def _run_reader(docker, arguments, environment):
         # Admit exactly one bounded record, never the surrounding prose.
         records = [line for line in result.stderr.splitlines() if line.startswith(PREFIX)]
         reason = None
+        diagnostic = None
         if len(result.stderr) <= 65536 and len(records) == 1:
             reason = explanation(records[0], result.returncode, phases={"reader_check"})
+            diagnostic = records[0] if reason is not None else None
         if reason is None:
             # Docker may fail before Python starts. Keep that producer's prose
             # private; ordinary Reader failures use the bounded record above.
@@ -145,7 +147,7 @@ def _run_reader(docker, arguments, environment):
                 reason = f"exit={result.returncode}; no admitted diagnostic. Private receipt: {receipt}"
             except OSError:
                 reason = f"exit={result.returncode}; no admitted diagnostic; private receipt unavailable"
-        raise OperationError("Reader check failed: " + reason, exit_code=result.returncode)
+        raise OperationError("Reader check failed: " + reason, exit_code=result.returncode, diagnostic=diagnostic)
     if len(result.stdout) > 65536:
         raise OperationError("Reader check returned an oversized response.")
     return result.stdout
