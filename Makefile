@@ -20,7 +20,7 @@ override export CONIX_MAKE_DEPLOYMENT := $(value DEPLOYMENT)
 override export CONIX_MAKE_DATABASE_NETWORK := $(value DATABASE_NETWORK)
 override export CONIX_MAKE_RPC_NETWORK := $(value RPC_NETWORK)
 
-.PHONY: test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/indexer/run test/deployment/acceptance/run test/input-staging/run test/indexer/acceptance/borrowed/run test/indexer/acceptance/owned/run history/block/advance deployment/inputs/stage deployment/inputs/remove deployment/config/init deployment/prepare deployment/database/schema/init deployment/config/check deployment/up deployment/status deployment/logs deployment/down help
+.PHONY: test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/indexer/run test/deployment/acceptance/run test/input-staging/run test/indexer/acceptance/borrowed/run test/indexer/acceptance/owned/run history/block/advance deployment/inputs/stage deployment/inputs/remove deployment/config/init deployment/prepare deployment/database/schema/init deployment/config/check deployment/up deployment/status deployment/logs deployment/down deployment/reader/prepare deployment/reader/check deployment/reader/status deployment/reader/remove help
 
 # Each action's declaration is also the help authority. Recipes share the
 # literal-value dispatchers; no Make target aliases or duplicate help list.
@@ -120,5 +120,17 @@ deployment/logs: ## Show bounded logs from owned deployment; DEPLOYMENT=<name>
 	$(RUN_OPERATOR)
 
 deployment/down: ## Stop/remove owned indexer containers; retain external SQL/networks/staged inputs; DEPLOYMENT=<name>
+	$(RUN_OPERATOR)
+
+deployment/reader/prepare: ## Stage an independent SELECT-only Reader snapshot from the named source; DEPLOYMENT=<name>
+	$(RUN_OPERATOR)
+
+deployment/reader/check: ## Check the prepared Reader with existing private database/RPC bridges; DEPLOYMENT=<name>
+	$(RUN_OPERATOR)
+
+deployment/reader/status: ## Show selected Reader image and input volume without exposing credentials; DEPLOYMENT=<name>
+	$(RUN_OPERATOR)
+
+deployment/reader/remove: ## Retire only the prepared Reader volume and lock; preserve indexer and external SQL; DEPLOYMENT=<name>
 	$(RUN_OPERATOR)
 

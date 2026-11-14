@@ -1,0 +1,41 @@
+Maintained branch policy
+========================
+
+Date: 2026-11-14
+
+ tier-0    Mostly stable, independently runnable generic core.
+ tier-1    Somewhat provisional extensions over that same concrete core.
+ main      The currently stable, qualified version of Tier 1.
+
+Tier 0 owns scanning, complete-block publication, journal consistency,
+checkpoint-bound observation, manual checked repair and the normal standalone
+application loop. Its branch also owns the named writer/Reader deployment
+operators and core acceptance lanes. It carries no conix.resilience package
+or Tier-1 extension tests. Historical evidence notes may describe other tiers;
+their presence does not make those implementations part of Tier 0.
+
+Tier 1 composes the original core and application with bounded recovery
+policy. It must not replace authoritative implementations. Note 000 governs
+concrete delegation; Note 008 discusses uncertain publication, without
+implementing it. Branch placement does not waive protected-core review.
+
+Make core corrections on tier-0, qualify them there, then merge tier-0 into
+tier-1. Make extension changes and their tests on tier-1. Keep changes to
+shared core contracts deliberate and first establish them in tier-0; retain
+only the narrow composition differences actually needed in tier-1.
+
+Promote a reviewed, qualified tier-1 revision to main by fast-forward when
+possible. Main may lag provisional tier-1 work. Neither branch name nor a
+passing hosted workflow is a production activation or selected-Engine proof.
+Run maintained CI locally on the selected Engine as primary evidence; record
+exact revisions and qualification limits in the owning evidence note.
+
+The branch split preserves current Tier-0 Reader and deployment improvements
+that were historically developed alongside Tier 1. Tier 1 retains the existing
+optional writer-session composition seam and reorganization-reason vocabulary;
+these differences from the standalone core require continued boundary review.
+No new recovery algorithm is introduced by establishing these branches.
+
+The dated archive/* tags preserve historical alternatives, not maintained
+Tier-0/Tier-1 baselines. Do not merge the archived follow-loop experiment as
+a substitute for the original application loop.

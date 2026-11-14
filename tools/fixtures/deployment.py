@@ -35,7 +35,8 @@ def fixture_permissions(folder):
     """Install private modes Git cannot represent, without following links."""
     directories = (folder, folder / "abi", folder / "secrets")
     files = (folder / "deployment.toml", folder / "abi/erc20.json",
-             folder / "secrets/runtime.dsn", folder / "secrets/owner.dsn")
+             folder / "secrets/runtime.dsn", folder / "secrets/owner.dsn",
+             folder / "secrets/reader.dsn")
     for path in directories + files:
         info = path.lstat()
         expected = stat.S_ISDIR if path in directories else stat.S_ISREG
@@ -105,6 +106,7 @@ class DeploymentAcceptance:
         self.runner = None
         self.fixture_attempted = False
         self.prepare_attempted = False
+        self.reader_prepare_attempted = False
         self.phase = "preflight"
         self.step = 0
         self.records = {"deployment": NAME, "endpoint": docker.endpoint, "checks": []}
@@ -145,6 +147,8 @@ class DeploymentAcceptance:
         """Never adopt a previous deployment, generated lock or leftover fixture."""
         self.require(named.inspect_prepared(NAME) is None,
                      "Acceptance found an existing prepared deployment; inspect it before another run.")
+        self.require(named.inspect_reader_prepared(NAME) is None,
+                     "Acceptance found an existing prepared Reader; inspect it before another run.")
         self.require(not _candidate_ids(self.docker, "conix-" + NAME),
                      "Acceptance found an existing indexer; it will not be adopted or stopped.")
         self.require(not self.docker.run("ps", "--all", "--filter",
@@ -275,6 +279,19 @@ class DeploymentAcceptance:
         first_id, first = self.await_height(first_block["height"])
         self.require(any(row[1] == first_block["transaction"][2:] for row in first["events"]),
                      "Initial catch-up omitted the fixture Transfer.")
+        # Reader preparation must coexist with the active indexer, reuse its
+        # immutable source and image, but never reuse its private volume/DSN.
+        self.reader_prepare_attempted = True
+        self.make("deployment/reader/prepare")
+        selected_reader = named.inspect_reader_prepared(NAME)
+        self.require(
+            selected_reader is not None
+            and selected_reader.image == prepared.image
+            and selected_reader.volume != prepared.volume,
+            "Reader preparation did not select independent input authority.",
+        )
+        self.make("deployment/reader/check")
+        self.make("deployment/reader/status")
         self.make("deployment/status")
         time.sleep(2)
         self.require(self.probe("snapshot") == first, "Idle tip changed durable progress.")
@@ -302,7 +319,8 @@ class DeploymentAcceptance:
         self.records.update(first_container=first_id, second_container=second_id,
                             before_restart=before, after_restart=resumed, final=final)
         self.records["checks"] = ["catch-up", "tip-following", "clean-shutdown", "fresh-process-restart",
-                                   "durable-prefix-continuity", "tip-after-restart"]
+                                   "durable-prefix-continuity", "tip-after-restart",
+                                   "reader-independent-volume", "reader-check-live-source"]
 
     def verify_fixture_ownership(self):
         """Discovery by stable project name never authorizes deleting another run's state."""
@@ -337,6 +355,15 @@ class DeploymentAcceptance:
             self.require(not _candidate_ids(self.docker, "conix-" + NAME), "Named consumer retirement is unconfirmed.")
         except BaseException as error:
             return ["named consumer retirement (" + type(error).__name__ + ")"]
+        if self.reader_prepare_attempted:
+            try:
+                reader = named.inspect_reader_prepared(NAME)
+                if reader is not None:
+                    self.make("deployment/reader/remove")
+            except BaseException as error:
+                # An unretired reader check or private Reader input volume
+                # requires external dependencies to remain inspectable.
+                return ["Reader retirement (" + type(error).__name__ + ")"]
         if self.prepare_attempted:
             try:
                 prepared = named.inspect_prepared(NAME)

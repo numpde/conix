@@ -21,3 +21,4 @@ config/deployments/*
 !config/deployments/deployment-acceptance/secrets/
 !config/deployments/deployment-acceptance/secrets/*.dsn
 config/deployments/deployment-acceptance/deployment.lock.toml
+config/deployments/deployment-acceptance/reader.lock.toml

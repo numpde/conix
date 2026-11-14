@@ -22,6 +22,8 @@ TARGETS = {
     "deployment/config/init", "deployment/prepare", "deployment/database/schema/init",
     "deployment/config/check", "deployment/up",
     "deployment/status", "deployment/logs", "deployment/down",
+    "deployment/reader/prepare", "deployment/reader/check",
+    "deployment/reader/status", "deployment/reader/remove",
 }
 
 

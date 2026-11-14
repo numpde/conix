@@ -280,6 +280,15 @@ class Docker(InputStaging, DockerClient):
         else:
             print(f"Verified constrained prospective runtime Compose graph for {project}.")
 
+    def reader_check(self, *, name, image, volume, database, rpc):
+        """Run one Reader via its separate staged inputs and two private bridges."""
+        from tools.containers.reader_deployment import check
+
+        return check(
+            self, name=name, image=image, volume=volume,
+            database=database, rpc=rpc,
+        )
+
     def test(self, image, images):
         """Run an isolated PostgreSQL test project and retire only its resources."""
         if not IMAGE_ID.fullmatch(image):
@@ -434,6 +443,8 @@ def main():
         "deployment/config/init", "deployment/prepare", "deployment/database/schema/init",
         "deployment/config/check", "deployment/up", "deployment/status",
         "deployment/logs", "deployment/down",
+        "deployment/reader/prepare", "deployment/reader/check",
+        "deployment/reader/status", "deployment/reader/remove",
     ))
     parser.add_argument("--wheelhouse")
     parser.add_argument("--image")
@@ -480,6 +491,8 @@ def main():
             "deployment/config/init", "deployment/prepare", "deployment/database/schema/init",
             "deployment/config/check", "deployment/up", "deployment/status",
             "deployment/logs", "deployment/down",
+            "deployment/reader/prepare", "deployment/reader/check",
+            "deployment/reader/status", "deployment/reader/remove",
         ):
             from tools.containers.named import dispatch
 

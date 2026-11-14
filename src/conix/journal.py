@@ -21,7 +21,6 @@ from conix.catalog import Catalog
 # One writer per schema/database, regardless of configured contract selection.
 WRITER_LOCK = 0x434F4E4958
 
-
 class WriterBusy(RuntimeError):
     """Another session owns the selected database's raw-history publisher."""
 
@@ -91,6 +90,10 @@ class Journal:
     @classmethod
     async def open(cls, *, catalog: Catalog, database_dsn: str) -> Journal:
         """Inspect durable identity and acquire the database-wide writer lock."""
+        # A reader-source projection may compile the same event identity,
+        # but must never be admitted as a writer or acquire its lock.
+        if catalog.database.runtime_role != "conix_runtime":
+            raise StorageUnavailable("Writer requires the dedicated conix_runtime role.")
         try:
             connection = await AsyncConnection.connect(
                 database_dsn,

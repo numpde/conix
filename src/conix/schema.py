@@ -73,6 +73,8 @@ SCHEMA_DDL = (
 
 async def initialize(owner_dsn: str, catalog: Catalog) -> None:
     """Create empty tables and grants atomically; refuse upgrades or adoption."""
+    if catalog.database.runtime_role != "conix_runtime":
+        raise SchemaError("Schema initialization requires the writer catalog role.")
     async with await AsyncConnection.connect(
         owner_dsn,
         connect_timeout=5,

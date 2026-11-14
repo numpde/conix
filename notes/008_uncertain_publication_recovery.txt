@@ -1,0 +1,288 @@
+Uncertain publication: core correctness and recovery policy
+==========================================================
+
+Date: 2026-11-14
+Status: design direction, not implemented or qualified.
+Inspected baseline: main@a935eba5f2d3c91e807094a7cfc7d5cc74bc5e27.
+
+Note 000 governs concrete delegation and protected-core changes. Note 004
+owns Tier-0 correctness and qualification; Note 007 records Tier-1 evidence.
+This note specifies the decision and proof obligations for T1-D2. It does
+not supersede those records, authorize automatic recovery today, or claim
+that a new reconciliation API is required. Current T1-D1 still refuses an
+uncertain COMMIT. No production activation is part of this design.
+
+1. Decision and ownership
+-------------------------
+
+Tier 0 establishes durable facts and performs all authoritative indexing.
+Tier 1 decides whether and when to invoke that same implementation again.
+An uncertain publication must not lead to a second journal-consistency
+algorithm in Tier 1, even if that algorithm only reads PostgreSQL.
+
+First establish that the original application can continue safely from
+retained history after an uncertain publication, without the previous
+writer's memory. Add attempt-specific verification only if a concrete
+recovery requirement cannot be met by that existing restart path.
+Moving an unnecessary comparison into Tier 0 would not make it necessary.
+
+Preserve one scanner, one complete-block publisher, one checked repair,
+one checkpoint-bound reader and one ordinary catch-up/tip-following loop.
+No transaction replay, publication registry, new table, digest ledger,
+secondary HTTP decoder or alternative application loop is proposed.
+
+2. Two different questions
+--------------------------
+
+Continuation:
+  Can a fresh exclusive writer continue from the durable journal through
+  the original source admission, chain checks and publication operation?
+
+Attempt-specific observation:
+  Does durable storage contain precisely the expected effect of a given
+  publication, or precisely its unchanged original basis?
+
+The first is essential restart correctness. The second is a stronger,
+optional observation. An expected effect being present does not prove which
+invocation produced it. The proposed attempt context would not provide a
+unique durable transaction identity or exactly-once invocation semantics.
+
+A process crash can erase all attempt context. Ordinary Tier-0 restart must
+still work within its qualified storage and source assumptions. It cannot
+then report an attempt-specific result, nor does restart retroactively turn
+an unanswered invocation into a confirmed success.
+
+3. What the current implementation establishes
+----------------------------------------------
+
+src/conix/journal.py:
+  Journal.publish_block stores the block, selected raw events and updated
+  progress in one transaction. _advance_progress fences the original
+  source, generation, revision, checkpoint and blocked state.
+  _transaction retires the journal on loss of COMMIT confirmation. It raises
+  CommitOutcomeUnknown for ordinary exceptions; cancellation propagates.
+  The same transaction helper also serves Journal.repair_to.
+
+  Journal.open verifies the database role, acquires the exclusive writer
+  advisory lock, then checks source identity and reads progress and its tip.
+  It admits blocked history for inspection; opening does not authorize
+  publication or prove that every retained event has been revalidated.
+
+src/conix/core.py and src/conix/app.py:
+  open_writer adds RPC source admission. Writer.advance_one checks the
+  retained tip against fresh chain evidence, acquires and validates the
+  next complete block, then calls the original Journal.publish_block.
+  app.run owns the ordinary catch-up and tip-following loop and propagates
+  failures. It contains no automatic uncertain-COMMIT recovery policy.
+
+Existing tests provide narrower evidence than the proposed end-to-end gate:
+  tests/test_journal.py, check_unconfirmed_publication, covers an injected
+  failure before COMMIT is sent and a real server COMMIT with its reply
+  dropped. It checks reopened progress, candidate rows and duplicate
+  publication refusal. tests/pg_commit_reply.py owns the lost-reply fixture.
+  tests/test_t1_database.py checks that an actual lost COMMIT reply does not
+  restart T1-D1 and that the one committed block remains in PostgreSQL.
+  tests/test_t0_7e_faults.py includes an installed-CLI lost-COMMIT-reply test
+  followed by explicit process restart, fresh RPC verification and one
+  retained Transfer event. Note 004 section 11.5.1 records that evidence.
+
+Those tests support atomic storage, retirement and explicit process restart.
+The installed-CLI test accepts either stored checkpoint before restart and
+targets the attempted height; it does not force both outcomes or require a
+new publication beyond an already committed tip. Extend that witness rather
+than claim ordinary restart has no evidence. None of these tests qualifies
+the proposed T1-D2 policy. Existing revision-bound results remain in Notes
+004 and 007; this source inspection is not a new test run.
+
+4. Required Tier-0 continuation contract
+----------------------------------------
+
+After an uncertain publication, retire the old application session and
+abandon its writer and prepared inputs. A new original application opens
+its own writer, reacquires exclusive ownership and reads the durable basis.
+It performs all ordinary source and chain checks before advancing.
+
+If the transaction did not commit, the next original advance reacquires
+and validates the candidate block. If it committed, the next advance starts
+after the stored checkpoint. Neither path resubmits the abandoned SQL
+transaction or treats its previously acquired RPC evidence as current.
+
+This contract assumes the existing atomic journal and supported ownership
+model. It is not a full database corruption audit, protection from an owner
+bypassing the writer protocol, or proof of chain finality. A changed source,
+blocked history, missing evidence or contradictory chain still fails at its
+original owner. Recovery does not waive those checks or clear an operator
+hold. Reorganization remains subject to the existing checked repair path.
+
+Local retirement and fresh database ownership are separate obligations:
+  - The previous application must have exited its resource lifetimes.
+  - The new session must actually acquire the database writer lock.
+  - Failed or unconfirmed cleanup does not grant a restart.
+  - WriterBusy does not establish either publication outcome.
+Cancellation and a requested stop prohibit another automatic session.
+The journal's retired flag means the object is unusable, not that cleanup
+succeeded. Today _transaction suppresses its first close failure and the
+owning open_journal context attempts close again. Qualification must observe
+actual lifetime completion and fresh ownership, not just that flag.
+
+5. Minimal T1-D2 policy, subject to qualification
+------------------------------------------------
+
+The current CommitOutcomeUnknown does not distinguish publication from
+repair. Catching it indiscriminately would broaden recovery to uncertain
+repair. Before any automatic publication recovery, Tier 0 must provide a
+reliable operation distinction at the actual failure boundary. Tier 1 must
+not infer it from exception text, a traceback or its last observed callback.
+The representation is an implementation decision; full block/event context
+is not required merely to identify the operation.
+
+The proposed sequence is:
+  original application reports publication COMMIT uncertainty
+    -> complete old-session retirement
+    -> check cancellation, stop and the bounded recovery budget
+    -> invoke the original application with a fresh writer
+    -> original admission and advance determine whether it can proceed.
+
+This is a proposal to permit continuation while the previous invocation's
+outcome remains unknown. It is not a claim that uncertainty was reconciled.
+If the desired policy requires that particular effect to be established
+first, select the optional contract in section 6 instead.
+
+If stop arrives between the policy check and fresh application entry and
+prevents resumed work, preserve the original publication uncertainty; an
+immediate return from app.run must not turn it into recovery success.
+Cancellation still propagates. After resumption, normal stop follows the
+existing lifecycle, but a clean application return is never confirmation
+of the previous invocation's publication outcome.
+
+Before implementing this policy, specify a finite restart budget, bounded
+waits and their interaction with existing T1-B/C/D1 budgets. Re-entering a
+nested supervisor must not reset the D2 budget and allow unlimited recovery.
+No generic SQL retry or uncertain-repair recovery is admitted. T1-D1's
+SQLSTATE-free disconnection exclusion remains intact: absence of SQLSTATE
+alone never grants restart. D2 instead requires the core's publication-COMMIT
+provenance, retirement and bounded policy, even if the lost reply has no
+SQLSTATE. Cancellation at COMMIT can surface through app.run's timeout as
+TimeoutError; generic timeouts do not identify publication uncertainty.
+An unclassified uncertainty remains an error. A failure during fresh
+admission does not become permission to bypass admission.
+
+6. Optional core-owned expected-effect verification
+---------------------------------------------------
+
+Decision gate: identify a consumer or recovery rule that requires exact
+attempt-specific observation beyond safe continuation. If none exists,
+omit this capability. The following describes its contract, not a committed
+API name, implementation plan or prerequisite for every process restart.
+
+If needed, Journal.publish_block constructs immutable attempt context from
+its original Progress, proposed Block and exact RawEvent tuple.
+The context accompanies publication uncertainty only. Tier 1 neither
+reconstructs it nor maintains a parallel publication identity. It remains
+bounded by the existing admitted block/event limits and is not serialized
+into diagnostics, logs or another durable ledger.
+
+A journal-owned reconciliation operation observes storage under a fresh
+exclusive journal session after old-session retirement. It performs no
+publication, repair, unblock or transaction replay. It must verify the
+selected source and compare one consistent durable observation:
+
+  ORIGINAL_BASIS_PRESERVED
+    The complete original Progress is unchanged, and the candidate block
+    and its event rows are absent.
+
+  EXPECTED_EFFECT_PRESENT
+    Source, generation and history start match the attempt; revision is
+    exactly original revision + 1; the checkpoint is the exact proposed
+    block; the blocked state is the expected unblocked state. Every stored
+    block field and event field matches, with no missing or extra events.
+    Match events by their stored (block_number, log_index) identity and all
+    payload fields; incidental SQL row order does not establish equality.
+
+  OTHER_DURABLE_STATE
+    The read completed, but a changed generation, unexpected revision,
+    different block/event set or operator hold establishes neither expected
+    state. A later valid advance is outside this narrow comparison too.
+    This observation refuses the stricter recovery rule; it does not by
+    itself establish corruption, unsafe ordinary restart or a failed read.
+
+These labels express distinct meanings, not a requirement for an enum or
+three independent flags. Choose the smallest representation the caller needs.
+
+Observe progress and candidate rows coherently under the existing exclusive
+ownership contract. Choose the read strategy explicitly; do not add a
+durable write transaction, schema or reconciliation ledger. If a read
+transaction is needed, it belongs to the observation. Neither that snapshot
+nor the advisory lock promises safety against arbitrary owner mutations
+outside the supported ownership model.
+
+Failure to obtain a consistent observation is separate from observing another
+durable state. Preserve causes for invalid evidence, unavailable storage,
+interruption and failed retirement. An opaque UNRESOLVED result must not
+erase the actual cause or phase. None authorizes continuation by this
+stricter policy. Report bounded source-controlled facts; do not print attempt
+payloads, driver messages, credentials or untrusted exception prose.
+
+Either matching observation settles only this comparison. It is not a
+reusable permission token: release the inspection session, then restart the
+original application, which reacquires ownership and rechecks all admission
+and chain evidence. A concurrent change after inspection is handled by those
+ordinary checks. An uncertain repair remains outside this capability.
+
+7. Proof and implementation gates
+----------------------------------
+
+First extend the existing contained PostgreSQL/Anvil witnesses, including the
+installed-CLI explicit restart test. Force each outcome: an unsent COMMIT and
+a committed transaction with a dropped reply. Require subsequent publication
+beyond the recovered checkpoint through original app.run/open_writer,
+Writer.advance_one and Journal.publish_block, fresh RPC evidence, correct
+durable progress and public-reader history without duplicate events.
+Discard previous attempt memory. Include an empty block and a selected-event
+block, and stop the application through its ordinary cancellation/lifecycle.
+
+Negative cases must show that contention, wrong source, blocked history,
+missing/contradictory evidence, failed retirement, stop and cancellation do
+not bypass the existing guards. Preserve and extend the real process-restart
+witness so continuation cannot rely on a caught Python exception. Reuse the
+maintained fixtures and lanes rather than create another harness.
+
+Only after that proof, choose continuation-only policy or the stricter
+expected-effect gate. If the latter is needed, add real PostgreSQL tests for
+both matching observations, changed generation/revision/source, altered or
+missing/extra event rows, unavailable storage, interrupted reads and repair
+uncertainty exclusion. Check that inspection itself leaves history unchanged.
+
+Qualify T1-D2 separately: concrete delegation, reliable publication provenance,
+finite recovery across nested supervisors, cancellation, and no restart after
+retirement failure. Exercise stop arriving between the recovery gate and
+fresh application entry; no resumed work means no reported recovery success.
+If the stricter policy is selected, also prove refusal on other durable
+states or failed verification. Inspect final history through the public
+reader. Successful output alone is not proof of delegation.
+
+Use behavioral RED -> GREEN for necessary implementation changes. Run the
+maintained CI steps locally on the selected rootless Engine and explicit
+shared wheelhouse. Record exact revisions and limits in Note 007; hosted CI
+is supplementary. Contained tests do not imply retained-service, dapp32 or
+production qualification. No new qualification is claimed by this note.
+
+8. Protected-core change discipline
+------------------------------------
+
+Note 000's zero feature-driven protected-operation edit target remains in
+force. An added public method does not exempt changes to publish_block or
+_transaction from review. Attempt capture would change a protected operation
+even with identical SQL; do not call the core literally unchanged.
+
+If existing restart correctness fails, correct the defect in its original
+Tier-0 owner and demonstrate the failing behavior. If operation provenance
+or expected-effect verification requires a new core contract, explicitly
+review and record that shared-design extension against Note 000 before
+implementation. T1 convenience alone is not a correctness defect or a reason
+to add unused flexibility. No protected-core exception is granted here.
+
+Current disposition: prove restart correctness first; decide the smallest
+required core contract next; then implement bounded opt-in T1 policy. Keep
+attempt-specific verification conditional. Keep every authoritative storage
+comparison and mutation in the original journal.

@@ -42,6 +42,10 @@ PARAMETERS = {
     "deployment/status": "DEPLOYMENT",
     "deployment/logs": "DEPLOYMENT",
     "deployment/down": "DEPLOYMENT",
+    "deployment/reader/prepare": "DEPLOYMENT",
+    "deployment/reader/check": "DEPLOYMENT",
+    "deployment/reader/status": "DEPLOYMENT",
+    "deployment/reader/remove": "DEPLOYMENT",
 }
 
 

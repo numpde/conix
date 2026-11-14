@@ -28,6 +28,7 @@ DEPLOYMENTS = ROOT / "config" / "deployments"
 NAME = re.compile(r"[a-z][a-z0-9-]{0,47}\Z")
 KEY = re.compile(r"[a-z][a-z0-9_]*\Z")
 LOCK_FILE = "deployment.lock.toml"
+READER_LOCK_FILE = "reader.lock.toml"
 SETTINGS = {"version", "docker_context", "wheelhouse", "database_network",
             "rpc_network", "chain", "contracts", "limits"}
 
@@ -60,6 +61,14 @@ class Declaration:
     @property
     def lock_file(self):
         return self.folder / LOCK_FILE
+
+    @property
+    def reader_dsn_file(self):
+        return self.folder / "secrets" / "reader.dsn"
+
+    @property
+    def reader_lock_file(self):
+        return self.folder / READER_LOCK_FILE
 
 
 @dataclass(frozen=True)
@@ -104,6 +113,17 @@ def inspect_prepared(name):
         return None
     record = _lock(Declaration(name=name, docker_context=""))
     return PreparedView(image=record["image"], volume=record["volume"])
+
+
+def inspect_reader_prepared(name):
+    """Expose only the Reader's admitted image/volume for acceptance consumers."""
+    folder = _directory(name)
+    _owned_directory(folder)
+    lock = folder / READER_LOCK_FILE
+    if not lock.exists() and not lock.is_symlink():
+        return None
+    receipt = _reader_lock(Declaration(name=name, docker_context=""))
+    return PreparedView(image=receipt["image"], volume=receipt["volume"])
 
 
 def clear_prepared(name, *, expected_volume):
@@ -211,13 +231,13 @@ def _render_deployment(document):
     return "".join(output)
 
 
-def _project_catalog(decl):
-    """Project only source fields; let the installed catalog own their meaning."""
+def _project_catalog(decl, *, reader=False):
+    """Project one selected source; only the database ROLE differs for Readers."""
     if decl.source is None:
         raise OperationError("Complete the source settings in deployment.toml before preparation.")
     document = {"version": 1, **decl.source,
                 "database": {"dsn_file": "/run/conix/connection.dsn",
-                             "runtime_role": "conix_runtime"}}
+                             "runtime_role": "conix_reader" if reader else "conix_runtime"}}
     output = ["version = 1\n\n", _table("chain", document["chain"]),
               _table("database", document["database"]), _table("limits", document["limits"])]
     for alias, selected in document["contracts"].items():
@@ -365,23 +385,35 @@ def _valid_lock(record):
     return record
 
 
-def _lock(decl):
-    """Read only the generated TOML authority; never accept prepared.json."""
-    path = decl.lock_file
+def _lock(decl, *, reader=False):
+    """Read the selected role's generated TOML lock; never guess resources."""
+    filename = READER_LOCK_FILE if reader else LOCK_FILE
+    path = decl.folder / filename
     try:
         document = _read_toml(path, 4096)
     except OperationError as error:
+        action = "deployment/reader/prepare" if reader else "deployment/prepare"
         raise OperationError(
-            f"No valid deployment.lock.toml for {decl.name}; "
-            f"run make deployment/prepare DEPLOYMENT={decl.name}."
+            f"No valid {filename} for {decl.name}; "
+            f"run make {action} DEPLOYMENT={decl.name}."
         ) from error
     return _valid_lock(document)
 
 
-def _write_lock(folder, record):
-    """Publish a 0600 lock atomically after build, verification and staging."""
+def _reader_lock(decl):
+    """Refuse a Reader receipt that selects the writer's owned input volume."""
+    receipt = _lock(decl, reader=True)
+    if decl.lock_file.exists() or decl.lock_file.is_symlink():
+        writer = _lock(decl)
+        if receipt["volume"] == writer["volume"]:
+            raise OperationError("Reader and indexer input volumes must be distinct.")
+    return receipt
+
+
+def _write_lock(folder, record, *, reader=False):
+    """Publish a role-specific 0600 lock after verified snapshot staging."""
     _valid_lock(record)
-    destination = folder / LOCK_FILE
+    destination = folder / (READER_LOCK_FILE if reader else LOCK_FILE)
     if destination.exists() or destination.is_symlink():
         _private_file(destination)
     contents = (
@@ -416,19 +448,21 @@ def _inspect_existing(docker, name):
     return _candidate_ids(docker, "conix-" + name)
 
 
-def _stage_projected(decl, docker, image):
-    """Project beside the selected ABIs, retiring the temporary source."""
+def _stage_projected(decl, docker, image, *, reader=False):
+    """Project one role's catalog beside selected ABIs, retiring temporary source."""
     fd, temporary = tempfile.mkstemp(prefix=".projected-", suffix=".toml", dir=decl.folder)
     volume = None
     failure = None
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             os.fchmod(stream.fileno(), 0o600)
-            stream.write(_project_catalog(decl))
+            stream.write(_project_catalog(decl, reader=reader))
             stream.flush()
             os.fsync(stream.fileno())
         volume = docker.stage_inputs(
-            image, temporary, decl.runtime_dsn_file, announce=False,
+            image, temporary,
+            decl.reader_dsn_file if reader else decl.runtime_dsn_file,
+            announce=False,
         )
     except BaseException as error:
         failure = error
@@ -481,6 +515,63 @@ def prepare(decl, docker, images):
                       file=sys.stderr)
         print(f"Prepared deployment {decl.name} with verified image and private input snapshot.")
         print(f"Next: make deployment/database/schema/init DEPLOYMENT={decl.name}")
+
+
+def prepare_reader(decl, docker):
+    """Stage independent read-only inputs using the indexer's selected image."""
+    with _locked(decl.name):
+        # Writer preparation remains the sole image/build authority; the
+        # reader only reuses the exact installed package, not its DSN/volume.
+        prepared = _lock(decl)
+        _private_file(decl.reader_dsn_file)
+        reader_lock = decl.reader_lock_file
+        existing = _reader_lock(decl) if reader_lock.exists() or reader_lock.is_symlink() else None
+
+        docker.require_role(prepared["image"], "indexer")
+        volume = _stage_projected(decl, docker, prepared["image"], reader=True)
+        try:
+            _write_lock(
+                decl.folder,
+                {"version": 1, "image": prepared["image"], "volume": volume},
+                reader=True,
+            )
+        except BaseException:
+            try:
+                docker.remove_inputs(volume)
+            except Exception:
+                print(f"Unconfirmed cleanup of Reader input volume {volume}.", file=sys.stderr)
+            raise
+
+        if existing and existing["volume"] != volume:
+            try:
+                docker.remove_inputs(existing["volume"])
+            except OperationError:
+                print(f"Prior Reader volume {existing['volume']} remains; retire explicitly.",
+                      file=sys.stderr)
+        print(f"Prepared Reader for deployment {decl.name} with separate selected inputs.")
+        print(f"Next: make deployment/reader/check DEPLOYMENT={decl.name}")
+
+
+def reader_status(name):
+    """Report exact prepared Reader identities without accessing credentials."""
+    receipt = _reader_lock(Declaration(name=name, docker_context=""))
+    print(json.dumps({
+        "deployment": name,
+        "image": receipt["image"],
+        "volume": receipt["volume"],
+        "mount": "/run/conix",
+    }, sort_keys=True))
+
+
+def reader_remove(name, docker):
+    """Retire only the Reader's exact volume; preserve its lock on refusal."""
+    with _locked(name):
+        receipt = _reader_lock(Declaration(name=name, docker_context=""))
+        # Recovery must work on the same selected Engine used for preparation,
+        # even when its daemon is not eligible to start a Reader process.
+        docker.remove_inputs(receipt["volume"])
+        (_directory(name) / READER_LOCK_FILE).unlink()
+        print(f"Retired Reader input snapshot for deployment {name}; indexer unchanged.")
 
 
 def database_init(decl, docker, receipt):
@@ -543,13 +634,15 @@ def dispatch(action, options, *, client_cls, pinned_images):
     if action == "deployment/config/init":
         return init(name, options)
 
+    recovery_actions = (
+        "deployment/status", "deployment/logs", "deployment/down",
+        "deployment/reader/status", "deployment/reader/remove",
+    )
     decl = None
     try:
-        decl = _read(name, complete=action not in (
-            "deployment/status", "deployment/logs", "deployment/down",
-        ))
+        decl = _read(name, complete=action not in recovery_actions)
     except OperationError:
-        if action not in ("deployment/status", "deployment/logs", "deployment/down"):
+        if action not in recovery_actions:
             raise
         # Only absent saved configuration permits explicit-context recovery.
         config = _directory(name) / "deployment.toml"
@@ -563,6 +656,41 @@ def dispatch(action, options, *, client_cls, pinned_images):
         context = decl.docker_context
     else:
         context = options.context
+
+    if action == "deployment/reader/status":
+        return reader_status(name)
+
+    if action in ("deployment/reader/prepare", "deployment/reader/check",
+                  "deployment/reader/remove"):
+        if action == "deployment/reader/prepare":
+            # Before selecting any Engine, require both the writer image
+            # selection and a privately owned distinct Reader credential.
+            _lock(decl)
+            _private_file(decl.reader_dsn_file)
+        if action in ("deployment/reader/check", "deployment/reader/remove"):
+            _reader_lock(decl or Declaration(name=name, docker_context=context))
+
+        if decl is None:
+            endpoint = select_endpoint(context, "command line", working_dir=ROOT)
+            directory = tempfile.TemporaryDirectory(prefix="conix-reader-recovery-")
+            (Path(directory.name) / "config.json").write_text('{"auths":{},"proxies":{}}\n')
+            docker = client_cls(endpoint, Path(directory.name))
+        else:
+            docker, directory = _docker(decl, client_cls)
+
+        try:
+            if action == "deployment/reader/prepare":
+                return prepare_reader(decl, docker)
+            if action == "deployment/reader/remove":
+                return reader_remove(name, docker)
+            with _locked(name):
+                receipt = _reader_lock(decl)
+                return docker.reader_check(
+                    name=name, image=receipt["image"], volume=receipt["volume"],
+                    database=decl.database_network, rpc=decl.rpc_network,
+                )
+        finally:
+            directory.cleanup()
 
     if action == "deployment/prepare":
         docker, directory = _docker(decl, client_cls)

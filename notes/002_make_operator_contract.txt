@@ -205,3 +205,88 @@ or a statistically independent user study: reused readers retain earlier rounds.
 Both naming slices demonstrated exported-API RED then GREEN and passed all
 148 host repository checks. Real Engine acceptance was not rerun for these
 interface-only changes; earlier Engine results apply to the preceding revision.
+
+Named Reader snapshots (separate consumer authority)
+----------------------------------------------------
+
+Use the same DEPLOYMENT=<name> and the same deployment.toml chain, contract,
+ABI and network selections. No independent editable Reader catalog exists.
+The operator derives a Reader projection using the existing catalog shape,
+with database.runtime_role = conix_reader, and selects only the private
+secrets/reader.dsn (0600). Existing indexer/owner credentials are never
+staged, mounted or forwarded to a Reader.
+
+  make deployment/reader/prepare DEPLOYMENT=local
+  make deployment/reader/check DEPLOYMENT=local
+  make deployment/reader/status DEPLOYMENT=local
+  make deployment/reader/remove DEPLOYMENT=local
+
+Preparation uses the prepared indexer image without rebuilding it, stages
+the Reader catalog and selected ABI members through the same networkless
+stdin-only provisioner, then atomically publishes a distinct reader.lock.toml
+(image/volume; version 1). A Reader lock may not point to the writer volume.
+Failed staging or lock publication does not replace the previous Reader lock;
+old inputs are only retired after a new selection is published. An active
+indexer does not block Reader snapshot preparation.
+
+The catalog admits the two existing DB role names but never authorizes
+writer/schema use of a conix_reader catalog. The original open_reader
+continues to require actual conix_reader PostgreSQL credentials and verifies
+the selected source and trusted RPC. The check uses a separate one-shot
+container (no daemon) with an exact pinned image, Reader-only volume mounted
+read-only, internal database/RPC bridges, no host bind, ports or broad caps.
+It prints a bounded source/checkpoint result only after owned container
+retirement is confirmed; failed check or cleanup retains the primary error
+and reports cleanup uncertainty separately.
+
+Status displays only immutable image/volume coordinates, never DSNs. Remove
+retires only the owned Reader volume after inspecting its exact lock and
+preserves the lock on unconfirmed removal. It does not retire an indexer
+container, its input volume, SQL or network resources. A Reader application
+may independently attach the selected volume and bridges on the same local
+Engine; it owns its lifetime. Cross-host distribution and Reader HTTP service
+provisioning are not part of this operator contract.
+
+Qualify source/ABI parity, role fencing, immutable snapshot/lock behavior,
+privilege grants, independent Reader/indexer lifetimes, primary failure and
+cleanup uncertainty, real reader/check DB/RPC access and owned teardown.
+The existing retained-deployment acceptance campaign provides the selected
+rootless Engine lifecycle proof; ordinary CI alone does not.
+
+
+Named Reader qualification and integration record (2026-11-13)
+--------------------------------------------------------------
+Previously qualified executable revision:
+  33ddf85cdaa340b59d0731cfe0c30a0e08ac6c78
+Its revision-bound evidence remains preserved under
+out/qualification/33ddf85cdaa340b59d0731cfe0c30a0e08ac6c78/.
+The fw/rootless agentic run passed 188 repository checks, 6 input checks,
+144 contained tests (2 expected skips), the local maintained CI workflow,
+and retained-deployment acceptance with a live Reader while the indexer
+was running. Reader inputs were distinct; Reader and writer locks and
+owned fixtures were retired after successful completion.
+
+That qualification followed three corrections: preserving bounded Reader
+failure records through Compose output, disabling compression for the
+single-file local log policy, and selecting the indexed fixture database
+for the disposable Reader credential. Neither production credentials nor
+Reader SQL privileges were relaxed.
+
+Integration reconciles main's independent README availability update at
+95a56c9 and preserves its surrounding documentation. Independent integration review additionally reproduced host SIGTERM bypassing
+the Reader check cleanup. The lifecycle now routes SIGTERM through its owned
+cleanup and restores the prior handler. A real host-subprocess regression
+failed before this fix and passes afterward. A fresh independent audit
+accepted the narrow correction; resource and credential review found no
+other blocker. This is a new executable change relative to the earlier
+qualified revision and requires the full reconciled local qualification.
+The reconciled commit must pass local repository, contained and retained
+Reader acceptance before main advances. Its exact revision and separate
+results are recorded in out/qualification/<reconciled-revision>/; main's
+exact-head GitHub CI is verified separately after integration. The earlier
+qualified revision is not relabelled as the final integration revision.
+
+Scope remains same-Engine immutable Reader preparation and one-shot live
+source/role admission. Consumers own their process lifetimes. This does not
+activate production, create a Reader daemon or cross-host service, start
+T1-C, or qualify arbitrary Engines or providers.

@@ -10,7 +10,7 @@ import json
 import re
 
 PREFIX = b"CONIX-FAILURE-V1 "
-PHASES = frozenset({"staging", "verification", "staged_inputs", "advance"})
+PHASES = frozenset({"staging", "verification", "staged_inputs", "advance", "reader_check"})
 CAUSES = frozenset({
     "InputError", "OSError", "CommitOutcomeUnknown",
     "BranchConflict", "HistoryConflict", "StorageUnavailable", "WriterBusy",

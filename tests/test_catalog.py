@@ -142,6 +142,29 @@ class CatalogAdmission(unittest.TestCase):
         with self.assertRaises(ConfigurationError):
             prepare_catalog(configured)
 
+    def test_reader_role_projects_identical_source_but_writer_role_stays_distinct(self):
+        configured = self.write()
+        writer = prepare_catalog(configured)
+        configured.write_text(
+            configured.read_text().replace(
+                'runtime_role = "conix_runtime"',
+                'runtime_role = "conix_reader"',
+            )
+        )
+        reader = prepare_catalog(configured)
+        self.assertEqual(reader.source_id, writer.source_id)
+        self.assertEqual(reader.contracts, writer.contracts)
+        self.assertEqual(reader.database.runtime_role, "conix_reader")
+        self.assertEqual(writer.database.runtime_role, "conix_runtime")
+
+        configured.write_text(
+            configured.read_text().replace(
+                'runtime_role = "conix_reader"', 'runtime_role = "conix_owner"',
+            )
+        )
+        with self.assertRaises(ConfigurationError):
+            prepare_catalog(configured)
+
     def test_abi_traversal_duplicate_members_and_symlinks_are_refused(self):
         with self.assertRaises(ConfigurationError):
             prepare_catalog(self.write(abi_file="../token.json"))

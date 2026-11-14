@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
+from urllib.parse import urlsplit
 from unittest.mock import Mock, patch
 
 from tools.containers.client import OperationError
@@ -30,6 +31,17 @@ class DeploymentAcceptanceContracts(unittest.TestCase):
         docker.run.return_value = ""
         return lane.DeploymentAcceptance(decl, docker, {}, folder)
 
+    def test_committed_credentials_select_one_database_with_distinct_roles(self):
+        """Reader admission must observe the same disposable history as the indexer."""
+        folder = lane.named.ROOT / "config/deployments/deployment-acceptance/secrets"
+        selected = {}
+        for role in ("owner", "runtime", "reader"):
+            connection = urlsplit((folder / (role + ".dsn")).read_text().strip())
+            self.assertEqual(connection.username, "conix_" + role)
+            selected[role] = (connection.hostname, connection.port, connection.path)
+        self.assertEqual(selected["reader"], selected["runtime"])
+        self.assertEqual(selected["owner"], selected["runtime"])
+
     def test_existing_lock_refuses_before_engine_effects(self):
         """A leftover prepared selection is recovery state, not a fresh fixture."""
         with tempfile.TemporaryDirectory() as directory:
@@ -42,12 +54,29 @@ class DeploymentAcceptanceContracts(unittest.TestCase):
                     campaign.preflight()
             campaign.docker.run.assert_not_called()
 
+    def test_existing_reader_snapshot_refuses_new_fixture_before_engine_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            campaign = self.campaign(Path(directory))
+            with (
+                patch.object(lane.named, "inspect_prepared", return_value=None),
+                patch.object(lane.named, "inspect_reader_prepared", return_value=SimpleNamespace(
+                    image="sha256:" + "a" * 64,
+                    volume="conix-inputs-" + "b" * 24,
+                )),
+            ):
+                with self.assertRaises(OperationError):
+                    campaign.preflight()
+            campaign.docker.run.assert_not_called()
+
     def test_existing_indexer_is_not_adopted_or_retired(self):
         """The stable deployment ID must not authorize touching an earlier service."""
         with tempfile.TemporaryDirectory() as directory:
             campaign = self.campaign(Path(directory))
             campaign.docker.run.return_value = "a" * 64
-            with patch.object(lane.named, "inspect_prepared", return_value=None):
+            with (
+                patch.object(lane.named, "inspect_prepared", return_value=None),
+                patch.object(lane.named, "inspect_reader_prepared", return_value=None),
+            ):
                 with self.assertRaises(OperationError):
                     campaign.preflight()
             self.assertFalse(campaign.fixture_attempted)
@@ -87,6 +116,45 @@ class DeploymentAcceptanceContracts(unittest.TestCase):
             campaign.child = Mock()
             failures = campaign.cleanup()
             self.assertEqual(len(failures), 1)
+            campaign.docker.remove_inputs.assert_not_called()
+            campaign.child.assert_not_called()
+
+    def test_reader_preparation_is_independent_and_uses_normal_make(self):
+        with tempfile.TemporaryDirectory() as directory:
+            campaign = self.campaign(Path(directory))
+            campaign.child = Mock(return_value=b"")
+            with patch.object(lane, "select_endpoint", return_value=campaign.docker.endpoint):
+                for action in (
+                    "deployment/reader/prepare",
+                    "deployment/reader/check",
+                    "deployment/reader/status",
+                ):
+                    campaign.make(action)
+            actual = [call.args[0][2] for call in campaign.child.call_args_list]
+            self.assertEqual(actual, [
+                "deployment/reader/prepare",
+                "deployment/reader/check",
+                "deployment/reader/status",
+            ])
+
+    def test_unconfirmed_reader_retirement_preserves_external_dependencies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            campaign = self.campaign(Path(directory))
+            campaign.fixture_attempted = campaign.prepare_attempted = True
+            campaign.reader_prepare_attempted = True
+            campaign.make = Mock(side_effect=[
+                None, OperationError("Reader volume still mounted"),
+            ])
+            campaign.child = Mock()
+            with (
+                patch.object(lane, "_candidate_ids", return_value=[]),
+                patch.object(lane.named, "inspect_reader_prepared",
+                             return_value=SimpleNamespace(image="sha256:" + "a" * 64,
+                                                          volume="conix-inputs-" + "b" * 24)),
+            ):
+                failures = campaign.cleanup()
+            self.assertEqual(len(failures), 1)
+            self.assertIn("Reader retirement", failures[0])
             campaign.docker.remove_inputs.assert_not_called()
             campaign.child.assert_not_called()
 

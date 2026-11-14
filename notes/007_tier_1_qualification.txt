@@ -1,0 +1,465 @@
+Conix — Tier 1 qualification and continuation
+============================================
+
+13 November 2026. Tier 1 selected-Engine evidence recorded before integration.
+This is the authority for Tier 1 revision-bound implementation evidence; Note
+000 governs protected concrete delegation, and Note 004 remains the Tier-0
+source/evidence authority. Note 001 section 4 is historical T1 planning.
+
+T1-A — Bounded selected-read retries
+-------------------------------------
+
+Executable revision: 60ee378a7d26d48ca087ca793d7517e16db53a50.
+Branch before integration: main-tier-1-rpc-reads-20261113.
+Exact-revision GitHub Actions run 43388260483 passed:
+  https://github.com/numpde/conix/actions/runs/43388260483
+  - 165 repository tests;
+  - 128 contained tests, including 2 expected skips;
+  - offline installed-image and private staging qualifications.
+
+The operator separately reports a successful selected-Engine run at the
+identical executable revision, on fw / Linux amd64 / rootless Docker context
+agentic: 128 contained tests (2 expected skips), including the real delegated
+RPC -> Writer.advance_one -> PostgreSQL Journal.publish_block witness. The
+owned disposable database, RPC and test resources were retired successfully.
+The local checkout was clean; main was unchanged before integration.
+
+Private revision-bound operator evidence (not a required build/source input):
+  /home/ra/repos/conix/out/qualification/
+    60ee378a7d26d48ca087ca793d7517e16db53a50/t1-a.json
+
+The operator supplied the evidence location and stated results; this review
+independently verified the matching GitHub commit and CI but did not access
+the private host-local JSON. Do not treat the CI runner as a rootless proof.
+
+Exact delegation:
+  conix.resilience.rpc_retry.run_with_read_retries
+    -> original conix.app.run with optional writer_session
+      -> original core.open_writer and source admission/exclusive journal
+        -> original Writer.advance_one
+          -> RetryingRPC.call
+            -> original bounded RPC.call
+        -> original Journal.publish_block.
+The normal Python CLI 'conix run' retains the unextended Tier-0 session.
+No additional HTTP client, evidence parser, scanner, publisher, tip scheduler
+or automatic COMMIT replay exists. Three total attempts are permitted only
+for selected block/header and pinned-log reads on reviewed transient
+connection/read failure causes, before the original absolute deadline.
+Unclassified provider failures, protocol issues, branch conflicts, database
+errors and expired work fail closed. Cancellation propagates.
+
+Limitations: qualifying this opt-in library composition does NOT activate
+Tier 1 inside any deployed service, qualify arbitrary public RPC providers,
+establish unattended recovery, prove long-term/finality safety, or authorize
+automatic reorganization repair. Tier 1-B/C/D need independent behavior and
+selected-Engine evidence. The old main-tier-1 branch's standalone follow()
+loop is obsolete; it duplicates normal Tier-0 tip scheduling and is not
+a basis for new Tier-1 supervision.
+
+T1-B — Qualified opt-in session supervisor
+-------------------------------------------------------
+
+Executable revision: f9d6941bcc6325e6ee5e052361d4ac3aa8634685.
+Independent branch: main-tier-1-session-supervisor-20261113, based on
+T1-A integration 6cb47b6c65294ca2b4280b8497569b23e4631e53.
+RED contained run 43415249992 failed importing the absent supervisor.
+GREEN repository/contained CI at exact executable revision:
+  https://github.com/numpde/conix/actions/runs/43416086583
+  - 165 repository tests;
+  - 141 contained tests with 2 expected skips;
+  - offline image/input preparation and prospective deployment checks.
+
+Runtime composition:
+  conix.resilience.supervisor.supervise(catalog, database_dsn, stop)
+    -> conix.resilience.rpc_retry.run_with_read_retries(...)
+      -> ORIGINAL conix.app.run(...)
+        -> original core.open_writer / source identity and journal lock
+          -> original Writer.advance_one / RPC.call / Journal.publish_block.
+No new normal block loop, transport, journal, scanner, reader, source-specific
+algorithm, database progress registry, repair or external process orchestrator.
+The supervisor controls only when to RESTART this complete application call.
+
+Policy: only a caught RpcUnavailable with a ConnectError, ConnectTimeout,
+ReadError or ReadTimeout as its explicit cause is restartable. These are
+shared with T1-A's read classification; a TimeoutError from a single read
+can be retried inside its ORIGINAL T1-A deadline but may NOT restart the
+whole application when that deadline might be exhausted. Provider
+rejections, missing evidence, source/schema/branch conflicts, SQL
+unavailability, uncertain COMMIT and unconfirmed retirement remain errors.
+Two bounded restarts with 100 ms and 200 ms cancellable waits are allowed.
+The original error is re-raised on exhaustion or a concurrent stop.
+Cancellation propagates and cannot admit a subsequent session.
+
+Contained witness: injected THREE selected-log transport failures into
+the original RPC.call at one real Anvil block. T1-A exhausted its attempt
+budget; the previous original app.run/open_writer retired its SQL
+connection before T1-B invoked the same application in a fresh session.
+Observed original Journal.publish_block and retained source ID, block
+progress and history generation through independent SELECT-only SQL.
+Negative tests include provider HTTP rejections, unknown COMMIT, blocked
+history, request/deadline timeout, cancellation during active work and
+backoff, and failed retirement. All tests use existing disposable sources.
+
+Limits: this is an opt-in in-process APPLICATION SESSION supervisor,
+not a deployed supervisor, child-process manager, generalized SQL retry
+policy, automatic reorganization repair, or durable multi-process leader
+election. GitHub-hosted CI is NOT the selected rootless Engine. The
+selected-Engine qualification and independent review are recorded below.
+Tier 1-C/D still own checked
+reorganization automation and broader unattended recovery, including
+PostgreSQL restarts and unknown COMMIT reconciliation. Nothing is merged
+from the old main-tier-1 branch, whose follow() loop duplicated Tier 0.
+
+
+T1-B selected-Engine qualification and integration (2026-11-13)
+--------------------------------------------------------------
+
+Qualified revision: 455ecfd0e0df97751945702ed202e6ebc2dacbf3.
+Exact-head CI run 43416802908 passed:
+  https://github.com/numpde/conix/actions/runs/43416802908
+On fw, rootless Docker context agentic selected
+unix:///run/user/1000/docker-engines/agentic/docker.sock.
+The offline test runner was
+sha256:b0067d0b78b673ba259db3ab241c9858446939f0e9c7461a43c5f17df3c093d4.
+The maintained test/indexer/run passed 141 contained tests with 2 expected
+skips. Its real Anvil/PostgreSQL witness exhausted three T1-A attempts,
+observed closure of the first writer connection before the next writer
+entered, and confirmed publication through the original application and
+journal using retained source identity and history generation. Restart
+budget, excluded failure classes, stop and cancellation contracts passed.
+Owned fixture containers, network and database volume were retired;
+unrelated shared-Engine resources were preserved.
+
+Independent source review checked classification, the bounded restart
+loop, original application delegation, cancellation, and retirement before
+restart. No new blocker was found in those inspected paths.
+Private revision-bound evidence and the full contained log are under:
+  out/qualification/455ecfd0e0df97751945702ed202e6ebc2dacbf3/t1-b.json
+  out/qualification/455ecfd0e0df97751945702ed202e6ebc2dacbf3/contained.log
+These are local operator receipts, not required build inputs.
+
+Integration incorporates main's independent README rewrite at b18acb3 and
+retains that text, adding a brief opt-in resilience section. Only README.md
+and this evidence record differ from the qualified T1-B executable inputs.
+Integration CI is distinct from the selected-Engine result above. This
+qualification does not activate a deployed Tier-1 service, establish T1-C
+automatic repair or T1-D unattended recovery, or qualify arbitrary Engines,
+providers, process supervisors or production environments.
+
+
+T1-C1 — Bounded retained canonical-ancestor selection (2026-11-13)
+------------------------------------------------------------------
+
+Branch: main-tier-1-reorg-ancestor-20261113 (unmerged).
+Base: main@64a648a0a221cb50394e29b3138fdeb4f093038a.
+RED test-only revision: ab47d8ce71e367529335e3a35ef1b803e4d8de69.
+  https://github.com/numpde/conix/actions/runs/43453304044
+  The installed suite failed importing the absent conix.resilience.reorg
+  implementation (145 tests run, one import error, two expected skips).
+GREEN executable revision: 1fe9fc5b718a65e80f2cab229896db3d1b76ac7e.
+  https://github.com/numpde/conix/actions/runs/43453483369
+  189 host repository tests passed; 152 contained tests passed with two
+  expected skips. All eight new tests passed, including a genuine disposable
+  Anvil three-block replacement with SQL basis unchanged after selection.
+  The fixture then used the ORIGINAL checked manual repair to restore its
+  own database; the selector performed no repair.
+
+The selector is given an already verified exclusive original Writer. It
+uses Journal.retained_ancestry and Writer._block, with one shared RPC deadline,
+to select the highest exact matching stored header within the catalog's
+existing evidence window. It checks that the durable progress basis did not
+change, returns no candidate for a still-canonical retained tip, and
+refuses missing headers, exhausted ancestry, or contradictory source facts.
+No extra RPC decoder, scanner, SQL mutation, repair path, scheduler or
+configuration field was introduced.
+
+The GitHub-hosted run is rootful, not selected-Engine evidence.
+The operator separately reported selected fw/rootless agentic qualification
+at d6dab3179cb120e621ac1cfafd1c1bde0564e537: 189 repository checks,
+6 input checks and 152 contained tests (2 expected skips), including eight
+new T1-C1 tests and the genuine multiblock Anvil fork. Owned cleanup was
+confirmed. Its private revision-bound receipt is
+out/qualification/d6dab3179cb120e621ac1cfafd1c1bde0564e537/t1-c1.json.
+This record reflects the operator report; the local receipt was not remotely
+accessible for direct inspection.
+No T1-C2 repair orchestration, persisted-state recovery policy, production
+activation or integration into main has been performed. Automatic repair
+must still use the original Writer.repair_to under exclusive ownership and
+revalidate the selected basis and live canonical evidence at invocation.
+
+
+T1-C2 — Freshly checked repair and opt-in supervised resume (2026-11-13)
+-------------------------------------------------------------------------
+
+Unmerged continuation of main-tier-1-reorg-ancestor-20261113.
+No changes to default conix run, the original T1-B supervise() entrypoint,
+Tier-0 scanner/publisher, schema, operator commands or production deployment.
+
+RED test-only revision 2c2d23a8baa35ab5c27adc145e0885aaf7d16f06:
+  https://github.com/numpde/conix/actions/runs/43456621326
+The contained suite failed before the new recovery functions existed.
+GREEN initial implementation revision 8105af0f71a72e1f90ce08ebc356a32201218b35:
+  https://github.com/numpde/conix/actions/runs/43457393014
+189 host repository checks and 173 contained tests passed (2 skips).
+
+A separate source review found that an arbitrary persisted blocked_reason
+could be cleared when a genuine fork happened concurrently with an unrelated
+operator hold, including an unknown-SQL-COMMIT intervention. The focused
+regression at 27fb98ca93f3f4a4e6e2477d3106bef052f1de39 failed for this
+specific unsafe outcome:
+  https://github.com/numpde/conix/actions/runs/43458280365
+The correction admits only the journal's explicit
+REORGANIZATION_BLOCKED_REASON when a persisted HistoryConflict is recovered.
+Any other retained SQL hold refuses unattended repair, even after a previous
+BranchConflict. Tier 0 presently does NOT persist a reorganization marker
+when it detects a fork; it terminates, allowing an opt-in Tier-1 invocation
+to rediscover the conflict from PostgreSQL and RPC. The blocked-state
+restart acceptance explicitly installs the typed marker in disposable SQL.
+It proves recovery from such retained state, not marker production by Tier 0.
+
+Final executable/test revision 7dcf07cada0c40a65e7f572faa0e4dfc4fd46e61:
+  https://github.com/numpde/conix/actions/runs/43459444312
+189 repository checks passed, and 177 contained tests passed (2 expected
+skips). The real Anvil/PostgreSQL witness replaced a multiblock suffix
+containing a selected Transfer event, observed the original event indexed,
+required a new correctly indexed event after recovery, and proved the old
+Reader generation was invalidated. Instrumentation delegated to the actual
+app.run, original open_writer and Journal.repair_to, confirmed exactly one
+checked repair, no simultaneous writers and retired SQL sessions. Additional
+contracts covered a healed fork, missing tip/ancestor evidence, a changed
+ancestor, a changed durable basis, cancellation/stop before mutation, COMMIT
+uncertainty, unrelated operator holds, persisted reorg markers and finite
+recovery attempts.
+
+Delegation and admission:
+  conix.resilience.reorg.supervise_with_reorg_recovery
+    -> original T1-B supervisor.supervise
+      -> existing T1-A retry composition and original Tier-0 app.run
+    -> after full failed-session retirement, original core.open_writer
+      -> T1-C1 select_repair_ancestor (bounded retained facts + core RPC)
+      -> fresh ancestor canonicality and stale-tip conflict observation
+      -> fresh journal basis comparison
+      -> ORIGINAL Writer.repair_to (another canonicality check)
+        -> ORIGINAL Journal.repair_to guarded atomic suffix mutation
+    -> original T1-B supervised application reopens and re-reads the journal.
+
+A changed/unknown ancestor, missing canonical header, healed stored tip,
+SQL-basis mismatch, unrelated persisted blocked_reason, unknown COMMIT
+outcome, unconfirmed session retirement or cancellation cannot authorize
+repair. An already healed BranchConflict can permit a bounded new ordinary
+session without deleting history. A persisted HistoryConflict without a
+confirmed reorganization is not cleared. Recovery admits at most two
+confirmed fork attempts per invocation; normal tip scheduling remains
+the original app.run responsibility.
+
+The upstream canonical branch cannot be frozen across RPC and SQL; this
+is provider-relative revalidation, not an independent consensus or
+finality proof. At that hosted qualification stage, rootless fw/agentic qualification
+of T1-C2 remained open. The selected-Engine result is recorded separately
+below; it does not change the scope of the hosted result.
+No merge, branch retirement, external deployment or production activation
+is claimed by these hosted results.
+
+
+T1-C selected-Engine qualification and integration (2026-11-13)
+---------------------------------------------------------------
+
+Original C1 record preserved:
+  d6dab3179cb120e621ac1cfafd1c1bde0564e537
+  fw/rootless agentic: 189 repository checks, 6 input checks,
+  152 contained tests with 2 expected skips, all 8 C1 tests including
+  genuine multi-block Anvil ancestor selection without journal mutation.
+  out/qualification/d6dab3179cb120e621ac1cfafd1c1bde0564e537/t1-c1.json
+
+Original C2 record preserved:
+  71fc4ccbb1a601a5a9c2b10028e8878e1ff0d5fe
+  fw/rootless agentic: 189 repository checks, 6 input checks,
+  177 contained tests with 2 expected skips. Real replacement-event
+  recovery, old-generation Reader rejection, explicit persisted-marker
+  recovery and unrelated operator-hold guards passed. Owned fixture
+  containers, database volume and network were retired successfully.
+  out/qualification/71fc4ccbb1a601a5a9c2b10028e8878e1ff0d5fe/t1-c2.json
+
+Both runs used the selected local Unix Engine endpoint:
+  unix:///run/user/1000/docker-engines/agentic/docker.sock
+The private receipts above remain unchanged; they are evidence, not
+required source/build inputs. Matching hosted CI results are recorded in
+the preceding C1/C2 sections and are supplementary to these local runs.
+
+Integration reconciles main's README-only change at 2c033d0. It changes
+README and this record relative to qualified C2 executable inputs. The
+final integration diff receives independent review and its exact committed
+revision must pass repository/input checks and the contained suite locally
+before main advances. Reconciled results are recorded separately under
+out/qualification/<integration-revision>/integration.json; exact-head CI on
+main and merged-branch retirement are recorded there after integration.
+
+The existing opt-in mechanism remains bounded and provider-relative.
+No T1-C feature expansion, default CLI activation, production deployment or
+T1-D work is included. Explicit reorganization markers remain distinct
+from unrelated operator holds; Tier 0 does not automatically persist them.
+
+
+T1-D1 — Opt-in bounded PostgreSQL disconnection recovery (2026-11-13)
+--------------------------------------------------------------------
+
+Branch: main-tier-1-database-disconnect-20261113, unmerged.
+Base: main@f6386378cfa4ef9fcdbf37f7e40d961e02f8cfa7.
+No default conix run, T1-A/B/C, owner/schema, journal mutation, Reader,
+Make operator or deployment activation change.
+
+The test-first baseline at 138c2d61cc0596bb7d9d924662edd81eb3982616
+provided a real pass-through to the existing T1-C supervisor, not a
+missing import. The behavior RED at
+5f394ad14e610e474f3c2e31a3515b5aa80dfe2c:
+  https://github.com/numpde/conix/actions/runs/43496707663
+189 host repository checks passed. The contained test terminated the real
+PostgreSQL writer backend via pg_terminate_backend while the original app
+was acquiring actual selected Anvil logs. On resumption it received
+psycopg.errors.AdminShutdown at the original journal's BEGIN and the
+unmodified supervision path exited with StorageUnavailable rather than
+starting another application. 185 contained tests ran, 2 expected skips;
+the intended recovery behavior and budget tests failed. This is a
+behavioral RED, not a ModuleNotFoundError.
+
+The first GREEN implementation at
+5dfc10b0a6f20132241aa45ba5801da0451eb141:
+  https://github.com/numpde/conix/actions/runs/43496859590
+passed 189 host repository checks and 185 contained tests, including the
+same real PostgreSQL interruption and recovery (2 expected skips).
+The SQLSTATE exclusion matrix was expanded at
+9e25af11c6f60e643f8725bfe1895e68fbb79bc2:
+  https://github.com/numpde/conix/actions/runs/43497491341
+to exclude transaction resolution unknown (08007), protocol violation
+(08P01), query cancellation, serialization conflicts, authentication,
+schema and SQL constraints, in addition to the separate
+CommitOutcomeUnknown application exception.
+
+Final executable/test revision:
+  0ae46b98937db87c531f7a85717c63f7ccfd5364
+  https://github.com/numpde/conix/actions/runs/43497867068
+Hosted checks: 189 repository tests, 186 contained tests (2 expected
+skips), installed Python image qualification and disposable-resource
+retirement. The extra actual PostgreSQL wire-reply test withheld
+COMMIT completion *after the server committed*. The original journal
+raised CommitOutcomeUnknown, T1-D1 did not start another application,
+and exactly one new block existed in the durable database.
+
+Concrete opt-in composition:
+  conix.resilience.database.supervise_with_database_recovery
+    -> existing T1-C supervise_with_reorg_recovery
+      -> existing T1-B supervise / T1-A bounded selected reads
+        -> original Tier-0 app.run / core.open_writer / Journal
+    -> on classified StorageUnavailable ONLY after full prior retirement,
+       wait 100 or 200 ms and invoke the SAME T1-C composition fresh.
+A fresh original writer/session/source check selects its durable basis,
+and only the original complete-block journal can publish. There is no
+replay of the previous SQL mutation, shared mutable connection, alternative
+scanner, extra PostgreSQL registry, new configuration or retry policy in
+the Tier-0 entrypoint. The combined wrapper is optional.
+
+Historical classification at ec6ab83, superseded by the P2 correction
+below: psycopg OperationalError causes with selected connection/shutdown
+SQLSTATEs (08000, 08001, 08003,
+08006, 57P01, 57P02, 57P03) or no server-provided SQLSTATE are eligible
+for at most two new application sessions. The no-SQLSTATE case cannot
+independently prove why libpq failed; it is an operational restart
+candidate, never a proof of durable mutation outcome. The original
+connection/source/journal admission still runs on every attempt.
+SQLSTATE 08007/08P01 and all unclassified StorageUnavailable cases are
+excluded; an unanswered COMMIT always remains CommitOutcomeUnknown.
+Retirement failure, stop, cancellation, provider/branch errors and
+operator-held blocked history do not grant database restart.
+
+These are GitHub-hosted rootful container qualifications, not a selected
+fw/rootless agentic runtime result. T1-D1 rootless qualification and
+independent operator review remain OPEN. A real backend termination is
+proven; a full PostgreSQL server/process restart and arbitrary network
+failures are not separately demonstrated. No automatic unknown-COMMIT
+reconciliation (T1-D2), cross-process orchestration, production activation
+or integration into main is claimed.
+
+
+T1-D1 P2 — SQLSTATE-free authentication failure incorrectly restarted
+---------------------------------------------------------------------
+
+The operator's independent review of ec6ab83f6ef8d1fa9e3d06ab56ef1b2def24d1ee
+on fw/rootless agentic reproduced a P2: an actual wrong-password PostgreSQL
+login raised psycopg.OperationalError with sqlstate=None; the old classifier
+allowed two further application attempts (three total). The earlier local
+suite otherwise passed 189 repository checks, 6 input checks and 186
+contained tests with two expected skips, with owned fixture cleanup
+confirmed. Its revision-bound review is at
+out/qualification/ec6ab83f6ef8d1fa9e3d06ab56ef1b2def24d1ee/t1-d1-review.json.
+Those results did NOT qualify the original recovery policy for integration.
+
+Behavioral RED committed at e54e4ccd583e95dbe6cdc16d6903bd60bbe35482:
+  https://github.com/numpde/conix/actions/runs/43501142061
+The unchanged implementation failed two regressions: a real invalid
+PostgreSQL password retried instead of refusing after one invocation,
+and an unclassified constructed OperationalError(None) was granted
+restart authority. 189 host tests passed; 187 contained tests ran with
+two failures and two expected skips.
+
+Correction: SQLSTATE absence provides NO admissible evidence of a
+connection-only failure. The classifier now requires one of the existing
+explicitly selected connection/shutdown SQLSTATEs (08000, 08001, 08003,
+08006, 57P01, 57P02, 57P03). It does not parse exception messages or infer
+transience from a psycopg.OperationalError class alone. The unit-positive
+fixtures were corrected to generate explicit structured connection
+exceptions, rather than claiming no-SQLSTATE errors were safe. The
+original Tier-0 journal, source admission, and COMMIT uncertainty fencing
+are unchanged.
+
+Corrected executable/test revision:
+  1a963734af370f3bcf3298e2cff8275ec3b95dd8
+  https://github.com/numpde/conix/actions/runs/43501364393
+Hosted CI passed 189 host repository tests, 187 contained tests (two
+expected skips), including actual wrong-password refusal with exactly
+one application invocation, the original real-backend-termination
+recovery, actual lost-COMMIT-response exclusion, and confirmed
+disposable network/volume retirement.
+
+This deliberately reduces automatic recovery coverage: libpq transport
+failures with no SQLSTATE must now stop for operator action, even when
+they are genuinely transient. Re-admitting those cases would require
+independently established transport provenance and a new behavioral
+qualification, not guessed authentication-vs-network exception text.
+The corrected executable has NOT yet been qualified on fw/rootless
+agentic or approved for integration. There was no change to main, no
+T1-D2 uncertain-COMMIT reconciliation, and no production activation.
+
+
+T1-D1 P2 corrected — selected-rootless qualification and integration gate
+--------------------------------------------------------------------------
+
+Selected executable/test revision:
+  a8d8b3be0364d471c70fea4290b72fff0d838cad
+  https://github.com/numpde/conix/actions/runs/43501823908
+On 14 November 2026, the operator reported independent requalification
+on fw with rootless Docker context agentic. At that exact revision:
+  - 189 repository checks passed;
+  - 6 input checks passed;
+  - 187 contained tests passed (2 expected skips);
+  - real wrong-password authentication invoked the application exactly
+    once, with no SQLSTATE-free restart;
+  - real PostgreSQL backend termination restarted a fresh application;
+  - lost PostgreSQL COMMIT acknowledgement propagated, with no replay;
+  - all owned disposable resources were retired.
+Revision-bound operator evidence:
+  out/qualification/a8d8b3be0364d471c70fea4290b72fff0d838cad/t1-d1.json
+
+Independent review found no remaining blocker for the corrected T1-D1
+scope. This result supersedes the earlier ec6ab83 P2 qualification, but
+does not relabel that failing implementation as safe. Repository evidence
+and rootless reporting are distinct: the local receipt was not directly
+available to the remote review.
+
+Integration selection is a direct fast-forward from
+main@f6386378cfa4ef9fcdbf37f7e40d961e02f8cfa7. Subsequent README
+and qualification-note changes are documentation-only; executable/test
+inputs remain those qualified at a8d8b3b. The merged main revision
+requires its own exact-head CI verification.
+
+There is no default Tier-1 activation, T1-D2 uncertain-COMMIT recovery,
+SQLSTATE-free retry, or production deployment in this integration.
