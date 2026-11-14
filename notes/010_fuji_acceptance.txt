@@ -116,3 +116,36 @@ Limits: two observed event kinds out of 17 selected; no live collection
 witness, full deployment-history backfill or sustained moving-tip claim.
 This is the ordinary Tier-0 CLI, not activated Tier-1 recovery. No production
 activation, signing, chain writes, main promotion or remote push occurred.
+
+Tier-1 upward-integration qualification — 14 November 2026
+----------------------------------------------------------
+Merge revision 0b4019997e895d3b71c9ae5f632e22197f4c98e1 passed the complete
+maintained workflow locally on rootless agentic: 206 repository checks,
+six input checks, 220 contained tests with two expected skips, both owner
+initialization tests, pinned acquisition/pool checks, offline image builds,
+private staging and named deployment/Reader preparation and retirement.
+No hosted CI was substituted for these local checks.
+
+The read-only Fuji lane passed at that exact clean revision:
+ out/fuji-acceptance/f3355de504841186ea06b790/result.json
+The creation checkpoint again matched the two independently pinned events
+and original Reader state calls. Four resolved upstream targets were denied
+direct TCP access; gateway reads and local transaction-method refusal passed.
+Recent start: 61080406; observed startup head: 61080413.
+Before restart: 61080415; resumed: 61080416; final Reader: 61080417.
+Subsequently observed head: 61080476; measured lag: 59 blocks.
+No cleanup errors remained. Generated profiles and prepared selections were
+confirmed absent. The following commit records evidence only; executable
+and test source remain identical to the qualified merge revision.
+
+The audit covered expected-return normalization, primary/cleanup/reporting
+failure precedence, producer-to-host diagnostics, fixed-upstream admission,
+owned retirement and the strength of snapshot/restart evidence. Independent
+review rechecked each correction; final checks found no remaining actionable
+issue in these paths. This is not an audit of every repository subsystem.
+
+The scanner, journal, Reader and Tier-1 recovery policy were unchanged by
+this integration. Main remains abda66f671f0240c6506b46335566e4853f69150.
+Both maintained branches remain local ahead of origin; nothing was pushed
+or activated in production. Throughput and complete-history limitations
+above remain open; a bounded acceptance pass does not remove them.
