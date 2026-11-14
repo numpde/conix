@@ -463,3 +463,68 @@ requires its own exact-head CI verification.
 
 There is no default Tier-1 activation, T1-D2 uncertain-COMMIT recovery,
 SQLSTATE-free retry, or production deployment in this integration.
+
+
+T1-D2 — Journal-owned publication observation and bounded resumption
+-------------------------------------------------------------------
+
+14 November 2026, on maintained tier-1; main remains at cf7c013.
+GREEN executable/test revision: d9166a2124f0db2d74a29feec7b28e54bb380f50.
+The original Tier-0 capability was implemented on tier-0@6ea642f and merged
+upward at dbf78f6. Note 008 records the selected contract, its protected-core
+review, real behavioral RED at a5c22d8, and full rootless Tier-0 qualification.
+The new opt-in composition is
+  conix.resilience.publication.supervise_with_publication_recovery.
+
+The Tier-1 missing-capability RED at b5815b5 ran locally on rootless agentic:
+195 contained tests, one import error for the absent publication module, two
+expected skips. This is weaker than the Tier-0 behavioral RED: it establishes
+absence of the requested composition, not a failed executable D2 algorithm.
+The expanded policy and selected-event scenarios were qualified at GREEN.
+
+D2 surrounds the original D1/C/B/A application composition. Only a journal-
+created PublicationOutcomeUnknown carries recovery authority. After prior
+application retirement, D2 opens original open_journal and calls original
+Journal.reconcile_publication with the unchanged attempt. It performs no
+SQL comparison, event reconstruction, publication replay, scanner or repair.
+Only exact original-basis or expected-effect observations, followed by
+successful inspection retirement, permit another original invocation.
+Inspection has one catalog operation deadline covering its session lifetime.
+
+There are at most two D2 recoveries, with cancellable waits of 100/200 ms.
+The outer budget survives all inner restarts. Existing per-layer budgets
+remain finite but can multiply; this is not a shared two-session budget
+across every supervisor. The interleaved witness exhausts D2 while genuine
+D1 classification retries occur inside it. Wrong/unavailable observations,
+contention, cleanup failure, stop, cancellation, generic timeouts, base
+CommitOutcomeUnknown and uncertain repair cannot authorize D2 continuation.
+D1's SQLSTATE-free failure exclusion remains unchanged.
+
+The original app.RunOutcome propagates through all existing wrappers. If
+stop races with fresh nested entry and no advance occurs, D2 preserves the
+original publication uncertainty. Normal shutdown after resumed execution
+does not claim which invocation produced the formerly uncertain effect.
+
+Complete maintained CI was replayed locally on fw/rootless agentic with the
+explicit shared /home/ra/Downloads/wheelhouse: 189 repository checks, 6 input
+checks, 203 contained tests (2 expected skips), offline indexer/test/EVM
+builds, private input staging, named preparation/configuration and Reader
+snapshot preparation/status/removal passed. Owned fixture resources and the
+exact CI profile/staged volume were retired. Public logs and revision-bound
+metadata are retained privately under out/qualification/publication-recovery/
+tier-1/. These receipts are not source or build inputs.
+
+The real witness forces an unsent COMMIT and a server-side COMMIT whose
+actual reply is dropped. Both candidates contain a newly emitted selected
+ERC-20 event. It observes the original Journal method, then requires a fresh
+original application to publish a subsequent empty block, preserve generation
+and prior public-reader history, and expose the new transaction exactly once.
+It admits all three required fixture endpoints and establishes its own initial
+block; it does not depend on earlier test order or a partial Reader page.
+
+Independent review tightened the inspection deadline, actual nested outcome/
+budget tests, selected-event witness and fixture independence. Final review
+found no blocker in the inspected core or policy paths. No new service
+manager, default CLI retry, retained-service campaign, owned dapp32 campaign
+or production activation is included. This provisional implementation is
+not a promotion to main or qualification of arbitrary Engines/providers.
