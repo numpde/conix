@@ -82,14 +82,15 @@ def explanation(stderr, exit_code, *, phases):
 
 def error_record(error):
     """Preserve an admitted producer record or describe the host failure safely."""
-    previous = getattr(error, "diagnostic", None)
-    if admitted(previous) is not None:
-        return previous
-    category = type(error).__name__
-    category = category if CAUSE_NAME.fullmatch(category) else "UnexpectedError"
-    frames = traceback.extract_tb(error.__traceback__)
-    location = f"{Path(frames[-1].filename).name}:{frames[-1].lineno}" if frames else "unavailable"
-    if SOURCE_LOCATION.fullmatch(location) is None:
-        location = "unavailable"
-    fields = {"phase": "operator", "cause": category, "effect": "unconfirmed", "location": location}
-    return PREFIX + json.dumps(fields, separators=(",", ":")).encode()
+    fields = admitted(getattr(error, "diagnostic", None))
+    if fields is None:
+        category = type(error).__name__
+        category = category if CAUSE_NAME.fullmatch(category) else "UnexpectedError"
+        frames = traceback.extract_tb(error.__traceback__)
+        location = f"{Path(frames[-1].filename).name}:{frames[-1].lineno}" if frames else "unavailable"
+        if SOURCE_LOCATION.fullmatch(location) is None:
+            location = "unavailable"
+        fields = {"phase": "operator", "cause": category, "effect": "unconfirmed", "location": location}
+    # Re-emit checked fields: accepted JSON encodings need not themselves be
+    # ASCII, while the operator terminal boundary deliberately is.
+    return PREFIX + json.dumps(fields, separators=(",", ":")).encode("ascii")

@@ -79,5 +79,15 @@ class ProcessDiagnosticContracts(unittest.TestCase):
         self.assertIn("test_process_diagnostics.py:", record["location"])
 
 
+    def test_admitted_json_encoding_cannot_break_terminal_failure_emission(self):
+        from tools.containers.client import OperationError
+        from tools.containers.diagnostics import PREFIX, error_record
+        source = PREFIX + b'\xef\xbb\xbf' + b'{"phase":"reader_check","cause":"InputError","effect":"not_started"}'
+        self.assertIsNotNone(admitted(source))
+        emitted = error_record(OperationError("Reader failed.", diagnostic=source))
+        emitted.decode("ascii")
+        self.assertEqual(admitted(emitted), admitted(source))
+
+
 if __name__ == "__main__":
     unittest.main()
