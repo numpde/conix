@@ -1,0 +1,83 @@
+{
+  "rpc_url": "https://api.avax-test.network/ext/bc/C/rpc",
+  "chain_id": 43113,
+  "address": "0xfd4daafcae28b7037ccb87d54b89c657e79be19f",
+  "source_revision": "0c33dceb4697fe5b7b5ba0d14d4bb0d61b6b3696",
+  "source_url": "https://github.com/numpde/dapp32/blob/0c33dceb4697fe5b7b5ba0d14d4bb0d61b6b3696/dapps/pay-to-play/src/PayToPlay.sol",
+  "verification_url": "https://sourcify.dev/server/v2/contract/43113/0xfd4daafcae28b7037ccb87d54b89c657e79be19f?fields=deployment,abi",
+  "abi_sha256": "88fac0e8f8376dbf66d991bddbb9c36cc976d5894203192f5da4653c1c2ee20e",
+  "initial_interval": {
+    "start_block": 60737751,
+    "end_block": 60737751,
+    "block_hash": "0x9e051eb8e949a03d439b5b44b7312703a67a54416a1bfb9f4cad94aac9857ded",
+    "parent_hash": "0xc84e6966ce442ea6e0e793ae4bb6ba20448709da3725aeab25a3c6ef628173f8",
+    "timestamp": 1794153125
+  },
+  "receipt": {
+    "transactionHash": "0x3a81f9630fae032478ee912488657333f6bf12b68c179700d3788fa5eda46683",
+    "blockHash": "0x9e051eb8e949a03d439b5b44b7312703a67a54416a1bfb9f4cad94aac9857ded",
+    "blockNumber": "0x39ec8d7",
+    "transactionIndex": "0x0",
+    "contractAddress": "0xfd4daafcae28b7037ccb87d54b89c657e79be19f",
+    "status": "0x1"
+  },
+  "expected_raw_logs": [
+    {
+      "address": "0xfd4daafcae28b7037ccb87d54b89c657e79be19f",
+      "topics": [
+        "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0x000000000000000000000000f4a12ad8cb9409bb9233d81a03a1d00a6645672b"
+      ],
+      "data": "0x",
+      "blockNumber": "0x39ec8d7",
+      "transactionHash": "0x3a81f9630fae032478ee912488657333f6bf12b68c179700d3788fa5eda46683",
+      "transactionIndex": "0x0",
+      "blockHash": "0x9e051eb8e949a03d439b5b44b7312703a67a54416a1bfb9f4cad94aac9857ded",
+      "logIndex": "0x0",
+      "removed": false
+    },
+    {
+      "address": "0xfd4daafcae28b7037ccb87d54b89c657e79be19f",
+      "topics": [
+        "0x4d9a21ea7ceaf5a2d873133ddd91e240c240831530d38c5825ccbd4b453f26ad",
+        "0x0000000000000000000000000000000000000000000000000000000000000000"
+      ],
+      "data": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000012c",
+      "blockNumber": "0x39ec8d7",
+      "transactionHash": "0x3a81f9630fae032478ee912488657333f6bf12b68c179700d3788fa5eda46683",
+      "transactionIndex": "0x0",
+      "blockHash": "0x9e051eb8e949a03d439b5b44b7312703a67a54416a1bfb9f4cad94aac9857ded",
+      "logIndex": "0x1",
+      "removed": false
+    }
+  ],
+  "runtime_code_sha256": "323145ab2a8684ab9e3aec54c34f79d44ddda87fd17528aaed265b762fd9f134",
+  "genesis_hash": "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b",
+  "asset": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "position": {
+    "customer": "0x0000000000000000000000000000000000000000",
+    "channelId": 0,
+    "payee": "0x0000000000000000000000000000000000000000",
+    "claimPeriod": 300,
+    "channelCount": 1,
+    "admin": "0xf4a12ad8cb9409bb9233d81a03a1d00a6645672b",
+    "collector": "0x0000000000000000000000000000000000000000",
+    "balance": 0,
+    "voucherPaid": 0,
+    "requestedAmount": 0,
+    "readyAt": 0,
+    "effectiveBalance": 0,
+    "voucherKey": "0x0000000000000000000000000000000000000000",
+    "scheduledRefundAt": 0,
+    "refundAt": 0,
+    "settleAt": 0,
+    "closeAt": 0,
+    "escrowTotal": 0,
+    "refundRecipient": "0x0000000000000000000000000000000000000000",
+    "phase": 0,
+    "actions": {
+      "count": 0
+    }
+  }
+}
