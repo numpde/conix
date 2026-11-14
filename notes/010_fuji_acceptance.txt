@@ -82,3 +82,37 @@ provides a bounded snapshot of only its fixed public upstream's resolved
 addresses. The internal probe admits those numeric public targets and tests
 each directly; the receipt retains the tested address snapshot. This proves
 denied direct TCP to those targets, not universal runtime egress isolation.
+
+Tier-0 qualification — 14 November 2026
+---------------------------------------
+Local rootless agentic qualification passed on the clean source at
+ e0a52e3fb6f4cc4fbeaf0ee31e010e635b1de75b.
+Two unpushed commits were subsequently regrouped without changing any file:
+331d01598310131185377963b11d631d56b1e44e has the identical Git tree
+ e61d94eca43037c76440cc74c9fa4ad76b7b8a92.
+This is source-content qualification, not a claim that the earlier receipt
+names the regrouped commit. The following qualification record is docs only.
+
+Local checks: 206 repository tests; six input checks; 141 contained tests
+with two expected skips, plus both owner-only initialization tests.
+The remaining maintained workflow steps passed locally: pinned image/pool
+checks, offline runtime/test/EVM images, private staging, named preparation,
+prospective Compose admission and independent Reader prepare/status/remove.
+CI's generated selection and profile were retired. No hosted CI was used.
+
+The read-only live campaign passed with source_dirty=false and no cleanup
+errors. Private receipt:
+ out/fuji-acceptance/adb9f389ec82c7648e504cc6/result.json
+Historical checkpoint: 60737751, exactly two creation events plus matching
+asset and complete zero-customer/channel-zero viewPosition result.
+Recent start: 61080221; observed head at initial startup: 61080226.
+Before restart: 61080228; resumed observation: 61080229.
+Final Reader checkpoint: 61080230; subsequently observed head: 61080262.
+Measured lag: 32 blocks. Four resolved upstream addresses were denied direct
+TCP access from the confined helper; gateway reads and local write denial
+passed. Normal named lifecycle and independent Reader cleanup passed.
+
+Limits: two observed event kinds out of 17 selected; no live collection
+witness, full deployment-history backfill or sustained moving-tip claim.
+This is the ordinary Tier-0 CLI, not activated Tier-1 recovery. No production
+activation, signing, chain writes, main promotion or remote push occurred.
