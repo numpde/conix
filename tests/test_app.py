@@ -143,11 +143,13 @@ class WriterCompositionContracts(unittest.IsolatedAsyncioTestCase):
         """A composed session supplies the writer while the core owns scheduling."""
         stop = asyncio.Event()
         retired = []
+        advances = []
 
         @asynccontextmanager
         async def session(**_kwargs):
             class Writer:
                 async def advance_one(self):
+                    advances.append(True)
                     stop.set()
                     return None
             try:
@@ -159,5 +161,14 @@ class WriterCompositionContracts(unittest.IsolatedAsyncioTestCase):
             chain=SimpleNamespace(rpc_url="http://test.invalid"),
             limits=SimpleNamespace(operation_timeout_seconds=1),
         )
-        await app.run(catalog, "private-test-dsn", stop, writer_session=session)
+        result = await app.run(catalog, "private-test-dsn", stop, writer_session=session)
         self.assertEqual(retired, [True])
+        self.assertEqual(advances, [True])
+        self.assertIs(result, app.RunOutcome.STOPPED_AFTER_ADVANCE)
+
+    async def test_pre_entry_stop_reports_no_advance(self):
+        """A clean return without admission cannot confirm resumed execution."""
+        stop = asyncio.Event()
+        stop.set()
+        result = await app.run(None, None, stop)
+        self.assertIs(result, app.RunOutcome.STOPPED_BEFORE_ADVANCE)

@@ -390,6 +390,7 @@ class JournalContracts(unittest.IsolatedAsyncioTestCase):
 
             with patch.object(writer.connection, "execute", lose_before_send):
                 attempt = (await self.expect_unknown_commit(writer, block, event)).attempt
+            self.assertEqual(attempt, journal.PublicationAttempt(before, block, (event,)))
 
         async with open_journal(catalog=self.catalog, database_dsn=runtime_dsn) as reopened:
             self.assertEqual(await reopened.inspect(), before)
@@ -403,6 +404,7 @@ class JournalContracts(unittest.IsolatedAsyncioTestCase):
         async with asyncio.timeout(10), without_commit_reply(runtime_dsn) as (relay_dsn, dropped):
             async with open_journal(catalog=self.catalog, database_dsn=relay_dsn) as writer:
                 attempt = (await self.expect_unknown_commit(writer, block, event)).attempt
+            self.assertEqual(attempt, journal.PublicationAttempt(before, block, (event,)))
             await dropped
 
         reopened = await self.reopen_after_disconnect()
