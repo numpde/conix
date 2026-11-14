@@ -428,3 +428,38 @@ qualification, not guessed authentication-vs-network exception text.
 The corrected executable has NOT yet been qualified on fw/rootless
 agentic or approved for integration. There was no change to main, no
 T1-D2 uncertain-COMMIT reconciliation, and no production activation.
+
+
+T1-D1 P2 corrected — selected-rootless qualification and integration gate
+--------------------------------------------------------------------------
+
+Selected executable/test revision:
+  a8d8b3be0364d471c70fea4290b72fff0d838cad
+  https://github.com/numpde/conix/actions/runs/43501823908
+On 14 November 2026, the operator reported independent requalification
+on fw with rootless Docker context agentic. At that exact revision:
+  - 189 repository checks passed;
+  - 6 input checks passed;
+  - 187 contained tests passed (2 expected skips);
+  - real wrong-password authentication invoked the application exactly
+    once, with no SQLSTATE-free restart;
+  - real PostgreSQL backend termination restarted a fresh application;
+  - lost PostgreSQL COMMIT acknowledgement propagated, with no replay;
+  - all owned disposable resources were retired.
+Revision-bound operator evidence:
+  out/qualification/a8d8b3be0364d471c70fea4290b72fff0d838cad/t1-d1.json
+
+Independent review found no remaining blocker for the corrected T1-D1
+scope. This result supersedes the earlier ec6ab83 P2 qualification, but
+does not relabel that failing implementation as safe. Repository evidence
+and rootless reporting are distinct: the local receipt was not directly
+available to the remote review.
+
+Integration selection is a direct fast-forward from
+main@f6386378cfa4ef9fcdbf37f7e40d961e02f8cfa7. Subsequent README
+and qualification-note changes are documentation-only; executable/test
+inputs remain those qualified at a8d8b3b. The merged main revision
+requires its own exact-head CI verification.
+
+There is no default Tier-1 activation, T1-D2 uncertain-COMMIT recovery,
+SQLSTATE-free retry, or production deployment in this integration.
