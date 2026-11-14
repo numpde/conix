@@ -31,9 +31,9 @@ Run maintained CI locally on the selected Engine as primary evidence; record
 exact revisions and qualification limits in the owning evidence note.
 
 The branch split preserves current Tier-0 Reader and deployment improvements
-that were historically developed alongside Tier 1. Tier 1 retains the existing
-optional writer-session composition seam and reorganization-reason vocabulary;
-these differences from the standalone core require continued boundary review.
+that were historically developed alongside Tier 1. The original Tier-0 application now owns the narrow writer-session composition
+seam. Tier 1 still carries reorganization-reason vocabulary; that difference
+requires continued boundary review.
 No new recovery algorithm is introduced by establishing these branches.
 
 The dated archive/* tags preserve historical alternatives, not maintained

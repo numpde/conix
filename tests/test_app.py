@@ -136,3 +136,39 @@ class StandaloneLoopContracts(unittest.IsolatedAsyncioTestCase):
                     )
             self.assertTrue(released.is_set())
             self.assertNotIn('"outcome": "advanced"', output.getvalue())
+
+
+class WriterCompositionContracts(unittest.IsolatedAsyncioTestCase):
+    async def test_explicit_session_uses_original_loop_and_retires(self):
+        """A composed session supplies the writer while the core owns scheduling."""
+        stop = asyncio.Event()
+        retired = []
+        advances = []
+
+        @asynccontextmanager
+        async def session(**_kwargs):
+            class Writer:
+                async def advance_one(self):
+                    advances.append(True)
+                    stop.set()
+                    return None
+            try:
+                yield Writer()
+            finally:
+                retired.append(True)
+
+        catalog = SimpleNamespace(
+            chain=SimpleNamespace(rpc_url="http://test.invalid"),
+            limits=SimpleNamespace(operation_timeout_seconds=1),
+        )
+        result = await app.run(catalog, "private-test-dsn", stop, writer_session=session)
+        self.assertEqual(retired, [True])
+        self.assertEqual(advances, [True])
+        self.assertIs(result, app.RunOutcome.STOPPED_AFTER_ADVANCE)
+
+    async def test_pre_entry_stop_reports_no_advance(self):
+        """A clean return without admission cannot confirm resumed execution."""
+        stop = asyncio.Event()
+        stop.set()
+        result = await app.run(None, None, stop)
+        self.assertIs(result, app.RunOutcome.STOPPED_BEFORE_ADVANCE)

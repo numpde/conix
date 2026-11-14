@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
+from enum import Enum
 from uuid import UUID, uuid4
 
 import psycopg
@@ -69,6 +70,31 @@ class Progress:
     revision: int
     last_block: Block | None
     blocked_reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationAttempt:
+    """Original expected effect, not an invocation identity or replay command."""
+
+    basis: Progress
+    block: Block
+    events: tuple[RawEvent, ...]
+
+
+class PublicationOutcomeUnknown(CommitOutcomeUnknown):
+    """A publication lost its COMMIT reply; repair uncertainty is distinct."""
+
+    def __init__(self, attempt: PublicationAttempt):
+        super().__init__("Block publication COMMIT was not confirmed; inspect it in a fresh journal session.")
+        self.attempt = attempt
+
+
+class PublicationObservation(Enum):
+    """Current durable state relative to one publication's expected effect."""
+
+    ORIGINAL_BASIS_PRESERVED = "original_basis_preserved"
+    EXPECTED_EFFECT_PRESENT = "expected_effect_present"
+    OTHER_DURABLE_STATE = "other_durable_state"
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,41 +342,47 @@ class Journal:
         if previous is not None and block.parent_hash != previous.hash:
             raise HistoryConflict("Next block does not extend the retained checkpoint.")
 
-        async with self._transaction():
-            await self.connection.execute(
-                "INSERT INTO conix.blocks (number, hash, parent_hash, timestamp) "
-                "VALUES (%s, %s, %s, %s)",
-                (block.number, block.hash, block.parent_hash, block.timestamp),
-            )
-
-            for event in events:
-                if not 1 <= len(event.topics) <= 4:
-                    raise ValueError("Raw event must contain between one and four topic words.")
-
-                (topic0, topic1, topic2, topic3) = event.topics + (None,) * (4 - len(event.topics))
+        attempt = PublicationAttempt(self.basis, block, tuple(events))
+        try:
+            async with self._transaction():
                 await self.connection.execute(
-                    "INSERT INTO conix.events ("
-                    "block_number, log_index, transaction_hash, transaction_index, "
-                    "address, topic0, topic1, topic2, topic3, data"
-                    ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (
-                        block.number,
-                        event.log_index,
-                        event.transaction_hash,
-                        event.transaction_index,
-                        event.address,
-                        topic0,
-                        topic1,
-                        topic2,
-                        topic3,
-                        event.data,
-                    ),
+                    "INSERT INTO conix.blocks (number, hash, parent_hash, timestamp) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (block.number, block.hash, block.parent_hash, block.timestamp),
                 )
 
-            await self._advance_progress(
-                last_number=block.number,
-                generation=self.basis.generation,
-            )
+                for event in attempt.events:
+                    if not 1 <= len(event.topics) <= 4:
+                        raise ValueError("Raw event must contain between one and four topic words.")
+
+                    (topic0, topic1, topic2, topic3) = event.topics + (None,) * (4 - len(event.topics))
+                    await self.connection.execute(
+                        "INSERT INTO conix.events ("
+                        "block_number, log_index, transaction_hash, transaction_index, "
+                        "address, topic0, topic1, topic2, topic3, data"
+                        ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        (
+                            block.number,
+                            event.log_index,
+                            event.transaction_hash,
+                            event.transaction_index,
+                            event.address,
+                            topic0,
+                            topic1,
+                            topic2,
+                            topic3,
+                            event.data,
+                        ),
+                    )
+
+                await self._advance_progress(
+                    last_number=block.number,
+                    generation=self.basis.generation,
+                )
+        except CommitOutcomeUnknown as error:
+            # The shared transaction helper also serves repair. Only this
+            # publication boundary can attach the original candidate inputs.
+            raise PublicationOutcomeUnknown(attempt) from error.__cause__
 
         self.basis = replace(
             self.basis,
@@ -359,6 +391,61 @@ class Journal:
             blocked_reason=None,
         )
         return self.basis
+
+    async def reconcile_publication(self, attempt: PublicationAttempt) -> PublicationObservation:
+        """Compare exact expected effects without publishing or approving a chain.
+
+        The failed producer has retired. This independently acquired writer
+        lock and read-only snapshot own the observation; callers must still
+        enter ordinary source/chain admission before continuing ingestion.
+        """
+        if self.retired:
+            raise HistoryConflict("Cannot inspect publication with a retired journal; open a fresh session.")
+        if attempt.basis.source_id != self.catalog.source_id:
+            raise HistoryConflict("Cannot inspect publication from a different selected source.")
+
+        try:
+            async with self.connection.transaction():
+                await self.connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+                await self.connection.execute(
+                    "SELECT set_config('statement_timeout', %s, true)",
+                    (str(int(self.catalog.limits.operation_timeout_seconds * 1000)),),
+                )
+                progress = await self.inspect()
+                block_row = await (await self.connection.execute(
+                    "SELECT number, hash, parent_hash, timestamp FROM conix.blocks WHERE number = %s",
+                    (attempt.block.number,),
+                )).fetchone()
+                # One extra row detects additions without unbounded loading.
+                event_rows = await (await self.connection.execute(
+                    "SELECT transaction_hash, transaction_index, log_index, address, "
+                    "topic0, topic1, topic2, topic3, data FROM conix.events "
+                    "WHERE block_number = %s ORDER BY log_index LIMIT %s",
+                    (attempt.block.number, len(attempt.events) + 1),
+                )).fetchall()
+        except psycopg.Error as error:
+            raise StorageUnavailable("Cannot inspect uncertain publication in PostgreSQL.") from error
+
+        if progress == attempt.basis and block_row is None and not event_rows:
+            return PublicationObservation.ORIGINAL_BASIS_PRESERVED
+
+        expected_progress = replace(
+            attempt.basis, last_block=attempt.block,
+            revision=attempt.basis.revision + 1, blocked_reason=None,
+        )
+        expected_events = [
+            (event.transaction_hash, event.transaction_index, event.log_index,
+             event.address, *(event.topics + (None,) * (4 - len(event.topics))), event.data)
+            for event in sorted(attempt.events, key=lambda event: event.log_index)
+        ]
+        if (
+            attempt.basis.blocked_reason is None
+            and progress == expected_progress
+            and block_row is not None and Block(*block_row) == attempt.block
+            and event_rows == expected_events
+        ):
+            return PublicationObservation.EXPECTED_EFFECT_PRESENT
+        return PublicationObservation.OTHER_DURABLE_STATE
 
     async def repair_to(self, *, ancestor: Block) -> Progress:
         """Retire a suffix after the caller independently identifies its ancestor.

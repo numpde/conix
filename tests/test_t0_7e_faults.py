@@ -13,12 +13,17 @@ import signal
 import stat
 import sys
 import unittest
+from unittest.mock import patch
 
 import httpx
 from psycopg import AsyncConnection
 
 from anvil_catalog import FIXTURES, source_toml_for_anvil
 from pg_commit_reply import without_commit_reply
+from conix import app
+from conix.journal import CommitOutcomeUnknown
+from conix.catalog import prepare_catalog
+from conix.reader import open_reader
 
 
 class FaultRelay:
@@ -330,6 +335,43 @@ class InstalledTier07FaultAcceptance(unittest.IsolatedAsyncioTestCase):
         await self.stop(recovered)
         self.assertEqual(await self.event_count(transaction), 1)
 
+    async def test_unsent_commit_resumes_original_app_without_attempt_memory(self):
+        """A manual fresh invocation reacquires evidence and advances beyond the failed block."""
+        _, initial = await self.baseline()
+        transaction, height = await self.emit_transfer()
+        await self.rpc("evm_mine", [])
+        catalog = prepare_catalog(self.target / "config.toml")
+        execute = AsyncConnection.execute
+
+        async def unsent(connection, statement, *args, **kwargs):
+            if statement == "COMMIT":
+                raise ConnectionError("fixture COMMIT never sent")
+            return await execute(connection, statement, *args, **kwargs)
+
+        with patch.object(AsyncConnection, "execute", unsent):
+            with self.assertRaises(CommitOutcomeUnknown):
+                await app.run(catalog, self.dsn, asyncio.Event())
+        self.assertEqual(await self.progress(), initial)
+        self.assertEqual(await self.event_count(transaction), 0)
+
+        self.relay.verified.clear()
+        stop = asyncio.Event()
+        report = app.report
+
+        def observed(progress):
+            report(progress)
+            if progress.last_block.number == height + 1:
+                stop.set()
+
+        with patch.object(app, "report", observed):
+            await asyncio.wait_for(app.run(catalog, self.dsn, stop), timeout=15)
+        self.assertTrue(self.relay.verified.is_set())
+        async with open_reader(catalog=catalog, database_dsn=self.reader_dsn, rpc_url=self.relay.url) as reader:
+            checkpoint = await reader.checkpoint()
+            self.assertEqual(checkpoint.block.number, height + 1)
+            page = await reader.events(checkpoint=checkpoint, contract="token", event="Transfer(address,address,uint256)")
+            self.assertEqual(sum(e.transaction_hash.hex() == transaction[2:] for e in page.events), 1)
+
     async def test_uncertain_postgresql_commit_reconciles_on_explicit_restart(self):
         """Lose a real COMMIT reply while the installed CLI publishes one block."""
         _, initial = await self.baseline()
@@ -355,21 +397,28 @@ class InstalledTier07FaultAcceptance(unittest.IsolatedAsyncioTestCase):
         # Lost response does not establish an uncommitted transaction. Read
         # actual PostgreSQL before making another write attempt.
         observed = await self.progress()
-        self.assertIn(observed[0], (initial[0], height))
-        self.assertEqual(
-            await self.event_count(transaction),
-            0 if observed[0] == initial[0] else 1,
-        )
+        self.assertEqual(observed[0], height, "The relay observed server-side COMMIT completion.")
+        self.assertEqual(await self.event_count(transaction), 1)
         self.assertIsNone(observed[3])
+
+        await self.rpc("evm_mine", [])
+        following = height + 1
 
         # No replay-specific code path: a NEW ordinary application instance
         # must consult the persisted checkpoint and finish without duplicates.
         self.relay.verified.clear()
         restarted = await self.start()
         await asyncio.wait_for(self.relay.verified.wait(), timeout=10)
-        await self.reach(restarted, height)
+        await self.reach(restarted, following)
         await self.stop(restarted)
         self.assertEqual(await self.event_count(transaction), 1)
+
+        catalog = prepare_catalog(self.target / "config.toml")
+        async with open_reader(catalog=catalog, database_dsn=self.reader_dsn, rpc_url=self.relay.url) as reader:
+            checkpoint = await reader.checkpoint()
+            self.assertEqual(checkpoint.block.number, following)
+            page = await reader.events(checkpoint=checkpoint, contract="token", event="Transfer(address,address,uint256)")
+            self.assertEqual(sum(e.transaction_hash.hex() == transaction[2:] for e in page.events), 1)
 
     async def test_detect_reorganization_then_explicitly_repair_and_resume(self):
         base, _ = await self.baseline()

@@ -2,7 +2,7 @@ Uncertain publication: core correctness and recovery policy
 ==========================================================
 
 Date: 2026-11-14
-Status: design direction, not implemented or qualified.
+Status: selected implementation contract; qualification recorded separately.
 Inspected baseline: main@a935eba5f2d3c91e807094a7cfc7d5cc74bc5e27.
 
 Note 000 governs concrete delegation and protected-core changes. Note 004
@@ -286,3 +286,90 @@ Current disposition: prove restart correctness first; decide the smallest
 required core contract next; then implement bounded opt-in T1 policy. Keep
 attempt-specific verification conditional. Keep every authoritative storage
 comparison and mutation in the original journal.
+
+
+9. Selected implementation contract (2026-11-14)
+------------------------------------------------
+
+The implementation selects the stricter expected-effect gate for T1-D2.
+Its purpose is to permit bounded automatic continuation only after the
+original journal has established one of the two matching observations.
+Ordinary manual/process restart remains independent of attempt memory.
+
+Tier 0 adds immutable PublicationAttempt context and a publication-specific
+subclass of CommitOutcomeUnknown. The original publish_block captures the
+original basis and exact candidate inputs; repair uncertainty retains the
+existing base exception. The journal compares a fresh read-only snapshot
+under its exclusive writer session, returning original basis preserved,
+expected effect present, or another durable state. Storage failures and
+cancellation remain exceptions. Observation makes no durable changes.
+
+The original app.run gains the narrow optional writer-session composition
+argument already used on tier-1; its default still opens the original writer.
+This explicitly approves that shared contract and the journal additions
+against Note 000's protected-core change rule. Publication SQL, complete-block
+validation, schema, checked repair and the ordinary loop retain their owners
+and algorithms. This approval does not authorize broader core flexibility.
+
+Tier 1 adds an opt-in wrapper around the existing database/reorg/read
+composition. It admits only publication-specific uncertainty, retires the
+previous invocation, then opens the original journal to compare its attempt.
+Only a matching result followed by successful inspection-session retirement
+permits another original application invocation. It allows at most two such
+recoveries with cancellable 100/200 ms waits; this outer budget is never reset
+by nested supervisors. Other states, unavailable evidence, stop, cancellation,
+unknown repair outcome and cleanup failures stop automatic recovery.
+
+A stop that prevents fresh application entry preserves the original failure.
+A clean later shutdown does not confirm the identity of the invocation that
+produced the formerly uncertain effect. No default CLI recovery is enabled.
+
+First prove and implement these capabilities on tier-0, then merge that core
+into tier-1 and qualify the wrapper. Main remains stable and unchanged until
+a separate promotion decision. Earlier conditional discussion explains the
+design choice; this section selects it without claiming test results.
+
+The original application also returns a closed RunOutcome distinguishing
+a stopped invocation that never entered an advance from one that did. Nested
+Tier-1 supervisors forward this result; D2 must not treat a pre-entry stop as
+successful resumption. This reports execution, not publication attribution.
+
+
+10. Tier-0 implementation qualification (2026-11-14)
+---------------------------------------------------
+
+Behavioral RED a5c22d8 failed locally on fw/rootless agentic: the original
+publication exception lacked attempt context and app.run lacked the explicit
+session argument. 119 contained tests ran, with those two errors and two
+expected skips; the failing fixtures were retired.
+
+The original Journal now captures PublicationAttempt, raises the publication-
+specific PublicationOutcomeUnknown, and implements reconcile_publication in
+a read-only repeatable-read snapshot. Publication SQL and repair remain the
+original algorithms. The application owns the optional session seam and
+RunOutcome, while default conix run still fails fast without recovery policy.
+
+The complete maintained CI workflow was replayed locally on rootless agentic
+with WHEELHOUSE=/home/ra/Downloads/wheelhouse: 189 repository checks, 6 input
+checks, 125 contained tests (2 expected skips), offline indexer/test/EVM image
+builds, input staging, named preparation/configuration, and Reader snapshot
+preparation/status/removal passed. Owned contained resources and the exact
+CI staging volume/profile were retired. Local logs are under
+out/qualification/publication-recovery/tier-0/. These private operator
+receipts are not build inputs.
+
+The first implementation run found an incorrect event name in two new public-
+Reader witnesses; correcting the test calls to the supported full signature
+made both pass without weakening their assertions. The final committed-reply
+witness requires the exact committed checkpoint, further empty-block advance
+and one event through the original Reader. The unsent-COMMIT witness restarts
+the original app without attempt memory, reacquires source evidence and
+advances through the event and following empty block.
+
+Independent core review checked provenance, exact record comparison, read
+snapshot, bounded event fetching, cancellation, repair exclusion and process
+diagnostic non-disclosure. The tests cover empty/multiple-event effects,
+block/event field and collection mismatches, revision/generation/hold/source
+changes, later valid advances, failed/interrupted reads and retired sessions.
+No new Tier-1 recovery, retained-service campaign, owned dapp32 campaign or
+production qualification is established by this Tier-0 slice.
