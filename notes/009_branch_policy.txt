@@ -17,10 +17,11 @@ their presence does not make those implementations part of Tier 0.
 Tier 1 composes the original core and application with bounded recovery
 policy. It must not replace authoritative implementations. Note 000 governs
 concrete delegation; Note 008 records the implemented, journal-owned
-uncertain-publication observation and the revised continuation-first Tier-1
-policy plan. The currently qualified Tier-1 code still requires exact
-observation until that policy revision is implemented and tested.
-Branch placement does not waive protected-core review.
+uncertain-publication observation and the continuation-first Tier-1
+supervision candidate. The former strict effect-observation gate remains
+an optional Tier-0 inspection capability; the revised Tier-1 policy is
+awaiting selected-rootless and deployment-campaign qualification before
+main promotion. Branch placement does not waive protected-core review.
 
 Make core corrections on tier-0, qualify them there, then merge tier-0 into
 tier-1. Make extension changes and their tests on tier-1. Keep changes to

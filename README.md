@@ -312,10 +312,13 @@ retirement remain fatal. T1-D1 has not been activated in the default CLI.
 CI evidence and qualification limits.
 
 The opt-in `conix.resilience.publication.supervise_with_publication_recovery`
-composition adds at most two recoveries after publication-specific COMMIT
-uncertainty. It delegates exact effect observation to the original journal
-in a fresh exclusive session, then resumes the original application with
-fresh source evidence. Other durable states, unavailable observation,
-uncertain repair and unconfirmed retirement stop recovery. The original
-`tier-0` journal owns this capability; the default CLI still fails fast.
-Note 008 defines the contract and Note 007 records local qualification.
+composition adds at most two complete application restarts after the
+original journal reports publication-specific COMMIT uncertainty and the
+failed session retires. It never replays the uncertain SQL transaction or
+requires an exact-effect comparison: the original application reacquires
+writer ownership and checks durable source, checkpoint and chain evidence.
+Uncertain repair, invalid source, operator holds, failed retirement and
+stop/cancellation retain their existing guards. The original `tier-0`
+Journal.reconcile_publication remains available for optional read-only
+attempt inspection, not as a continuation gate. The default CLI fails fast.
+Notes 008 and 007 record the revised contract and qualification.

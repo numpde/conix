@@ -528,3 +528,51 @@ found no blocker in the inspected core or policy paths. No new service
 manager, default CLI retry, retained-service campaign, owned dapp32 campaign
 or production activation is included. This provisional implementation is
 not a promotion to main or qualification of arbitrary Engines/providers.
+
+
+T1-D2 — Continuation-first supervisor revision (2026-11-14)
+------------------------------------------------------------
+
+This supersedes the strict mandatory-observation policy in the preceding
+T1-D2 record without changing the already qualified Tier-0 journal-owned
+PublicationAttempt, PublicationOutcomeUnknown, or reconcile_publication.
+The original application still owns fresh source/checkpoint/chain admission;
+the supervisor only retries the COMPLETE original composition after the
+old session has retired. It never replays the lost SQL transaction or claims
+which invocation committed the prior candidate.
+
+Behavioral RED at 85764c317b2177ea29a0c891a243a4bf0afbac60:
+  https://github.com/numpde/conix/actions/runs/43617073303
+A real server-side PostgreSQL COMMIT succeeded but its reply was withheld.
+After the original session retired, another authorized ORIGINAL open_writer/
+advance_one advanced the durable checkpoint and released ownership. The
+independent original journal reconciliation correctly observed
+OTHER_DURABLE_STATE; the old strict Tier-1 supervisor then stopped rather
+than allowing ordinary continuation. Hosted run: 189 repository checks
+passed; 204 contained tests ran with this one error and 2 expected skips.
+
+Test-contract revision a0988611808c6774661c7f74165939ad149db5b3,
+test indentation correction dcd588a64091d72b3e8c7023ebc24a7bc54df210,
+and minimal executable GREEN 72aa8ad5d66ee0425a894455f5e914aad0519ef3:
+  https://github.com/numpde/conix/actions/runs/43617554202
+Hosted run passed 189 repository checks and 204 contained tests
+(2 expected skips). The same real intervening-writer witness now resumes the
+original application and indexes another empty block. Reader observes the
+selected original event exactly once, unchanged generation, complete prior
+history, and expected revision. Existing real unsent-COMMIT and committed-
+reply-loss witnesses also pass with the next original advance, as do
+nonpublication exception, fresh-admission error, cleanup, stop/cancellation,
+pre-entry-stop, and nested recovery-budget contracts. Owned disposable
+PostgreSQL volume and Docker network retired.
+
+Only src/conix/resilience/publication.py changes in production code.
+Mandatory open_journal/reconcile_publication admission was removed from D2.
+Two existing 100/200 ms delays and its two-recovery bound remain; nested
+supervisors keep their separate finite budgets. T1-D1 SQLSTATE-free
+authentication exclusion, Tier-0 transaction/repair semantics, and the
+default CLI are unchanged. No new SQL, shadow journal, or recovery manager.
+
+This is exact-head GitHub-hosted evidence, not selected fw/rootless agentic
+qualification of the revised branch head. Independent rootless requalification,
+retained-service and owned dapp32 acceptance campaigns, and promotion to
+main remain open. No production activation is implied.

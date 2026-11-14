@@ -2,8 +2,8 @@ Uncertain publication: core correctness and recovery policy
 ==========================================================
 
 Date: 2026-11-14
-Status: historical selected strict-observation implementation in sections
-9-10; revised continuation-first Tier-1 plan in section 11 (not implemented).
+Status: historical strict-observation implementation in sections 9-10;
+continuation-first Tier-1 candidate implemented in section 12.
 Inspected baseline: main@a935eba5f2d3c91e807094a7cfc7d5cc74bc5e27.
 
 Note 000 governs concrete delegation and protected-core changes. Note 004
@@ -482,7 +482,49 @@ Test-first behavioral revision on the maintained tier-1 branch:
      existing acceptance lanes. Record exact revisions, results and
      limits in Note 007.
 
-Until this plan is implemented and qualified, tier-1@ed3c4fc retains
-the strict mandatory observation behavior of section 9. This plan is
-not a claim of completion or an instruction to activate the default CLI.
-No changes to production deployment or stable main are authorized.
+The strict mandatory observation behavior remained at tier-1@ed3c4fc.
+Section 12 records the later continuation-first implementation and its
+qualification boundary. Neither policy activates the default CLI or
+production deployment.
+
+
+12. Continuation-first implementation and behavioral RED/GREEN (2026-11-14)
+----------------------------------------------------------------------------
+
+This section completes the Tier-1 policy adjustment from section 11.
+The journal-owned attempt context and exact-effect inspection remain
+unchanged in tier-0@6ea642f and are still independently testable, but are
+no longer part of the normal automatic T1-D2 continuation decision.
+
+RED at tier-1@85764c317b2177ea29a0c891a243a4bf0afbac60:
+  https://github.com/numpde/conix/actions/runs/43617073303
+The new real Anvil/PostgreSQL test loses a genuine server-side COMMIT
+acknowledgment, confirms the old original session retired, uses a different
+authorized original writer to advance the journal, and independently
+observes OTHER_DURABLE_STATE through Tier-0 reconciliation. Strict D2
+then refuses to resume. This is a behavioral failure on a working journal,
+not missing code or an arbitrary mocked observation.
+
+After updating policy tests to the selected contract, GREEN at
+tier-1@72aa8ad5d66ee0425a894455f5e914aad0519ef3:
+  https://github.com/numpde/conix/actions/runs/43617554202
+The only executable change is in conix.resilience.publication: catch
+journal-originated PublicationOutcomeUnknown after full failed-session
+retirement, apply the existing bounded cancellable delay, then invoke
+the existing original D1/C/B/A -> Tier-0 app.run composition again.
+There is no open_journal/reconcile_publication call on this path.
+The fresh original application acquires its own lock, source identity,
+checkpoint and canonical evidence, not the old attempt's SQL or RPC
+results. Unknown repair, unclassified SQL, operator holds, failed
+retirement, stop and cancellation remain protected by their original
+owners. RunOutcome still distinguishes an entry that did no work, without
+claiming to attribute an old publication to a particular invocation.
+
+Hosted CI passed 189 repository checks and 204 contained tests with 2
+expected skips. Real unsent and committed-withheld COMMIT witnesses,
+legitimate intervening progress, further empty-block advance and Reader
+event uniqueness passed; owned fixture resources retired.
+The original Tier-0 journal and process-restart tests were not altered.
+This hosted result does not replace rootless fw/agentic qualification of
+the revised head, nor the maintained retained-service and owned dapp32
+campaign gates before main promotion. No production activation.
