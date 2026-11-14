@@ -282,7 +282,7 @@ class RealPublicationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
                 sessions, published = [], []
                 execute = AsyncConnection.execute
                 application = publication.supervise_with_database_recovery
-                 publish = Journal.publish_block
+                publish = Journal.publish_block
                 report = app.report
                 injected = False
 
