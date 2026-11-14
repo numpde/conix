@@ -264,6 +264,7 @@ import httpx
 from psycopg import AsyncConnection
 
 from anvil_catalog import catalog_for_anvil
+from abi_golden_vectors import ERC20
 from pg_commit_reply import without_commit_reply
 from conix import app
 from conix.core import open_writer
@@ -271,7 +272,11 @@ from conix.journal import Journal
 from conix.reader import open_reader
 
 
-@unittest.skipUnless(os.getenv("CONIX_TEST_ANVIL_DSN"), "Requires real disposable Anvil/PostgreSQL")
+@unittest.skipUnless(
+    os.getenv("CONIX_TEST_ANVIL_URL") and os.getenv("CONIX_TEST_ANVIL_DSN")
+    and os.getenv("CONIX_TEST_ANVIL_READ_DSN"),
+    "Requires real disposable Anvil/PostgreSQL",
+)
 class RealPublicationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
     async def test_actual_commit_outcomes_resume_original_application_and_reader(self):
         """Both durable outcomes pass core observation before a fresh real advance."""
@@ -287,16 +292,30 @@ class RealPublicationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
 
             genesis = await rpc("eth_getBlockByNumber", ["0x0", False])
             catalog = catalog_for_anvil(genesis_hash=genesis["hash"], rpc_url=url)
+            await rpc("evm_mine", [])
             async with open_writer(catalog=catalog, database_dsn=dsn, rpc_url=url) as writer:
                 while await writer.advance_one() is not None:
                     pass
 
+            token = "0x" + "11" * 20
+            # Emit the existing literal ERC-20 golden record, without a
+            # contract-specific scanner or a payment workflow substitute.
+            runtime = (b"\x7f" + ERC20.data + b"\x60\x00\x52"
+                       + b"".join(b"\x7f" + topic for topic in reversed(ERC20.topics))
+                       + b"\x60\x20\x60\x00\xa3\x00")
+            await rpc("anvil_setCode", [token, "0x" + runtime.hex()])
+            account = (await rpc("eth_accounts", []))[0]
             for committed in (False, True):
                 async with open_reader(catalog=catalog, database_dsn=reader_dsn, rpc_url=url) as reader:
                     before = await reader.checkpoint()
-                    prefix = await reader.events(checkpoint=before, contract="token", event="Transfer(address,address,uint256)")
-                await rpc("evm_mine", [])
-                candidate_height = before.block.number + 1
+                    prefix = await reader.events(checkpoint=before, contract="token", event="Transfer(address,address,uint256)", limit=catalog.limits.max_page_size)
+                    self.assertTrue(prefix.complete)
+                transaction = await rpc("eth_sendTransaction", [{"from": account, "to": token, "gas": "0x100000"}])
+                receipt = await rpc("eth_getTransactionReceipt", [transaction])
+                self.assertEqual(receipt["status"], "0x1")
+                self.assertEqual(len(receipt["logs"]), 1)
+                candidate_height = int(receipt["blockNumber"], 16)
+                self.assertEqual(candidate_height, before.block.number + 1)
                 stop = asyncio.Event()
                 sessions, observations, published = [], [], []
                 execute = AsyncConnection.execute
@@ -355,8 +374,10 @@ class RealPublicationRecoveryContracts(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(published.count(candidate_height), 0 if committed else 1)
                 async with open_reader(catalog=catalog, database_dsn=reader_dsn, rpc_url=url) as reader:
                     after = await reader.checkpoint()
-                    page = await reader.events(checkpoint=after, contract="token", event="Transfer(address,address,uint256)")
+                    page = await reader.events(checkpoint=after, contract="token", event="Transfer(address,address,uint256)", limit=catalog.limits.max_page_size)
                 self.assertEqual(after.block.number, candidate_height + 1)
                 self.assertEqual(after.generation, before.generation)
                 self.assertEqual(after.revision, before.revision + 2)
-                self.assertEqual(page.events, prefix.events)
+                self.assertTrue(page.complete)
+                self.assertEqual(page.events[:-1], prefix.events)
+                self.assertEqual(sum(event.transaction_hash.hex() == transaction[2:] for event in page.events), 1)

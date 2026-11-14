@@ -94,7 +94,7 @@ async def retrying_writer_session(*, catalog, database_dsn, rpc_url):
 
 async def run_with_read_retries(catalog, database_dsn, stop, *, poll_interval=2.0):
     """Compose retries into the unchanged Tier-0 catch-up/tip-following loop."""
-    await app.run(
+    return await app.run(
         catalog, database_dsn, stop,
         poll_interval=poll_interval,
         writer_session=retrying_writer_session,

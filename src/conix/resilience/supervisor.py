@@ -7,6 +7,7 @@ a classified connection/read failure. No SQL writes, scanning or repair here.
 
 import asyncio
 
+from conix.app import RunOutcome
 from conix.resilience.rpc_retry import (
     is_restartable_rpc_failure,
     run_with_read_retries,
@@ -24,10 +25,9 @@ async def supervise(catalog, database_dsn, stop):
     """Run the original application, starting a fresh session only when safe."""
     for failure_count in range(len(_RESTART_DELAYS) + 1):
         if stop.is_set():
-            return
+            return RunOutcome.STOPPED_BEFORE_ADVANCE
         try:
-            await run_with_read_retries(catalog, database_dsn, stop)
-            return
+            return await run_with_read_retries(catalog, database_dsn, stop)
         except RpcUnavailable as failure:
             # Returning from run_with_read_retries means its app.run and
             # open_writer async context have fully exited. Any exception

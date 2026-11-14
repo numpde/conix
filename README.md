@@ -277,7 +277,8 @@ consumer deployments on other hosts.
 
 ### Optional Tier 1 resilience
 
-The following compositions are available on `tier-1` and `main`. The
+T1-A through T1-D1 are available on `tier-1` and stable `main`. The new
+T1-D2 composition described below is provisional on `tier-1` only. The
 `tier-0` branch provides the standalone core without the resilience package
 or its extension tests. See [branch policy](notes/009_branch_policy.txt).
 
@@ -305,8 +306,16 @@ composition adds at most two fresh application sessions after explicitly
 classified PostgreSQL connection/shutdown failures. An absent SQLSTATE does
 not authorize recovery: real authentication failures may lack one.
 Uncertain COMMIT outcomes, unrelated SQL failures and unconfirmed writer
-retirement remain fatal. T1-D1 has not been activated in the default CLI;
-automatic uncertain-COMMIT reconciliation (T1-D2) is not implemented.
+retirement remain fatal. T1-D1 has not been activated in the default CLI.
 
 [Note 007](notes/007_tier_1_qualification.txt) records policies, exact revisions,
 CI evidence and qualification limits.
+
+The opt-in `conix.resilience.publication.supervise_with_publication_recovery`
+composition adds at most two recoveries after publication-specific COMMIT
+uncertainty. It delegates exact effect observation to the original journal
+in a fresh exclusive session, then resumes the original application with
+fresh source evidence. Other durable states, unavailable observation,
+uncertain repair and unconfirmed retirement stop recovery. The original
+`tier-0` journal owns this capability; the default CLI still fails fast.
+Note 008 defines the contract and Note 007 records local qualification.

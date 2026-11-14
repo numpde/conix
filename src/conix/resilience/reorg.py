@@ -9,6 +9,7 @@ repair, then starts a fresh ordinary supervised application session.
 from dataclasses import dataclass
 import time
 
+from conix.app import RunOutcome
 from conix.core import BranchConflict, open_writer
 from conix.journal import Block, HistoryConflict, Progress, REORGANIZATION_BLOCKED_REASON
 from conix.resilience import supervisor
@@ -139,10 +140,9 @@ async def supervise_with_reorg_recovery(catalog, database_dsn, stop):
     """
     for attempt in range(_RECOVERY_BUDGET + 1):
         if stop.is_set():
-            return
+            return RunOutcome.STOPPED_BEFORE_ADVANCE
         try:
-            await supervisor.supervise(catalog, database_dsn, stop)
-            return
+            return await supervisor.supervise(catalog, database_dsn, stop)
         except (BranchConflict, HistoryConflict) as failure:
             if stop.is_set() or attempt >= _RECOVERY_BUDGET:
                 raise

@@ -10,6 +10,7 @@ import asyncio
 
 import psycopg
 
+from conix.app import RunOutcome
 from conix.journal import StorageUnavailable
 from conix.resilience.reorg import supervise_with_reorg_recovery
 
@@ -53,10 +54,9 @@ async def supervise_with_database_recovery(catalog, database_dsn, stop):
     """
     for failure_count in range(len(_RESTART_DELAYS) + 1):
         if stop.is_set():
-            return
+            return RunOutcome.STOPPED_BEFORE_ADVANCE
         try:
-            await supervise_with_reorg_recovery(catalog, database_dsn, stop)
-            return
+            return await supervise_with_reorg_recovery(catalog, database_dsn, stop)
         except StorageUnavailable as failure:
             # The entire original T1-C invocation and all its core session
             # context managers have already exited before reaching here.
