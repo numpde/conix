@@ -16,6 +16,7 @@ from psycopg import AsyncConnection
 from abi_golden_vectors import ERC20
 from pg_commit_reply import without_commit_reply
 from conix.catalog import prepare_catalog
+from conix import journal
 from conix.journal import (
     Block,
     HistoryConflict,
@@ -388,20 +389,30 @@ class JournalContracts(unittest.IsolatedAsyncioTestCase):
                 return await execute(statement, *args)
 
             with patch.object(writer.connection, "execute", lose_before_send):
-                await self.expect_unknown_commit(writer, block, event)
+                attempt = (await self.expect_unknown_commit(writer, block, event)).attempt
 
         async with open_journal(catalog=self.catalog, database_dsn=runtime_dsn) as reopened:
+            self.assertEqual(await reopened.inspect(), before)
+            self.assertEqual(
+                await reopened.reconcile_publication(attempt),
+                journal.PublicationObservation.ORIGINAL_BASIS_PRESERVED,
+            )
             self.assertEqual(await reopened.inspect(), before)
         self.assertEqual(await self.candidate_rows(block), [])
 
         async with asyncio.timeout(10), without_commit_reply(runtime_dsn) as (relay_dsn, dropped):
             async with open_journal(catalog=self.catalog, database_dsn=relay_dsn) as writer:
-                await self.expect_unknown_commit(writer, block, event)
+                attempt = (await self.expect_unknown_commit(writer, block, event)).attempt
             await dropped
 
         reopened = await self.reopen_after_disconnect()
         try:
             expected = replace(before, last_block=block, revision=before.revision + 1)
+            self.assertEqual(await reopened.inspect(), expected)
+            self.assertEqual(
+                await reopened.reconcile_publication(attempt),
+                journal.PublicationObservation.EXPECTED_EFFECT_PRESENT,
+            )
             self.assertEqual(await reopened.inspect(), expected)
             with self.assertRaises(HistoryConflict):
                 await reopened.publish_block(block=block, events=(event,))
@@ -416,6 +427,7 @@ class JournalContracts(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(failure.exception.__cause__, psycopg.OperationalError)
         self.assertTrue(writer.retired)
         self.assertTrue(writer.connection.closed)
+        return failure.exception
 
 
 if __name__ == "__main__":

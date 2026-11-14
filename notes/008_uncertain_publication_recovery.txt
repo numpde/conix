@@ -2,7 +2,7 @@ Uncertain publication: core correctness and recovery policy
 ==========================================================
 
 Date: 2026-11-14
-Status: design direction, not implemented or qualified.
+Status: selected implementation contract; qualification recorded separately.
 Inspected baseline: main@a935eba5f2d3c91e807094a7cfc7d5cc74bc5e27.
 
 Note 000 governs concrete delegation and protected-core changes. Note 004
@@ -286,3 +286,45 @@ Current disposition: prove restart correctness first; decide the smallest
 required core contract next; then implement bounded opt-in T1 policy. Keep
 attempt-specific verification conditional. Keep every authoritative storage
 comparison and mutation in the original journal.
+
+
+9. Selected implementation contract (2026-11-14)
+------------------------------------------------
+
+The implementation selects the stricter expected-effect gate for T1-D2.
+Its purpose is to permit bounded automatic continuation only after the
+original journal has established one of the two matching observations.
+Ordinary manual/process restart remains independent of attempt memory.
+
+Tier 0 adds immutable PublicationAttempt context and a publication-specific
+subclass of CommitOutcomeUnknown. The original publish_block captures the
+original basis and exact candidate inputs; repair uncertainty retains the
+existing base exception. The journal compares a fresh read-only snapshot
+under its exclusive writer session, returning original basis preserved,
+expected effect present, or another durable state. Storage failures and
+cancellation remain exceptions. Observation makes no durable changes.
+
+The original app.run gains the narrow optional writer-session composition
+argument already used on tier-1; its default still opens the original writer.
+This explicitly approves that shared contract and the journal additions
+against Note 000's protected-core change rule. Publication SQL, complete-block
+validation, schema, checked repair and the ordinary loop retain their owners
+and algorithms. This approval does not authorize broader core flexibility.
+
+Tier 1 adds an opt-in wrapper around the existing database/reorg/read
+composition. It admits only publication-specific uncertainty, retires the
+previous invocation, then opens the original journal to compare its attempt.
+Only a matching result followed by successful inspection-session retirement
+permits another original application invocation. It allows at most two such
+recoveries with cancellable 100/200 ms waits; this outer budget is never reset
+by nested supervisors. Other states, unavailable evidence, stop, cancellation,
+unknown repair outcome and cleanup failures stop automatic recovery.
+
+A stop that prevents fresh application entry preserves the original failure.
+A clean later shutdown does not confirm the identity of the invocation that
+produced the formerly uncertain effect. No default CLI recovery is enabled.
+
+First prove and implement these capabilities on tier-0, then merge that core
+into tier-1 and qualify the wrapper. Main remains stable and unchanged until
+a separate promotion decision. Earlier conditional discussion explains the
+design choice; this section selects it without claiming test results.
