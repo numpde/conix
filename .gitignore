@@ -22,3 +22,12 @@ config/deployments/*
 !config/deployments/deployment-acceptance/secrets/*.dsn
 config/deployments/deployment-acceptance/deployment.lock.toml
 config/deployments/deployment-acceptance/reader.lock.toml
+
+!config/deployments/fuji-acceptance/
+!config/deployments/fuji-acceptance/abi/
+!config/deployments/fuji-acceptance/abi/pay_to_play.json
+!config/deployments/fuji-acceptance/deployment.toml
+!config/deployments/fuji-acceptance/secrets/
+!config/deployments/fuji-acceptance/secrets/*.dsn
+config/deployments/fuji-acceptance/deployment.lock.toml
+config/deployments/fuji-acceptance/reader.lock.toml

@@ -16,3 +16,9 @@
 !tools/fixtures/protocol.py
 !tools/containers/
 !tools/containers/diagnostics.py
+
+!config/
+!config/deployments/
+!config/deployments/fuji-acceptance/
+!config/deployments/fuji-acceptance/abi/
+!config/deployments/fuji-acceptance/abi/pay_to_play.json

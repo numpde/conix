@@ -210,7 +210,7 @@ def _table(label, data):
     return "".join(rows) + "\n"
 
 
-def _render_deployment(document):
+def render_deployment(document):
     """Render editable deployment data without inventing any source settings."""
     keys = ("version", "docker_context", "wheelhouse", "database_network", "rpc_network")
     output = []

@@ -104,6 +104,7 @@ def source_allowlist(root=ROOT):
     # The builder never receives the checkout root: source inputs are
     # explicitly reviewed, tracked, and hashed before streaming.
     fixed_inputs = (
+        "config/deployments/fuji-acceptance/abi/pay_to_play.json",
         "Dockerfile", "pyproject.toml", "requirements/runtime.lock",
         "requirements/build.lock",
         # Test-only wire protocol shared by the host fixture operator and

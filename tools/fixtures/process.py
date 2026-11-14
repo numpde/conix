@@ -19,6 +19,10 @@ ROOT = Path(__file__).resolve().parents[2]
 class CampaignError(Exception):
     """A fixture operation or its completion could not be established."""
 
+    def __init__(self, detail, *, exit_code=None):
+        super().__init__(detail)
+        self.exit_code = exit_code
+
 
 @contextmanager
 def cancellation():
@@ -139,7 +143,8 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
             raise
 
     if owned_process.returncode != 0:
-        raise CampaignError(f"{label} exited with status {owned_process.returncode}; see private {error_file.name}.")
+        raise CampaignError(f"{label} exited with status {owned_process.returncode}; see private {error_file.name}.",
+                            exit_code=owned_process.returncode)
 
     if output.stat().st_size > 1048576:
         raise CampaignError(f"{label} produced an oversized receipt; no JSON was admitted.")

@@ -62,7 +62,7 @@ jobs:
           import sys
           from pathlib import Path
           import tomllib
-          from tools.containers.named import _render_deployment
+          from tools.containers.named import render_deployment
 
           source = tomllib.loads(Path("examples/conix.toml").read_text())
           saved = {
@@ -74,7 +74,7 @@ jobs:
               "limits": source["limits"],
           }
           config = Path("config/deployments/ci/deployment.toml")
-          config.write_text(_render_deployment(saved), encoding="utf-8")
+          config.write_text(render_deployment(saved), encoding="utf-8")
           config.chmod(0o600)
           PY
           install -m 600 tests/fixtures/abi/pay_to_play.json             config/deployments/ci/abi/pay_to_play.json

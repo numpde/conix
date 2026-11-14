@@ -42,6 +42,8 @@ WORKDIR /tmp
 FROM indexer AS test-runner
 LABEL io.conix.image-role=test-runner
 COPY tests /tests
+# One reviewed public deployed ABI; no deployment config or credential enters this image.
+COPY config/deployments/fuji-acceptance/abi/pay_to_play.json /tests/fixtures/abi/fuji_pay_to_play.json
 COPY tools/fixtures/protocol.py /tests/fixture_protocol.py
 # Installed-producer tests exercise the exact host decoder; test image only.
 COPY tools/containers/diagnostics.py /tests/host_diagnostics.py

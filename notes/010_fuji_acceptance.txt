@@ -45,3 +45,32 @@ its source tree. This tests the default CLI on either branch. Selecting a
 retained Tier-1 composition remains a separate operator-interface decision;
 this campaign must not claim that default deployment activates D2. Main stays
 stable until a separate promotion.
+
+Adjacent-defect audit
+--------------------
+The initial live candidate exposed an expected empty-action representation
+mismatch and a cleanup phase replacing the failed operation. Review then
+followed the same boundaries through child diagnostics, receipt publication,
+resource retirement, networking and durable observations.
+
+Confirmed corrections:
+- Original exceptions survive failed cleanup, missing diagnostic receipts,
+  failed receipt publication and broken terminal output. Receipt publication
+  is private and atomic; a failed replacement preserves earlier evidence.
+- Named child failures preserve admitted producer phase, cause, effect and
+  source location. Arbitrary stderr and provider explanations remain private.
+- Gateway admission refusal and upstream failure remain distinct; bounded
+  upstream category/status and known source-check identities reach the host.
+- Historical height, hash, raw events, asset and each position field have
+  separate comparisons, so an expected-value defect is distinguishable.
+- Cleanup identifies the actual deployment/action, retains dependencies on
+  uncertain retirement and requires exact project-derived resource names.
+- Missing DNS cannot qualify TCP denial. Each resolved destination is tested;
+  unavailable or incomplete evidence fails qualification.
+- The shared test observer uses a repeatable-read, read-only transaction and
+  includes complete block/event fields, so concurrent publication cannot
+  mix durable states or conceal changed raw payloads during restart checks.
+
+These are acceptance and diagnostic corrections, not alternate scanning,
+publication, reconciliation or Reader algorithms. No production deployment,
+Fuji transaction, sibling modification or Tier-1 recovery activation occurs.
