@@ -2,15 +2,16 @@ Uncertain publication: core correctness and recovery policy
 ==========================================================
 
 Date: 2026-11-14
-Status: selected implementation contract; qualification recorded separately.
+Status: historical selected strict-observation implementation in sections
+9-10; revised continuation-first Tier-1 plan in section 11 (not implemented).
 Inspected baseline: main@a935eba5f2d3c91e807094a7cfc7d5cc74bc5e27.
 
 Note 000 governs concrete delegation and protected-core changes. Note 004
 owns Tier-0 correctness and qualification; Note 007 records Tier-1 evidence.
-This note specifies the decision and proof obligations for T1-D2. It does
-not supersede those records, authorize automatic recovery today, or claim
-that a new reconciliation API is required. Current T1-D1 still refuses an
-uncertain COMMIT. No production activation is part of this design.
+Sections 1-8 preserve the original design analysis; sections 9-10 record the
+implemented and qualified journal-owned observation contract. Section 11
+supersedes the Tier-1 recovery-policy decision without rewriting its history.
+The default CLI still fails fast. No production activation is authorized.
 
 1. Decision and ownership
 -------------------------
@@ -373,3 +374,115 @@ block/event field and collection mismatches, revision/generation/hold/source
 changes, later valid advances, failed/interrupted reads and retired sessions.
 No new Tier-1 recovery, retained-service campaign, owned dapp32 campaign or
 production qualification is established by this Tier-0 slice.
+
+
+11. Revised Tier-1 plan — continuation first (2026-11-14)
+----------------------------------------------------------
+
+Decision: prioritize reliable service resumption after publication-specific
+COMMIT uncertainty. The strict journal observation from sections 9-10 is a
+supported Tier-0 inspection capability, but must NOT be a mandatory gateway
+for normal Tier-1 recovery. This reverses only the Tier-1 policy selection
+in section 9; the implementation and its qualification records remain
+historically accurate until the proposed change is made.
+
+Why: the durable journal may legitimately move beyond the exact originally
+attempted revision after the failed writer retires. For example, another
+authorized original writer can advance the checkpoint before D2 examines
+the attempt. The current strict reconcile_publication() correctly returns
+OTHER_DURABLE_STATE in that situation, but that is not evidence of corruption
+or an unsafe ordinary restart. Treating this non-match as a terminal
+recovery decision creates avoidable downtime. The same applies when an
+additional diagnostic observation is unavailable yet normal fresh writer
+admission would succeed.
+
+Selected execution contract:
+  Original Tier-0 publish_block loses its COMMIT acknowledgment
+    -> emits journal-originated PublicationOutcomeUnknown
+    -> the entire original application/writer/HTTP session retires
+    -> Tier-1 applies its existing bounded, cancellable recovery delay
+    -> invoke the SAME existing D1/C/B/A -> Tier-0 app.run composition
+    -> original core.open_writer re-acquires writer exclusion and source
+       admission and inspects the authoritative durable checkpoint
+    -> original Writer.advance_one rechecks current chain evidence and
+       proceeds through original Journal.publish_block.
+
+No replay of the abandoned SQL operation, reuse of the previous writer,
+reuse of earlier RPC evidence, second journal validator, alternate scan
+loop, shadow checkpoint or new database table. The fresh original
+application determines what work is needed; recovery never claims to know
+which invocation committed the earlier transaction.
+
+Tier-0 contract:
+  Keep PublicationAttempt, PublicationOutcomeUnknown, and
+  Journal.reconcile_publication as already implemented and independently
+  testable. They remain useful for an explicit request for attempt-specific
+  observation, not a prerequisite to resuming normal service. Preserve
+  Journal._transaction, atomic publication and progress fencing, checked
+  repair, the original loop, and the narrow RunOutcome session seam.
+  No new Tier-0 source modification is proposed for this policy change.
+
+Tier-1 delta:
+  Modify only the opt-in
+  conix.resilience.publication.supervise_with_publication_recovery policy.
+  Catch only the original journal's PublicationOutcomeUnknown, after the
+  failed application has exited all resource lifetimes. Do not invoke
+  open_journal/reconcile_publication as a continuation gate; do not add
+  replacement SQL inspection, new error classes or diagnostic persistence.
+  Invoke the original existing supervised application afresh. Continue to
+  propagate its source/chain/history/operator-hold failures unchanged.
+  An uncertain repair-to-COMMIT stays outside publication recovery.
+  Preserve the T1-D1 wrong-password/SQLSTATE-free exclusion; do not
+  broaden generic SQL or timeout classification.
+
+Pacing and stop:
+  Retain the existing local D2 recovery delay and finite retry policy.
+  Do NOT add a global total-session cap across D2/D1/C/B: that would
+  introduce another terminal condition without demonstrating an
+  operational problem. Existing nested limits can multiply; document the
+  actual bound rather than pretend they share one budget. If measured
+  repeated transient failures require change later, improve pacing or
+  the external service lifecycle separately rather than impose another
+  arbitrary failure gate.
+  A requested stop, task cancellation or unconfirmed retirement remains
+  authoritative. A stop before a resumed advance enters must not turn
+  the previous uncertain result into reported recovery success. Preserve
+  RunOutcome propagation but do not interpret entering an advance as
+  confirmation that the earlier COMMIT succeeded.
+
+Test-first behavioral revision on the maintained tier-1 branch:
+  1. Demonstrate RED using the existing original Anvil/PostgreSQL fixture:
+     after a real lost-COMMIT reply, allow a separate legitimately
+     authorized original writer to advance the durable checkpoint before
+     D2 continuation. The current mandatory strict snapshot returns
+     OTHER_DURABLE_STATE and stops. Require resumed original app.run to
+     continue successfully, with source/generation integrity, Reader
+     visibility and no duplicate events. Distinguish this from an
+     unauthorized out-of-band mutation.
+  2. GREEN by removing only the mandatory observation call from the
+     normal D2 supervisor, retaining original publication provenance,
+     previous-session retirement, RunOutcome and existing bounded
+     stop-aware retry behavior. No alternate SQL recovery algorithm.
+  3. Re-exercise both actual COMMIT outcomes (unsent COMMIT and server
+     COMMIT with dropped reply), ordinary restart without attempt memory,
+     fresh selected RPC verification, the next empty block and a selected
+     emitted event. Assert original Journal.publish_block delegation and
+     unique Reader events. A healthy journal must not be made unavailable
+     merely because optional strict inspection cannot match or cannot run.
+  4. Preserve negative controls: unknown repair outcome, wrong password,
+     wrong source, blocked history, actual journal source/chain conflict,
+     failed writer cleanup, stop, cancellation, and false-success on a
+     pre-entry stop. These are existing core correctness boundaries, not
+     new policy-imposed failure cases. Do not weaken their tests to make
+     the continuation scenario pass.
+  5. Run full maintained host checks and contained CI on the selected
+     fw/rootless agentic Engine; independently review actual delegation,
+     cleanup and failure classes. Re-run the retained-service and owned
+     dapp32 integration campaigns before promotion to stable main, using
+     existing acceptance lanes. Record exact revisions, results and
+     limits in Note 007.
+
+Until this plan is implemented and qualified, tier-1@ed3c4fc retains
+the strict mandatory observation behavior of section 9. This plan is
+not a claim of completion or an instruction to activate the default CLI.
+No changes to production deployment or stable main are authorized.
