@@ -9,7 +9,7 @@ services:
   gateway:
     image: ${CONIX_TEST_RUNNER_IMAGE:?select exact installed test image}
     pull_policy: never
-    entrypoint: [python, -I, /tests/fuji_rpc.py]
+    entrypoint: [python, -E, -s, /tests/fuji_rpc.py]
     environment: {CONIX_FUJI_VIEW: "${CONIX_FUJI_VIEW:?explicit source view required}"}
     init: true
     user: "65532:65532"

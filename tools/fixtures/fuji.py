@@ -71,7 +71,7 @@ def admit_fixture(graph, images, runner, owner, view):
                 require(not mounts, "Fuji gateway/bootstrap receive no volume authority.")
             require(not service.get("secrets") and not service.get("configs"),
                     "Fuji fixture services receive no additional secret/config mounts.")
-        require(graph["services"]["gateway"]["entrypoint"] == ["python", "-I", "/tests/fuji_rpc.py"]
+        require(graph["services"]["gateway"]["entrypoint"] == ["python", "-E", "-s", "/tests/fuji_rpc.py"]
                 and graph["services"]["gateway"]["environment"] == {"CONIX_FUJI_VIEW": view},
                 "Fuji gateway source view or entrypoint differs from the selected policy.")
         for name, network in graph["networks"].items():

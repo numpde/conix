@@ -53,7 +53,7 @@ class FujiAuthorityContracts(unittest.TestCase):
                 "cap_drop": ["ALL"], "security_opt": ["no-new-privileges:true"], "labels": {OWNER_LABEL: "owned"},
             }
         services["postgres"]["volumes"] = [{"type": "volume", "source": "pgdata", "target": "/var/lib/postgresql/data"}]
-        services["gateway"].update(entrypoint=["python", "-I", "/tests/fuji_rpc.py"], environment={"CONIX_FUJI_VIEW": "historical"})
+        services["gateway"].update(entrypoint=["python", "-E", "-s", "/tests/fuji_rpc.py"], environment={"CONIX_FUJI_VIEW": "historical"})
         return {"services": services,
                 "networks": {name: {"name": PROJECT + "_" + name, "internal": name != "egress", "labels": {OWNER_LABEL: "owned"}}
                              for name in ("tests", "rpc", "egress")},

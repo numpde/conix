@@ -16,7 +16,7 @@ import urllib.request
 from conix.catalog import prepare_catalog
 from conix.reader import open_reader
 from history_observations import snapshot
-from fuji_rpc import READ_METHODS
+from rpc_gateway import READ_METHODS
 
 SOURCE = json.loads((Path(__file__).parent / "fixtures/evm/fuji_pay_to_play.json").read_text())
 ZERO = "0x" + "00" * 20

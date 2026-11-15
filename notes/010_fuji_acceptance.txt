@@ -17,6 +17,19 @@ read-method-only HTTPS gateway. Indexer/Reader use only two internal bridges;
 only the gateway receives egress. No host ports or signing inputs are granted.
 The ordinary named Make lifecycle boots and retires both application phases.
 
+The shared transport implementation is tests/rpc_gateway.py. Its configuration
+is supplied explicitly as serve(upstream_url=..., head_ceiling=...). None means
+live header discovery; an integer projects numbered/latest header discovery
+only, not a historical snapshot of every RPC read. The Fuji launcher reads its
+existing public fixture and CONIX_FUJI_VIEW and supplies both values. There is
+no second editable gateway configuration, ambient endpoint selection or stdin
+protocol. Other scenarios may call the same interface with their own source.
+Startup admits only keyless HTTPS endpoints on port 443, without queries or
+fragments, and a nonnegative integer ceiling or None. Read-method admission,
+request/response limits, TLS verification and upstream error sanitization stay
+in the shared gateway. Image-owned sibling imports use Python -E -s, matching
+the probe entrypoint; no Python path mutation or runtime packaging is added.
+
 Historical replay uses a labelled bounded RPC head at the creation block,
 forwarding genuine source headers, logs and state. This is a test projection,
 not evidence that Fuji itself stopped there. Recent following uses the genuine
@@ -116,3 +129,28 @@ Limits: two observed event kinds out of 17 selected; no live collection
 witness, full deployment-history backfill or sustained moving-tip claim.
 This is the ordinary Tier-0 CLI, not activated Tier-1 recovery. No production
 activation, signing, chain writes, main promotion or remote push occurred.
+
+Shared RPC gateway extraction — 15 November 2026
+------------------------------------------------
+The configuration workshop selected a callable with explicit upstream_url
+and optional head_ceiling. Fuji supplies values from its existing fixture;
+no additional configuration file, stdin protocol or Make operation was added.
+The transport moved to tests/rpc_gateway.py and remains test-image tooling,
+outside the installed Tier-0 application and all Tier-1 recovery policies.
+Independent configuration/boundary and final-diff reviews found no actionable
+issues. The network, mount, identity and cleanup grants remain unchanged.
+
+Local qualification on rootless agentic:
+- 212 repository checks and six input checks passed.
+- The focused networkless gateway run passed 21 tests, including the real
+  launcher process, health endpoint and HTTP write refusal.
+- The final test image was built offline from the shared wheelhouse:
+  sha256:ce887ceee2913d14a6a3db3e53e5c4b62c5421c74664148c1da61da1a52ef775.
+- The maintained PostgreSQL/Anvil lane ran 156 tests with two expected skips;
+  both separate owner-initialization tests passed. Its disposable containers,
+  PostgreSQL volume and internal network were removed successfully.
+- Actual historical and live Compose graphs rendered and passed admission.
+
+This records local source-content qualification. It does not establish a new
+live Fuji run, broader runtime egress isolation or hosted exact-commit CI.
+Capture/replay and clock-driven stress replay remain outside this slice.

@@ -7,9 +7,11 @@ import unittest
 
 import httpx
 
-import fuji_rpc
+import rpc_gateway
 from conix.abi import compile_contract, decode_event, decode_return
 from fuji_probe import position_record
+
+SOURCE = json.loads((Path(__file__).parent / "fixtures/evm/fuji_pay_to_play.json").read_text())
 
 
 class FujiGatewayContracts(unittest.TestCase):
@@ -25,8 +27,8 @@ class FujiGatewayContracts(unittest.TestCase):
 
         request = self.request("eth_chainId", [])
         with httpx.Client(transport=httpx.MockTransport(upstream), trust_env=False, follow_redirects=False) as client:
-            result = fuji_rpc.forward(client, fuji_rpc.admit(json.dumps(request).encode()))
-        self.assertEqual(seen, [(fuji_rpc.SOURCE["rpc_url"], request)])
+            result = rpc_gateway.forward(client, rpc_gateway.admit(json.dumps(request).encode()), upstream_url=SOURCE["rpc_url"])
+        self.assertEqual(seen, [(SOURCE["rpc_url"], request)])
         self.assertEqual(result["result"], "0xa869")
 
     def test_writes_batches_unknown_methods_and_invalid_frames_are_refused(self):
@@ -35,53 +37,53 @@ class FujiGatewayContracts(unittest.TestCase):
                    [self.request()], {**self.request(), "id": True}, {**self.request(), "method": {}},
                    {**self.request(), "upstream": "http://private/"}]
         for value in invalid:
-            with self.subTest(kind=type(value).__name__), self.assertRaises(fuji_rpc.GatewayRefusal):
-                fuji_rpc.admit(json.dumps(value).encode())
+            with self.subTest(kind=type(value).__name__), self.assertRaises(rpc_gateway.GatewayRefusal):
+                rpc_gateway.admit(json.dumps(value).encode())
         for raw in (b"", b"not json", b" " * 16385):
-            with self.assertRaises(fuji_rpc.GatewayRefusal):
-                fuji_rpc.admit(raw)
+            with self.assertRaises(rpc_gateway.GatewayRefusal):
+                rpc_gateway.admit(raw)
 
     def test_historical_head_is_explicit_and_live_head_is_unmodified(self):
         request = self.request()
-        selected, absent = fuji_rpc.bounded_view(request, True)
+        selected, absent = rpc_gateway.bounded_view(request, head_ceiling=SOURCE["initial_interval"]["end_block"])
         self.assertFalse(absent)
-        self.assertEqual(selected["params"], [hex(fuji_rpc.SOURCE["initial_interval"]["end_block"]), False])
-        self.assertEqual(fuji_rpc.bounded_view(request, False), (request, False))
-        beyond = self.request(params=[hex(fuji_rpc.SOURCE["initial_interval"]["end_block"] + 1), False])
-        self.assertTrue(fuji_rpc.bounded_view(beyond, True)[1])
-        with self.assertRaises(fuji_rpc.GatewayRefusal):
-            fuji_rpc.bounded_view(self.request(params=["finalized", False]), True)
+        self.assertEqual(selected["params"], [hex(SOURCE["initial_interval"]["end_block"]), False])
+        self.assertEqual(rpc_gateway.bounded_view(request, head_ceiling=None), (request, False))
+        beyond = self.request(params=[hex(SOURCE["initial_interval"]["end_block"] + 1), False])
+        self.assertTrue(rpc_gateway.bounded_view(beyond, head_ceiling=SOURCE["initial_interval"]["end_block"])[1])
+        with self.assertRaises(rpc_gateway.GatewayRefusal):
+            rpc_gateway.bounded_view(self.request(params=["finalized", False]), head_ceiling=SOURCE["initial_interval"]["end_block"])
 
     def test_provider_prose_and_redirects_never_escape_the_gateway(self):
         secret = "postgresql://private:do-not-print@provider/db"
         with httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(
             200, json={"id": 1, "error": {"code": -32000, "message": secret}},
         )), trust_env=False) as client:
-            result = fuji_rpc.forward(client, self.request())
+            result = rpc_gateway.forward(client, self.request(), upstream_url=SOURCE["rpc_url"])
         self.assertNotIn(secret, json.dumps(result))
         with httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(
             302, headers={"Location": "http://private/"},
         )), follow_redirects=False, trust_env=False) as client:
-            with self.assertRaises(fuji_rpc.UpstreamFailure):
-                fuji_rpc.forward(client, self.request())
+            with self.assertRaises(rpc_gateway.UpstreamFailure):
+                rpc_gateway.forward(client, self.request(), upstream_url=SOURCE["rpc_url"])
 
     def test_oversized_reply_is_refused(self):
         with httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(
-            200, content=b" " * (fuji_rpc.MAX_BYTES + 1),
+            200, content=b" " * (rpc_gateway.MAX_BYTES + 1),
         )), trust_env=False) as client:
-            with self.assertRaises(fuji_rpc.UpstreamFailure):
-                fuji_rpc.forward(client, self.request())
+            with self.assertRaises(rpc_gateway.UpstreamFailure):
+                rpc_gateway.forward(client, self.request(), upstream_url=SOURCE["rpc_url"])
 
     def test_built_image_contains_the_pinned_full_abi_and_decodes_real_creation(self):
         raw = (Path(__file__).parent / "fixtures/abi/fuji_pay_to_play.json").read_bytes()
-        self.assertEqual(hashlib.sha256(raw).hexdigest(), fuji_rpc.SOURCE["abi_sha256"])
+        self.assertEqual(hashlib.sha256(raw).hexdigest(), SOURCE["abi_sha256"])
         abi = json.loads(raw)
         signatures = tuple(e["name"] + "(" + ",".join(a["type"] for a in e["inputs"]) + ")"
                            for e in abi if e.get("type") == "event")
         contract = compile_contract(abi, signatures)
         self.assertEqual(len(contract.events), 17)
         names = []
-        for log in fuji_rpc.SOURCE["expected_raw_logs"]:
+        for log in SOURCE["expected_raw_logs"]:
             topics = tuple(bytes.fromhex(value[2:]) for value in log["topics"])
             descriptor = next(event for event in contract.events if event.topic0 == topics[0])
             decoded = decode_event(descriptor, topics, bytes.fromhex(log["data"][2:]))
@@ -96,9 +98,9 @@ class FujiGatewayContracts(unittest.TestCase):
                            for e in abi if e.get("type") == "event")
         compiled = compile_contract(abi, signatures)
         function = next(f for f in compiled.functions if f.signature == "viewPosition(address,uint256,address)")
-        values = decode_return(function, bytes.fromhex(fuji_rpc.SOURCE["call_results"]["viewPosition"][2:]))
+        values = decode_return(function, bytes.fromhex(SOURCE["call_results"]["viewPosition"][2:]))
         fields = next(e for e in abi if e.get("name") == "viewPosition")["outputs"][0]["components"]
-        self.assertEqual(position_record(fields, values[0]), fuji_rpc.SOURCE["position"])
+        self.assertEqual(position_record(fields, values[0]), SOURCE["position"])
 
     def test_probe_keeps_numeric_provider_category_without_private_prose(self):
         from unittest.mock import patch
@@ -128,8 +130,8 @@ class FujiGatewayContracts(unittest.TestCase):
             with httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(
                 status, text="private provider explanation",
             )), trust_env=False) as client:
-                with self.assertRaises(fuji_rpc.UpstreamFailure) as caught:
-                    fuji_rpc.forward(client, self.request())
+                with self.assertRaises(rpc_gateway.UpstreamFailure) as caught:
+                    rpc_gateway.forward(client, self.request(), upstream_url=SOURCE["rpc_url"])
             self.assertEqual(caught.exception.status, status)
             self.assertNotIn("private", str(caught.exception))
 
@@ -203,10 +205,10 @@ class FujiGatewayContracts(unittest.TestCase):
         from unittest.mock import patch
         import fuji_probe
         records = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("1.1.1.1", 443))]
-        with patch.object(fuji_rpc.socket, "getaddrinfo", return_value=records) as resolve:
-            self.assertEqual(fuji_rpc.upstream_addresses(), ["1.1.1.1"])
+        with patch.object(rpc_gateway.socket, "getaddrinfo", return_value=records) as resolve:
+            self.assertEqual(rpc_gateway.upstream_addresses(upstream_url=SOURCE["rpc_url"]), ["1.1.1.1"])
         self.assertEqual(resolve.call_args.args[1], 443)
-        self.assertIn(resolve.call_args.args[0], fuji_rpc.SOURCE["rpc_url"])
+        self.assertIn(resolve.call_args.args[0], SOURCE["rpc_url"])
         for addresses in ([], ["127.0.0.1"], ["private"], [1], ["1.1.1.1"] * 9):
             with patch.object(fuji_probe.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps({"addresses": addresses}).encode())):
                 with patch.object(fuji_probe.socket, "socket") as connect:
