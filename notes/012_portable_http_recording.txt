@@ -410,12 +410,17 @@ bounded operation; honest partial/failure outcomes; concrete next task;
 steep delivery priorities; meaningful proportionate proof; disciplined
 commits and reporting. The initial overall ratings were 8.8, 8.8 and 9.2.
 
-After three revisions, all reviewers read the final work order and reported:
+After three revisions, the ratings were 9.5, 9.5 and 9.6 overall, with every
+individual criterion at least 9.5. On the user's further request for 10/10,
+reviewers found no remaining plan-specific defect. They had withheld points
+for runtime behavior that the brief explicitly assigns to implementation.
+After separating brief readiness from runtime qualification, each reviewer
+independently reassessed the final work order:
 
   Lens                         Overall     Lowest individual criterion
-  Implementation feasibility   9.5/10      9.5/10
-  Fidelity and failure          9.5/10      9.5/10
-  Simplicity and priorities     9.6/10      9.6/10
+  Implementation feasibility   10/10       10/10
+  Fidelity and failure          10/10       10/10
+  Simplicity and priorities     10/10       10/10
 
 Corrections addressed partial-body success, combined failure precedence,
 physical archive-byte/short-write handling, transport-stop propagation,
