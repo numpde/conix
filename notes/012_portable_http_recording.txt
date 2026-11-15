@@ -1,0 +1,227 @@
+Portable HTTP recording with WARC
+=================================
+
+Date: 2026-11-15
+Status: implementation brief; capture and replay are not implemented.
+
+Purpose and authority
+----------------------
+Record real provider interactions once, without decoding EVM data, rewriting
+JSON or replacing provider errors in the archive. Produce an ordinary WARC
+that other projects can inspect and reuse without Conix. Recording is useful
+before replay exists. Portable capture is the first deliverable; realistic
+stress replay is a later consumer, not a prerequisite.
+
+This note owns the recording artifact and the order of this work. Note 005
+continues to own physical history acquisition and Tier-2 substitution;
+Note 004 owns indexing correctness; Note 002 owns Make/Docker authority.
+Note 011 owns measured rates and existing synthetic workload evidence.
+A recording neither supersedes those observations nor proves canonicality,
+complete event history, provider honesty or sustainable indexing throughput.
+
+Keep the premise: the original minimal Tier-0 application remains fully in
+use. Recording belongs to test/acquisition tooling, not the installed scanner,
+journal, Reader or Tier-1 recovery policy. Keep implementation on the current
+Tier-0-based research branch; promotion to maintained branches is separate.
+No production activation, chain transaction or sibling source edit is needed.
+
+The prioritization gradient
+-----------------------------
+These are deliberately unequal priorities. Finish the next useful artifact,
+then stop and assess it. Do not turn the later items into a release checklist
+for the earlier ones. More tests, formats or supported networks do not count
+as progress toward the first usable recording.
+
+0. Inevitable: one useful, portable capture
+
+   Use WARC 1.1 and an established WARC reader/writer, initially evaluate
+   warcio. Our code owns capture orchestration; the library owns WARC
+   framing, compression, record identifiers and digest encoding. Review and
+   pin the chosen release/dependencies before acquisition; build offline.
+   Do not implement typed netstrings, a proprietary JSON conversation format,
+   another HTTP client, or a general proxy framework.
+
+   Capture the actual outbound HTTP request and provider response before
+   the existing gateway parses/sanitizes the response. Reuse the actual
+   HTTPX request and transport; do not reconstruct a second JSON request
+   from application inputs. The archive preserves provider error prose,
+   non-200 bodies, malformed JSON and repeated exchanges as evidence.
+
+   Fidelity means encoded HTTP body bytes and the HTTP metadata exposed by
+   the transport. No JSON normalization, ID rewriting, EVM decoding or archive
+   redaction. HTTPX has already parsed HTTP: original header whitespace,
+   chunk boundaries, HTTP/2 frames and TLS/TCP packets are not promised.
+   Preserve duplicate headers and their observed order where available.
+   HTTPX removes transfer framing: the archived HTTP envelope must describe
+   the stored body accurately. For example, do not label de-chunked bytes as
+   still chunk-framed. Retain observed headers as linked metadata when an
+   envelope adjustment is required; do not decode compressed payload bytes.
+
+   First delivery: one bounded, contained, explicitly serial capture, readable
+   by a WARC reader without importing Conix. Admit at most one in-flight
+   capture request; reject overlap rather than assuming the client is serial.
+   The archive need not have a replay server yet.
+
+1. Necessary: make that capture honest and usable
+
+   Write a warcinfo record and linked request/response records, using
+   WARC-Record-ID and WARC-Concurrent-To for association. Retain the ordinary
+   capture timestamps and linked transport-failure observations. Serial
+   request order follows the request records. Fine-grained timing and overlap
+   metadata are deferred until they have a consumer. Use WARC digests; do not
+   invent a separate transaction ledger or duplicate records in a manifest.
+
+   A request with no HTTP response remains a request plus failure metadata.
+   A partial response carries WARC-Truncated and the applicable reason.
+   Never manufacture provider status/content to make the archive look whole.
+   The capture must account for each admitted request as complete, partial
+   or failed; a clean process exit alone is not completeness evidence.
+
+   Resolve body consumption before calling capture complete. Today the
+   gateway rejects non-200 responses before consuming their bodies. A tee
+   that records only bytes the consumer happened to read would omit useful
+   evidence. Capture those bodies within the same explicit resource budget,
+   then let gateway response admission remain separate. An oversized or
+   interrupted body stays partial; do not drain indefinitely or hide limits.
+
+   Use one archive writer; no concurrent record writes. Bounded
+   buffering/spooling is enough; no background queue
+   with unbounded memory or independent retry policy. Recording failure
+   stops acquisition and prevents a success receipt; preserve earlier
+   records and report the original failure and cleanup independently.
+
+   Proposed artifact:
+
+     out/rpc-recordings/<capture-id>/
+       capture.warc.gz
+       manifest.json
+
+   The archive owns exchange evidence. The small completion manifest owns
+   selected configuration, recorder/image identity, final archive hash and
+   completed/partial/failed outcome. Operational details not needed in WARC
+   belong there; do not independently maintain the same field in both.
+   A missing completion manifest means unconfirmed completion, including
+   after forced termination. Preserve partial output for inspection; no
+   automatic salvage or claim that the final record survived a hard kill.
+
+   Stage output in an exactly owned Engine volume. Export privately after
+   capture retirement, without a writable repository bind in the networked
+   worker. Do not load the whole recording into a host admission buffer.
+   Conix catalog/ABI snapshots and expected Reader results are separate
+   scenario inputs referencing the archive, not required to read the WARC.
+
+   Use the selected rootless Engine. Only the capture gateway gets egress;
+   consumers and PostgreSQL retain internal networks. Keep the explicit
+   upstream, read-method admission, TLS verification, no redirect/retry or
+   ambient proxy selection, finite time/byte/concurrency/storage limits,
+   no published ports and owner-scoped cleanup. Preserve one policy owner.
+   The HTTP recorder itself stores opaque bodies and has no EVM policy.
+
+   Raw provider content stays private and out of ordinary terminal output.
+   Begin with reviewed keyless public endpoints and no authentication input.
+   Do not silently redact an authoritative capture to make it shareable.
+   Sharing/publishing is a separate decision; a sanitized derivative must
+   remain distinguishable from the original.
+
+   Minimum proof: one contained HTTP fixture exercises valid and malformed
+   JSON, a provider error/non-200 body, compressed/binary body preservation,
+   repeated requests, serial request/response pairing, chunked framing and a
+   truncated response. Prove that overlap is rejected while capture is serial.
+   Read back with a standard WARC reader, compare actual body bytes
+   and linkage, then capture one short public-RPC interaction. Test a storage
+   failure and owned cleanup because those affect completeness and retention.
+   Each test must expose a concrete wrong archive or false success claim.
+   This is enough to deliver capture; no entire fault matrix is implied.
+
+2. Valuable next: one useful offline replay
+
+   Read the same WARC with no upstream networking. Start with a serial
+   scenario, matching method, target, content-relevant headers and exact
+   request-body bytes. Retain repeated occurrences; no forever-reused last
+   response. Mismatch or exhaustion fails explicitly, with unused exchanges
+   reported at completion. Keep original JSON-RPC IDs initially.
+
+   Reproduce response status and body bytes; make unavoidable HTTP hop/framing
+   adjustments explicit. Do not forward stale transfer framing accidentally.
+   Replay uses complete exchanges; truncated records cannot silently become
+   complete successes. This first replay does not reproduce transport faults,
+   streaming chunk timing or arbitrary concurrent client schedules.
+
+   Then run the installed original Conix against fresh disposable PostgreSQL
+   and compare original Reader results/checkpoints for that scenario. Prove
+   absence of upstream fallback in the actual replay network. This qualifies
+   recorded correctness behavior, not live-provider performance.
+
+3. Conditional: add only what an observed consumer needs
+
+   Add JSON-RPC ID normalization only after a real replay fails for that
+   reason; preserve the original archive. Admit concurrent capture only for
+   a real workload that needs it, then record arrival/timing metadata and
+   prove correct pairing under overlap; append order is not arrival order.
+   Add finer timing capture and response delays for a named timing question.
+   Add indexes/rotation for measured archive scale,
+   or another export when a real consumer needs it. Derived artifacts are
+   rebuildable from WARC, not peer authorities.
+
+   For keep-pace stress tests, a recorded head must advance with elapsed time
+   independently of client requests. Serving the next latest response per
+   poll would let a slow client slow the chain and conceal backlog. Coverage
+   must include the actual block/log evidence requested under that schedule;
+   missing evidence is unavailable, not an invented empty result.
+   Design this after capture/replay proves useful. Do not quietly claim that
+   a conversation tape already solves it.
+
+4. Low priority: broaden demonstrated coverage
+
+   Additional chains, contracts, response variants, performance profiles,
+   crash recovery and external tool compatibility are earned by a concrete
+   failure, user or scaling need. Sample another provider when it answers a
+   question the first capture cannot. Repeat maintained checks when code or
+   a relevant uncertainty changes; preserve revision-bound evidence.
+
+5. Validation fetish: do not let this block delivery
+
+   No all-network capture campaign before one useful archive. No arbitrary
+   minimum test count, duplicated admission proof, manufactured RED caused
+   only by an absent module, repeated unchanged CI, or multi-reviewer ritual
+   after findings converge. No second archive format kept in sync, generic
+   plugin system, hostile-client certification, byte-perfect network-trace
+   claim or large benchmark dashboard to justify a small HTTP recorder.
+
+   A second parser does not automatically prove the writer correct; targeted
+   byte/link comparisons are stronger than two tools merely accepting a file.
+   A content hash proves identity, not fidelity. More test cases do not repair
+   an assertion that can pass for the wrong reason. Prefer a small concrete
+   counterexample over a growing qualification ceremony.
+
+Execution and stopping points
+-------------------------------
+Slice A: write/read one genuine exchange as WARC in a contained local test.
+Resolve raw-body handling, error-body consumption and library fit. Stop if the
+library cannot preserve the promised evidence without a second HTTP stack.
+
+Slice B: integrate explicit capture into the existing gateway and owned
+operator lifecycle; run the minimum meaningful proofs and one public capture.
+Deliver that useful artifact before expanding replay or stress features.
+
+Slice C: strict serial offline replay, then one original Conix/PostgreSQL/
+Reader witness. Propose separate operator names under Note 002 when these
+operations exist; this note introduces no executable Make interface.
+
+Local repository-maintained lanes on the selected Engine are primary proof.
+Report implemented, omitted and beyond-plan work separately. Do not claim a
+full workflow, live Fuji/dapp32 campaign or exact-head CI from a narrower run.
+Changes to a test-only recorder do not automatically require requalifying
+unchanged production deployments. Choose checks from the actual effect
+boundary, keep the slice small, and report the remaining limitation directly.
+
+Reference points
+------------------
+WARC 1.1 record types, pairing, digests and truncation:
+ https://iipc.github.io/warc-specifications/specifications/warc-format/warc-1.1/
+WARC library candidate and raw versus decoded payload streams:
+ https://warcio.readthedocs.io/en/latest/
+
+These references establish format/library capabilities, not qualification of
+our unimplemented integration. This note does not select a package version
+or authorize dependency acquisition, production activation or promotion.
