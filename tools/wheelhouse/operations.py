@@ -57,34 +57,41 @@ class SharedWheelhouse:
     def release_path(self):
         return self.pool / self.pin["name"]
 
-    def input_mounts(self):
+    def input_mounts(self, include_recording=False):
         """Mount only the issuer locks and reviewed tool pin into target Python."""
-        return (
+        mounts = (
             "--mount", f"type=bind,src={ROOT / 'requirements/runtime.lock'},dst=/input/runtime.lock,readonly",
             "--mount", f"type=bind,src={ROOT / 'requirements/build.lock'},dst=/input/build.lock,readonly",
             "--mount", f"type=bind,src={ROOT / 'requirements/wheelhouse-tool-release.json'},dst=/input/release.json,readonly",
         )
 
-    def run(self, *argv, network=False, write=False, timeout=120, capture=False, extra_mounts=()):
+        if include_recording:
+            mounts += ("--mount", f"type=bind,src={ROOT / 'requirements/recording.lock'},dst=/input/recording.lock,readonly")
+        return mounts
+
+    def run(self, *argv, network=False, write=False, timeout=120, capture=False, extra_mounts=(), include_recording=False):
         """Run contained target Python, not host pip, with explicit network grants."""
         return self.docker.run(
             "run", *worker_grants(self.pool, user=self.user, network=network, write=write),
-            *self.input_mounts(), *extra_mounts, "--entrypoint", "python",
+            *self.input_mounts(include_recording), *extra_mounts, "--entrypoint", "python",
             self.images["python_base"], "-I", *argv,
             timeout=timeout,
             capture=capture,
             public_diagnostic=network,
         )
 
-    def check(self):
+    def check(self, *, include_recording=True):
         """Verify exact locked wheel selection without network or pool writes."""
         if not has_tool(self.pool, self.pin):
             raise PoolError("Pinned NMR wheelhouse-tool is missing from WHEELHOUSE; run explicit wheelhouse/acquire.")
 
+        recording_arguments = ("--recording", "/input/recording.lock") if include_recording else ()
         selection_json = self.run(
             "/input/check.py",
             "--pool", "/wheelhouse", "--release", "/input/release.json",
             "--runtime", "/input/runtime.lock", "--build", "/input/build.lock",
+            *recording_arguments,
+            include_recording=include_recording,
             extra_mounts=(
                 "--mount", f"type=bind,src={ROOT / 'tools/wheelhouse/selector.py'},dst=/input/check.py,readonly",
             ),
@@ -120,7 +127,7 @@ class SharedWheelhouse:
         # The upstream metadata locator needs multiline hash syntax. These
         # projections are temporary; the original issuer locks stay canonical.
         with tempfile.TemporaryDirectory(prefix="conix-wheelhouse-projection-") as temporary_dir:
-            for lock_name in ("runtime", "build"):
+            for lock_name in ("runtime", "build", "recording"):
                 projected_source_lock = Path(temporary_dir) / "normalized.lock"
                 projected_source_lock.write_text(
                     project_issuer_lock((ROOT / "requirements" / (lock_name + ".lock")).read_text()),
@@ -173,7 +180,7 @@ class SharedWheelhouse:
         if image_role not in ("indexer", "test-runner", "evm-test-runner"):
             raise PoolError("The shared wheelhouse supports only the three declared installed-image targets.")
 
-        selected_wheels = self.check()
+        selected_wheels = self.check(include_recording=image_role == "test-runner")
 
         if image_role == "evm-test-runner":
             self.docker.require_image(self.images["foundry"])

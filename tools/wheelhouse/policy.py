@@ -106,7 +106,8 @@ def source_allowlist(root=ROOT):
     fixed_inputs = (
         "config/deployments/fuji-acceptance/abi/pay_to_play.json",
         "Dockerfile", "pyproject.toml", "requirements/runtime.lock",
-        "requirements/build.lock",
+        "requirements/build.lock", "requirements/recording.lock",
+        "tools/fixtures/http_recording.py",
         # Test-only wire protocol shared by the host fixture operator and
         # installed EVM images; never included in the product wheel.
         "tools/fixtures/protocol.py",

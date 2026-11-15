@@ -143,6 +143,15 @@ class SharedWheelhouseContracts(unittest.TestCase):
                         )
                         selected = runner.check()
                     self.assertEqual(len(selected), 1)
+                    recording_calls = engine.calls[-1][0]
+                    self.assertIn("--recording", recording_calls)
+                    self.assertIn("type=bind,src=" + str(ROOT / "requirements/recording.lock")
+                                  + ",dst=/input/recording.lock,readonly", recording_calls)
+                    with patch.object(operation, "has_tool", return_value=True):
+                        runner.check(include_recording=False)
+                    ordinary_calls = engine.calls[-1][0]
+                    self.assertNotIn("--recording", ordinary_calls)
+                    self.assertFalse(any("recording.lock" in value for value in ordinary_calls))
                     self.assertEqual(runner.user, "0:0" if rootless else
                                      f"{os.geteuid()}:{os.getegid()}")
                     cmd, kwargs = engine.calls[-1]

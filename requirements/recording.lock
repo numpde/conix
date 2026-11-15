@@ -1,0 +1,4 @@
+# Test-only portable HTTP recording; no optional extras.
+# Selected release metadata reviewed 2026-11-15; never part of runtime.lock.
+warcio==1.8.2 --hash=sha256:4fc9c12ed7e846dcb51103074d0aa964ea52a739fb95dd9f6f8a7db8388b0f01
+six==1.17.0 --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274

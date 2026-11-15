@@ -27,6 +27,7 @@ PARAMETERS = {
     "image/evm-test-runner/build": "WHEELHOUSE",
     "image/indexer/check": "IMAGE",
     "image/evm-test-runner/check": "IMAGE",
+    "test/http/recording/run": "RUNNER_IMAGE",
     "test/indexer/run": "RUNNER_IMAGE",
     "test/deployment/acceptance/run": "DEPLOYMENT",
     "test/indexer/acceptance/fuji/run": "DEPLOYMENT",

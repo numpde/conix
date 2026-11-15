@@ -15,7 +15,7 @@ TARGETS = {
     "wheelhouse/check", "wheelhouse/acquire",
     "image/indexer/build", "image/test-runner/build", "image/evm-test-runner/build",
     "image/indexer/check", "image/evm-test-runner/check",
-    "test/indexer/run", "test/deployment/acceptance/run", "test/input-staging/run",
+    "test/http/recording/run", "test/indexer/run", "test/deployment/acceptance/run", "test/input-staging/run",
     "test/indexer/acceptance/fuji/run",
     "test/indexer/acceptance/borrowed/run", "test/indexer/acceptance/owned/run",
     "history/block/advance",

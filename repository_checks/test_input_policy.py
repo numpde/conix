@@ -171,10 +171,10 @@ class OfflineInputChecks(unittest.TestCase):
             "!config/", "!config/deployments/", "!config/deployments/fuji-acceptance/",
             "!config/deployments/fuji-acceptance/abi/",
             "!config/deployments/fuji-acceptance/abi/pay_to_play.json",
-            "!requirements/", "!requirements/runtime.lock", "!requirements/build.lock",
+            "!requirements/", "!requirements/runtime.lock", "!requirements/build.lock", "!requirements/recording.lock",
             "!src/", "!src/**", "!tests/", "!tests/**/*.py",
             "!tests/fixtures/catalog.toml",
-            "!tools/", "!tools/fixtures/", "!tools/fixtures/protocol.py",
+            "!tools/", "!tools/fixtures/", "!tools/fixtures/protocol.py", "!tools/fixtures/http_recording.py",
             "!tools/containers/", "!tools/containers/diagnostics.py",
         }
         self.assertEqual(rules[0], "**", "The default Docker context must deny every path.")
@@ -187,7 +187,7 @@ class OfflineInputChecks(unittest.TestCase):
         dockerfile = (ROOT / "Dockerfile").read_text()
         self.assertNotIn("WHEELHOUSE_IMAGE", dockerfile)
         self.assertNotIn("FROM ${WHEELHOUSE_IMAGE}", dockerfile)
-        self.assertEqual(dockerfile.count("source=wheelhouse,target=/wheels,readonly"), 2)
+        self.assertEqual(dockerfile.count("source=wheelhouse,target=/wheels,readonly"), 3)
         self.assertIn("--no-index", dockerfile)
         self.assertIn("--require-hashes", dockerfile)
         self.assertNotIn("COPY --from=package /dist/", dockerfile,

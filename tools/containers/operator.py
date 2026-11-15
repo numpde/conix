@@ -95,6 +95,20 @@ class Docker(InputStaging, DockerClient):
         )
         print("Verified installed package imports and ABI behavior.", file=sys.stderr)
 
+    def test_http_recording(self, image):
+        """Exercise genuine loopback HTTP and WARC without external services."""
+        self.require_rootless_engine()
+        self.require_role(image, "test-runner")
+        self.run(
+            "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+            "--user", "65532:65532", "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true", "--pids-limit", "64",
+            "--memory", "256m", "--memory-swap", "256m", "--cpus", "1",
+            "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777",
+            "--entrypoint", "python", image, "-m", "unittest", "discover",
+            "-s", "/tests", "-p", "test_http_recording.py", "-v", timeout=120,
+        )
+
     def check_evm_test_runner(self, image):
         """Verify offline test-runner Python and Cast without fixture secrets."""
         self.require_role(image, "evm-test-runner")
@@ -437,7 +451,7 @@ def main():
         "wheelhouse/check", "wheelhouse/acquire",
         "image/indexer/build", "image/test-runner/build", "image/evm-test-runner/build",
         "image/indexer/check", "image/evm-test-runner/check",
-        "network/rates/measure", "test/indexer/run", "test/deployment/acceptance/run", "test/indexer/acceptance/fuji/run", "test/input-staging/run",
+        "network/rates/measure", "test/http/recording/run", "test/indexer/run", "test/deployment/acceptance/run", "test/indexer/acceptance/fuji/run", "test/input-staging/run",
         "history/block/advance",
         "deployment/inputs/stage", "deployment/inputs/remove",
         "deployment/config/init", "deployment/prepare", "deployment/database/schema/init",
@@ -529,6 +543,9 @@ def main():
                 from tools.fixtures.network_rates import collect
 
                 collect(docker, options.runner_image or "")
+
+            elif options.action == "test/http/recording/run":
+                docker.test_http_recording(options.runner_image or "")
 
             elif options.action == "test/indexer/run":
                 docker.test(options.runner_image or "", image_manifest)

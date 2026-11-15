@@ -107,7 +107,15 @@ Tests and legacy diagnostics
 ----------------------------
   make test/repository/run
   make repository/inputs/check
+  make test/http/recording/run DOCKER_CONTEXT=agentic RUNNER_IMAGE=<verified-test-image>
   make test/indexer/run DOCKER_CONTEXT=agentic RUNNER_IMAGE=<verified-test-image>
+
+The HTTP recording lane runs genuine loopback HTTP/WARC tests in one
+networkless, read-only test-runner worker with bounded tmpfs and no host
+mounts, published ports, database, Anvil or credential input. The recorder's
+hash-locked dependencies are installed only in the test-runner image. The
+shared wheelhouse check/acquire includes their recording.lock; runtime/EVM
+build wheel selections and installed runtime dependencies do not.
 
 The contained indexer lane owns a disposable PostgreSQL/Anvil graph, initializes
 the owner-only schema and launches the real installed conix run process,

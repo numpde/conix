@@ -2,7 +2,8 @@ Portable HTTP recording with WARC
 =================================
 
 Date: 2026-11-15
-Status: implementation brief; capture and replay are not implemented.
+Status: slice A implemented and locally qualified; B capture integration and
+        C replay remain unimplemented.
 
 Purpose and authority
 ----------------------
@@ -94,14 +95,18 @@ provider status/content. Partial bodies use WARC-Truncated with their reason.
 Use these WARC associations and the minimal external metadata contract:
 - Every request/response gets its own WARC-Record-ID. A response includes
   WARC-Concurrent-To pointing to its request. No request points to a future
-  response that might never exist. WARC-Date records dispatch/header arrival.
-- A metadata record has Content-Type application/json and WARC-Refers-To
-  naming the affected message (request when no response arrived). Its body
-  contains only applicable fields: observed_headers is an ordered array of
-  [base64-name, base64-value] pairs; failure is one of timeout, disconnect,
+  response that might never exist. WARC-Date records request-capture start/header arrival.
+- A metadata record has Content-Type application/warc-fields and
+  WARC-Refers-To naming the affected message (request when no response
+  arrived). Its ASCII body has only applicable named fields: observed-headers
+  contains a JSON ordered array of [base64-name, base64-value] pairs;
+  observed-reason retains base64 reason bytes when the ASCII envelope cannot
+  represent them. Failure
+  is one of timeout, disconnect,
   length, elapsed_budget, unexpected_transport or archive_write. Preserve
   duplicate/non-UTF-8 header bytes with base64, not lossy text conversion.
-  Headers are included when the stored envelope was adjusted. Failure
+  Header metadata always retains the observed byte pairs, since warcio may
+  normalize envelope encoding in addition to transfer framing. Failure
   categories classify capture observations, not provider application effects.
 - WARC-Truncated maps length/elapsed/timeout/disconnect to the standard
   length/time/disconnect reasons. Other interrupted captures use unspecified.
@@ -120,11 +125,11 @@ write failure must not permit an unrecorded success. No unbounded queues.
 
 Implementation work order
 ---------------------------
-The next task is A below. Implement it; do not commission another design
-study, select another archive format or wait for the later tasks. Names and
-interfaces below are decisions for this implementation, not existing features.
+A below is implemented; its contract is retained here. B is the next task,
+without another design study or archive-format selection. A's public test
+command exists; B/C interfaces remain proposed until implemented.
 
-A. Next commit: bounded HTTPX-to-WARC capture and its focused contained test
+A. Implemented: bounded HTTPX-to-WARC capture and focused contained tests
 
    Add tools/fixtures/http_recording.py. It imports HTTPX and warcio, never
    Conix, an ABI, a chain fixture or an operator lifecycle. Its public seam:
@@ -255,9 +260,8 @@ A. Next commit: bounded HTTPX-to-WARC capture and its focused contained test
      runner="$(make -s image/test-runner/build DOCKER_CONTEXT=agentic WHEELHOUSE=/home/ra/Downloads/wheelhouse)"
      make test/http/recording/run DOCKER_CONTEXT=agentic RUNNER_IMAGE="$runner"
 
-   Acquisition is explicit and precedes the offline build. The new target
-   and recording-lock support do not exist today; the implementer adds them
-   as part of A, rather than issuing these commands against the old tree.
+   Acquisition is explicit and precedes the offline build. The focused
+   target and recording-lock support now exist; the sequence is usable.
 
    Done: focused real-HTTP preservation tests and relevant host admission
    checks pass locally, with no installed Conix runtime dependency change.
@@ -266,7 +270,7 @@ A. Next commit: bounded HTTPX-to-WARC capture and its focused contained test
    and tests as one coherent slice; proceed to B for capture delivery.
    Do not hold A for a public endpoint, database campaign or replay server.
 
-B. Following commit: gateway capture and one retained public artifact
+B. Next: gateway capture and one retained public-RPC artifact
 
    Add an optional recording argument to tests/rpc_gateway.py's serve();
    omitted means today's client and behavior. Capture supplies the A transport
@@ -428,7 +432,66 @@ reversible header metadata, receipt-before-exit ordering, first retained
 artifact scope, memory-versus-acceptance bounds, and independent archive/
 consumer outcomes. No reviewer identified a remaining plan-level blocker.
 
-These are reviewer judgments of this unimplemented brief, not proof of WARC
+These judgments preceded implementation; they are not proof of WARC
 fidelity, security or runtime qualification. This user-requested plan workshop
 is complete; its scoring threshold is not a new recurring implementation gate.
 Proceed to A rather than extending the review ceremony.
+
+
+Slice A implementation and local qualification — 15 November 2026
+----------------------------------------------------------------
+Implemented tools/fixtures/http_recording.py with actual HTTPX transport
+and warcio 1.8.2, plus test-only hash locks, offline role-specific wheel
+selection and test/http/recording/run. No installed Conix code or dependency
+lock changed. The public focused lane observes daemon rootlessness before
+admitting its immutable test-runner image and confined networkless worker.
+
+The normative WARC 1.1 MIME guidance uses application/warc-fields for metadata;
+the implementation uses named ASCII fields with ordered base64 header pairs,
+not the earlier draft's application/json MIME. Warcio's ASCII envelope also
+cannot represent an obs-text HTTP reason: observed-reason retains those exact
+bytes in metadata while the archive envelope uses a safe empty reason. These
+are concrete fidelity corrections, not application sanitization of the raw
+body or unlabelled loss of evidence.
+
+Initial source review exposed four behavioral defects in the first recorder:
+slow-read observed bytes were dropped; post-response archive errors lost
+their cause; slow request-record writes granted a fresh acquisition budget;
+and close could retire an active exchange. Regression image
+ sha256:dd9cb49766cc73510a31a03deedcbd18be3b0e42bd9f9e0af7f95296eb1b4861
+ran ten focused tests with four failures. The corrected image
+ sha256:a5cb0ecd75af6c0ea762c1fb3428de123238cbb12c8550a03435398d8e2eddca
+passed the same ten. This is defect-correction RED/GREEN within implementation;
+it does not claim tests were committed before the original component existed.
+Known payload lengths also avoid unnecessary warcio temporary-file spooling.
+
+Final local rootless agentic results:
+- 217 repository checks and six input checks passed.
+- Eleven focused real-HTTP/failure contracts passed with external network
+  disabled. They include actual non-ASCII header/reason bytes, gzip/binary,
+  provider errors/malformed JSON, repeated/chunked messages, disconnects,
+  byte/elapsed limits, short writes, combined failures and overlap retirement.
+- The maintained PostgreSQL/Anvil lane ran 167 tests, with two expected skips;
+  both owner-initialization tests passed. Disposable containers, SQL volume
+  and internal network were removed successfully.
+- Offline runtime build and a confined import probe confirmed warcio and six
+  are absent from the installed indexer image. Negative role-selection checks
+  also cover indexer/EVM builds; no EVM image build is claimed here.
+- Independent source, ownership and final fidelity reviews converged without
+  a remaining actionable finding. The exact-version OSV queries for warcio
+  1.8.2 and six 1.17.0 returned no advisories before contained acquisition;
+  this is not a general dependency security certification.
+
+Final test image:
+ sha256:cf352ab271b70e082bda5871b77ec0bd4bd927e5dd6112c72bdb7ecefede480b
+Its source-input inventory hash:
+ 08466737f56adba4f916b8eb69e2d03a3dd35e12355cf139b8f8d1201cca185e
+Runtime image used for the negative dependency probe:
+ sha256:efe4e7026a101fca40123844f69c3547806495b1309cdeb9e619346f7c411646
+
+Qualification is local tested source content, not hosted exact-commit CI or
+an entire replay of every maintained workflow step. No public-RPC capture,
+retained WARC export, Fuji/dapp32 campaign or replay server was run. Local
+fixture archives are transient. B remains necessary for the first retained
+public-RPC artifact; C remains separate. No promotion, production activation,
+sibling change or remote push was performed by this slice.

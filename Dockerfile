@@ -41,6 +41,15 @@ WORKDIR /tmp
 
 FROM indexer AS test-runner
 LABEL io.conix.image-role=test-runner
+USER root
+RUN --network=none \
+    --mount=type=bind,source=requirements/recording.lock,target=/tmp/conix-recording.lock,readonly \
+    --mount=type=bind,source=wheelhouse,target=/wheels,readonly \
+    python -m pip install --no-cache-dir --no-index --find-links=/wheels \
+    --require-hashes --only-binary=:all: -r /tmp/conix-recording.lock \
+    && python -m pip check
+USER 65532:65532
+COPY tools/fixtures/http_recording.py /tests/http_recording.py
 COPY tests /tests
 # One reviewed public deployed ABI; no deployment config or credential enters this image.
 COPY config/deployments/fuji-acceptance/abi/pay_to_play.json /tests/fixtures/abi/fuji_pay_to_play.json

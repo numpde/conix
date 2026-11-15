@@ -20,7 +20,7 @@ override export CONIX_MAKE_DEPLOYMENT := $(value DEPLOYMENT)
 override export CONIX_MAKE_DATABASE_NETWORK := $(value DATABASE_NETWORK)
 override export CONIX_MAKE_RPC_NETWORK := $(value RPC_NETWORK)
 
-.PHONY: network/rates/measure test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/indexer/run test/deployment/acceptance/run test/indexer/acceptance/fuji/run test/input-staging/run test/indexer/acceptance/borrowed/run test/indexer/acceptance/owned/run history/block/advance deployment/inputs/stage deployment/inputs/remove deployment/config/init deployment/prepare deployment/database/schema/init deployment/config/check deployment/up deployment/status deployment/logs deployment/down deployment/reader/prepare deployment/reader/check deployment/reader/status deployment/reader/remove help
+.PHONY: network/rates/measure test/http/recording/run test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/indexer/run test/deployment/acceptance/run test/indexer/acceptance/fuji/run test/input-staging/run test/indexer/acceptance/borrowed/run test/indexer/acceptance/owned/run history/block/advance deployment/inputs/stage deployment/inputs/remove deployment/config/init deployment/prepare deployment/database/schema/init deployment/config/check deployment/up deployment/status deployment/logs deployment/down deployment/reader/prepare deployment/reader/check deployment/reader/status deployment/reader/remove help
 
 # Each action's declaration is also the help authority. Recipes share the
 # literal-value dispatchers; no Make target aliases or duplicate help list.
@@ -75,6 +75,9 @@ image/evm-test-runner/check: ## Run offline Python/Cast checks; DOCKER_CONTEXT=<
 	$(RUN_OPERATOR)
 
 network/rates/measure: ## Sample reviewed public mainnet/testnet rates into private evidence; explicit egress, no fixture edits; DOCKER_CONTEXT=<name> RUNNER_IMAGE=<test-runner sha256:id>
+	$(RUN_OPERATOR)
+
+test/http/recording/run: ## Test real loopback HTTP/WARC capture offline; no SQL/RPC services; DOCKER_CONTEXT=<name> RUNNER_IMAGE=<test-runner sha256:id>
 	$(RUN_OPERATOR)
 
 test/indexer/run: ## Run installed indexer/CLI suite in disposable PostgreSQL/Anvil, then retire stack; DOCKER_CONTEXT=<name> required RUNNER_IMAGE=<test-runner sha256:id>

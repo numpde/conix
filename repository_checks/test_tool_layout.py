@@ -24,7 +24,7 @@ TOOL_FILES = {
     "tools/containers/resources.py",
     "tools/fixtures/__init__.py",
     "tools/fixtures/pay_to_play.py",
-    "tools/fixtures/protocol.py",
+    "tools/fixtures/protocol.py", "tools/fixtures/http_recording.py",
     "tools/fixtures/process.py",
     "tools/fixtures/deployment.py",
     "tools/fixtures/fuji.py",

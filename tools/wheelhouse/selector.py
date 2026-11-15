@@ -16,7 +16,7 @@ class MissingSelection(Exception):
     """The target Python reported an absent required distribution in the pool."""
 
 
-def run(pool, release, runtime, build):
+def run(pool, release, runtime, build, recording=None):
     """Select exact locked wheels offline; exit 10 only for missing artifacts."""
     pin = json.loads(release.read_text())
     tool = pool / ("wheelhouse-tool-" + pin["version"] + ".pyz")
@@ -36,6 +36,9 @@ def run(pool, release, runtime, build):
         "--find-links", str(pool), "--report", "/tmp/wheelhouse-pip.json",
         "-r", str(runtime), "-r", str(build),
     ]
+    if recording is not None:
+        argv += ["-r", str(recording)]
+
     pip_selection = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, timeout=90)
     if pip_selection.returncode:
         # Missing is the ONLY offline status that permits explicit acquisition.
@@ -79,10 +82,11 @@ def main():
     parser.add_argument("--release", type=Path, required=True)
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--build", type=Path, required=True)
+    parser.add_argument("--recording", type=Path)
     args = parser.parse_args()
 
     try:
-        run(args.pool, args.release, args.runtime, args.build)
+        run(args.pool, args.release, args.runtime, args.build, args.recording)
     except MissingSelection:
         return 10
     except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
