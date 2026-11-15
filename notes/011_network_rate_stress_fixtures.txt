@@ -46,3 +46,145 @@ logs; broad network load and empty-selector latency remain separate facts.
 
 Implement on a branch from tier-0 and qualify before upward integration.
 Keep main unchanged; no production activation, signing or sibling edits.
+
+Frozen observation snapshot — 15 November 2026
+-----------------------------------------------
+The offline stand-in passed before public sampling. The population collector
+then ran twice. Its first candidate stopped some networks at missing genesis;
+that was too strong a gate for independent statistical observations. The
+revised sampler preserves a separate genesis failure and weaker identity
+assurance while collecting available windows. Indexing admission is unchanged.
+The first candidate remains private evidence, not a competing fixture.
+
+The admitted snapshot was collected at:
+ 2026-11-15T07:09:55.811302+00:00 through 2026-11-15T07:12:23.876817+00:00
+Private original receipt:
+ out/network-rate-measurements/91a11274fcf212fb9453807d/observations.json
+Recorded immutable collector image:
+ sha256:75c3ca73c8bfd8e8e6b8c748d281f9375adbe5592a95e4b16bdf71debd2c86ac
+Reviewed source profile SHA-256:
+ ca6598f3ff952ae18c0043055c0f55add661b76e6df2bc7236e47cf74739b3d3
+
+Coverage: 30 catalog entries: 15 mainnets, 14 active testnets, one retired
+Scroll testnet. All 29 active sources yielded a near-head cadence window.
+Of 116 requested current/historical windows, 105 were observed and 11 remain
+unavailable. Ninety-three reference-selector timings were observed; 12
+observed header windows lack usable selector timings. Three endpoints lacked
+a genesis response, explicitly retaining chain-ID-only assurance.
+
+Current samples are means across the latest reported 8,192 numbered-block
+intervals, not instantaneous or protocol-guaranteed rates. Exact heights,
+hashes, timestamps, resolution, sample transaction counts, wire bytes,
+request timing and failures are retained in network_rates.json. Historical
+windows are at 90%, 50% and 10% of sampled head height; their real timestamps
+are authoritative for dates. They are not automatically named protocol eras.
+
+Near-head numbered-block mean seconds (dated snapshot, rounded here):
+Family                 Mainnet      Public testnet
+Ethereum               12.038       12.113
+Base                   0.200        0.200
+Arbitrum               0.310        0.273
+Optimism               2.000        2.000
+Polygon                1.500        1.000
+BSC                    0.450        0.460
+Avalanche              1.048        1.577
+opBNB                  0.250        0.250
+Linea                  7.123        3.880
+MegaETH                1.000        1.000
+Monad                  0.303        0.312
+zkSync                 2.556        18.287
+Gnosis                 5.086        5.533
+Celo                   1.000        1.000
+Scroll                 5.043        retired
+
+Important empirical historical contrasts include BSC around 3 seconds and
+0.75 seconds versus a recent 0.45 seconds; Monad around 0.50/0.40 seconds
+versus 0.30 seconds; and older Avalanche windows near 2 seconds versus a
+recent mainnet mean near 1.05 seconds. These are sampled means, not proofs
+of activation boundaries. The separate reference JSON records documented
+upgrade eras, including Base's 2026 Denim change and mini-block distinctions.
+
+The reference selector intentionally uses the zero address and Transfer
+signature. All 93 successful samples returned empty arrays. This measures
+the cost of that query shape, not deployed application activity or all-event
+completeness. Do not substitute header latency when log cost is unavailable.
+The largest sampled header was 42,616 bytes with 594 transaction hashes;
+that is an observed sample maximum, not a production limit.
+
+Offline and installed-process stress proof
+------------------------------------------
+Each observed cadence drives four explicitly synthetic RPC-cost sweeps and,
+where available, a separate calibration using the median unique sampled
+header latency and one observed reference-selector latency. There are 513
+replayed workloads; 12 unavailable-window/retirement cases and 12 unavailable
+reference costs remain explicit. Quiet contracts still execute all 17
+selected queries. Sampled header transaction counts and wire sizes come
+from the same largest sampled envelope. JSON whitespace models otherwise
+uninterpreted bytes so the original response budget remains exercised.
+
+Seven explicit synthetic cases additionally cover one versus 17 selectors,
+quiet and burst events, burst delivery, exact-capacity equality, modeled
+operation-deadline failure and an oversized header. The recording sink is
+never reported as PostgreSQL. A modeled deadline/resource failure has no
+usable capacity result. No host-specific speed threshold gates CI.
+
+A separate real witness reuses the existing disposable PostgreSQL/Anvil
+fixture and installed normal conix run process. It paces genuinely premined
+Anvil blocks at the sampled Base cadence, injecting 250ms per RPC request.
+This is synthetic delivery, not Base consensus/timestamp replay. The existing
+source has two selectors; it does not pretend to be the 17-selector sweep.
+Pacing starts at the first acquisition request, after source admission.
+The application must both publish and develop growing backlog while alive.
+After freezing the delivered head, clean shutdown and a fresh normal process
+must resume through the original journal and catch up with unchanged source,
+generation, full prior raw history and no selected events from empty blocks.
+
+Review also corrected accepted relay callbacks surviving fixture exit:
+callbacks are cancelled and awaited before closing their upstream client.
+A no-network regression covers failure while the admission/acquisition
+barrier is held. No separate scanner, schema, service manager or index loop
+was introduced.
+
+Local qualification
+---------------------
+Selected rootless Engine: agentic; shared reviewed wheelhouse unchanged.
+212 repository checks and six input checks passed. The contained suite ran
+150 tests with two expected owner-only skips; both owner initialization tests
+passed separately. The full 513-workload replay passed alongside the seven
+synthetic boundaries and the real installed-process witness.
+
+In that witness, the first live sample had delivered height 15/checkpoint 10
+(backlog 5); the later live sample had delivered height 35/checkpoint 13
+(backlog 22). Both samples were taken while the process was running.
+After freezing delivery and restarting without injected delay, the original
+application reached 35 and preserved the durable prefix and generation.
+
+The complete maintained local workflow was replayed, with its contained
+step run separately above: pinned images/shared-pool checks, offline runtime,
+test and EVM image builds, private input staging and named configuration and
+Reader preparation/status/removal. Disposable selections/profiles were
+retired. Hosted CI is not a substitute for these results and was not used.
+
+The RPC-only model classified 200 profiles below demand, 291 with RPC
+headroom and 22 exactly at capacity. These include declared synthetic latency
+sweeps, not 513 claims about production endpoints. Of 27 near-head profiles
+with usable reference timings, 22 modeled backlog growth and five RPC
+headroom. SQL, real scheduling, provider contention and future latency remain
+outside that capacity estimate. Available genesis/history/methods remain
+separate prerequisites; the snapshot is not a network-readiness certificate.
+
+No production implementation, dependency lock, main branch, sibling source,
+wallet or retained deployment was changed. The new observation command never
+edits committed fixtures automatically. Source and fixture changes remain
+on the isolated Tier-0-based research branch until explicitly integrated.
+
+Qualified source identity
+--------------------------
+The tested source contents were committed without changing their staged Git
+ tree: 310b188c85b639f63b36a547f862a9e96287b113,
+ tree 1a559e9130d0f2fc7a134dfc65e3560f6db3dbdd.
+Tests ran against those same file contents before local commits were made;
+this is content qualification, not a hosted exact-head CI claim. This final
+record changes documentation only. The source remains on
+work/network-rate-fixtures-20261115, based on tier-0@6ec707d.
+Maintained tier-0, tier-1 and main were not advanced; no push was performed.
