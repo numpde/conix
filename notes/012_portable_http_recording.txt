@@ -27,12 +27,14 @@ No production activation, chain transaction or sibling source edit is needed.
 
 The prioritization gradient
 -----------------------------
-0. Inevitable: implement A below. Deliver a portable WARC from genuine HTTP.
-   Use the existing HTTPX client and warcio; no second HTTP stack, monkey
-   patch, proprietary archive format or general proxy framework. Capture is
-   useful without replay. Do not make A depend on B or C.
+0. Inevitable: implement A then B to deliver the first retained portable
+   capture. A is the usable recording component proved against real local
+   HTTP; B delivers the public-RPC archive. Do not call A alone delivery of
+   the retained artifact. Use existing HTTPX and warcio; no second HTTP stack,
+   monkey patch, proprietary archive format or general proxy framework.
+   Do not make the component's first commit wait for B, or capture wait for C.
 
-1. Necessary for public capture: implement B. Pair exchanges, preserve raw
+1. Necessary for delivery: implement B. Pair exchanges, preserve raw
    content, mark missing/truncated responses, enforce finite resource grants
    and retain incomplete evidence. A successful process exit alone does not
    establish a complete recording. Test the concrete ways these claims fail.
@@ -74,7 +76,9 @@ The completed public artifact is:
 The WARC owns exchange evidence. The manifest owns selected configuration,
 recorder/image identity, final archive hash and completed/partial/failed
 outcome. Do not duplicate the exchange log in the manifest. Missing manifest
-means unconfirmed completion. A hard kill may leave a damaged final record;
+means unconfirmed completion. In this note, public-RPC describes the source,
+not permission to publish the private artifact. A hard kill may damage the
+final record;
 retain earlier evidence without automatic salvage or a completeness claim.
 Conix ABI/catalog/Reader expectations are separate scenario inputs.
 
@@ -86,6 +90,24 @@ outside the fidelity claim. Archive envelopes must describe stored bytes
 accurately; retain original observed headers in metadata when adjusted.
 A request without an HTTP response has failure metadata, never invented
 provider status/content. Partial bodies use WARC-Truncated with their reason.
+
+Use these WARC associations and the minimal external metadata contract:
+- Every request/response gets its own WARC-Record-ID. A response includes
+  WARC-Concurrent-To pointing to its request. No request points to a future
+  response that might never exist. WARC-Date records dispatch/header arrival.
+- A metadata record has Content-Type application/json and WARC-Refers-To
+  naming the affected message (request when no response arrived). Its body
+  contains only applicable fields: observed_headers is an ordered array of
+  [base64-name, base64-value] pairs; failure is one of timeout, disconnect,
+  length, elapsed_budget, unexpected_transport or archive_write. Preserve
+  duplicate/non-UTF-8 header bytes with base64, not lossy text conversion.
+  Headers are included when the stored envelope was adjusted. Failure
+  categories classify capture observations, not provider application effects.
+- WARC-Truncated maps length/elapsed/timeout/disconnect to the standard
+  length/time/disconnect reasons. Other interrupted captures use unspecified.
+  No failure-only metadata claims an HTTP response arrived.
+These semantics are readable without Conix. No EVM fields, duplicate body,
+transaction ledger or replay policy is embedded in the metadata.
 
 Output stays private and raw content never enters ordinary terminal output.
 Sharing/publishing is separate; sanitized derivatives must be distinguishable.
@@ -108,12 +130,34 @@ A. Next commit: bounded HTTPX-to-WARC capture and its focused contained test
    Conix, an ABI, a chain fixture or an operator lifecycle. Its public seam:
 
      RecordingTransport(inner, archive, *, max_request_bytes,
-                        max_response_bytes, elapsed_budget_seconds)
+                        max_response_bytes, elapsed_budget_seconds,
+                        max_exchanges, max_archive_bytes)
 
    This implements httpx.BaseTransport and delegates actual HTTP/TLS to
    inner, an ordinary httpx.HTTPTransport. The caller owns the archive file;
-   transport close retires the inner transport. No monkey-patching, proxy
-   server, protocol parser or alternative request serializer is introduced.
+   transport close retires the inner transport. RecordingTransport owns
+   the WARC writer, in-flight slot, exchange count, bounded output sink and
+   stopped state; do not add a second capture manager with mirrored counters.
+   No proxy server, protocol parser or alternative serializer is introduced.
+
+   The output sink checks every write, including WARC headers, metadata,
+   compressed data and gzip finalization, against max_archive_bytes before
+   delegating. Count actual successful bytes; never emit beyond that cap.
+   Complete a short write within the remaining cap or fail and latch stopped;
+   a zero write is a storage failure, never a successful record. A writer
+   call returning does not establish completion unless every byte was stored.
+   An underlying storage error can leave an incomplete member and unknown
+   write extent; mark completion unconfirmed/failed rather than guessing.
+   Reject request number max_exchanges + 1 before dispatch. On any archive,
+   count, capture-budget or transport failure, latch stopped before
+   releasing the slot, after attempting bounded partial recording. A timeout
+   or disconnect therefore stops capture even when the original HTTPX error
+   remains primary. Every later request is refused before network dispatch.
+   A provider non-200 with a fully captured body is not a transport failure.
+   No automatic retry.
+   A budget-exhausted stream may have no room for failure metadata. Never
+   promise a reserved diagnostic write can survive full/broken storage; keep
+   the control outcome separately and preserve whatever archive bytes exist.
 
    handle_request(request) performs these ordered effects:
    1. Acquire its single in-flight slot without waiting; reject overlap
@@ -132,11 +176,20 @@ A. Next commit: bounded HTTPX-to-WARC capture and its focused contained test
       bodies. Use bounded failure metadata when no response arrived, and
       WARC-Truncated for an interrupted or limited body. Close the upstream
       response and release the in-flight slot on every path.
-   4. Only after successful recording, return an httpx.Response backed by
-      httpx.ByteStream of the captured encoded body. Preserve its original
-      headers/extensions for HTTPX's ordinary downstream decoding. Reraise
-      original transport failures after recording the partial evidence.
-      Recording failure prevents returning an unrecorded success.
+   4. Return an httpx.Response backed by httpx.ByteStream only for a complete
+      response whose request and response records were written successfully.
+      Preserve its headers/extensions for ordinary HTTPX decoding. Byte/time
+      truncation raises CaptureStopped after attempting partial recording;
+      it never returns a normal 200 backed by partial bytes. A complete
+      provider non-200 is still a complete recorded HTTP response.
+   5. Preserve the first request/transport failure as primary if recording
+      partial evidence or closing the upstream response also fails. Record
+      archive/cleanup outcomes separately using bounded categories. Reraise
+      the original cause; do not replace it with an archive/close exception.
+      When HTTP succeeded but recording/finalization failed, CaptureStopped
+      is primary. The owning caller retires all resources independently and
+      reports secondary outcomes before the primary failure, without raw
+      exception values. A close failure cannot turn that state into success.
 
    Use warcio.WARCWriter(gzip=True, warc_version='1.1'). Remove transfer
    framing from the archived HTTP envelope and set its length to the stored
@@ -179,8 +232,15 @@ A. Next commit: bounded HTTPX-to-WARC capture and its focused contained test
    Read the resulting WARC with ArchiveIterator.raw_stream; compare original
    encoded bytes, status, pairing, repeats and truncation reason. Check the
    caller still receives HTTPX's ordinary decoded body for complete responses.
-   Check a write failure cannot return success and overlap is refused before
-   dispatch. Each test covers a distinct effect; no fixed test-count target.
+   Check limit/elapsed truncation raises rather than returning partial 200,
+   and overlap is refused before dispatch. Check raw non-UTF-8/duplicate header
+   metadata round-trips for requests and responses. Inject transport plus
+   archive/close failure and assert primary-cause precedence. At a near-full
+   archive boundary, include gzip finalization, short/zero sink writes,
+   verify the cap, stopped state and absence of later dispatch. Exercise a
+   timeout/disconnect followed by another request; it must not dispatch.
+   Do not require failed output to parse as
+   a complete WARC. These are distinct effect proofs, not a test-count target.
 
    Add test/http/recording/run through the existing Make/Python operator.
    It runs only test_http_recording.py in the selected read-only test-runner,
@@ -201,7 +261,9 @@ A. Next commit: bounded HTTPX-to-WARC capture and its focused contained test
 
    Done: focused real-HTTP preservation tests and relevant host admission
    checks pass locally, with no installed Conix runtime dependency change.
-   Deliver the module, lock/build wiring and tests as one coherent slice.
+   This delivers the tested component and a transient fixture archive, not
+   yet the retained public-RPC artifact. Deliver the module, lock/build wiring
+   and tests as one coherent slice; proceed to B for capture delivery.
    Do not hold A for a public endpoint, database campaign or replay server.
 
 B. Following commit: gateway capture and one retained public artifact
@@ -213,20 +275,35 @@ B. Following commit: gateway capture and one retained public artifact
    the gateway; the WARC sees upstream content before that sanitization.
    Pass the gateway's actual MAX_REQUEST_BYTES and MAX_RESPONSE_BYTES as
    the transport's initial request and wire-response byte budgets.
+   Catch capture-stop outcomes before the generic gateway exception handler.
+   A stopped transport must stop gateway admission and initiate bounded server
+   shutdown, not become an ordinary 502 after which acquisition continues.
+   Join/retire the sole active capture before archive finalization. The
+   stopped state owns this decision even when a transport exception remains
+   the primary error; no request after it may reach the provider.
 
    Extend the existing test/indexer/acceptance/fuji/run with explicit
    RECORDING=1 through the usual literal Make-value dispatcher. Reuse the
    existing source JSON, installed application, gateway and lifecycle; do not
    invent a second public-RPC driver. With recording enabled, admit exactly
    one owned archive-volume mount on the gateway. Ordinary acceptance keeps
-   its current no-volume gateway grant. The first capture limits are one
-   in-flight request, 16 KiB requests, 2 MiB response wire/decoded bounds,
-   4,096 exchanges and 64 MiB archive bytes. The host operator gives capture
-   ten minutes, then stops the gateway using existing bounded retirement;
+   its current no-volume gateway grant. Capture limits are one in-flight
+   request, 16 KiB requests, 2 MiB encoded response bytes, 4,096 exchanges and
+   64 MiB archive bytes. Separately, the gateway applies its existing 2 MiB
+   post-decode acceptance limit. A complete encoded response rejected by
+   that gateway check remains a complete recorded exchange; report the
+   independent campaign failure. This consumer rejection does not latch the
+   recording transport or relabel complete raw bytes as partial. HTTPX can
+   allocate decoded content before the check: 2 MiB is not an allocation
+   bound. Keep and explicitly admit the existing gateway container's 256 MiB memory/memswap, 64-PID and
+   one-CPU limits. A compressed expansion can still terminate the worker;
+   absent final receipt then means unconfirmed capture, never success. No
+   hostile-payload memory certification or new decompressor belongs here.
+   The host operator gives capture ten minutes, then stops the gateway using existing bounded retirement;
    forced retirement leaves unconfirmed/partial evidence, never success.
-   A limit stops capture and marks the run partial; it never silently disables
-   recording while acquisition continues. These are capture limits, not a
-   claim that every Fuji campaign fits. Per-exchange network/body budgets
+   A capture-budget limit stops capture and marks the run partial; it never
+   silently disables recording while acquisition continues. These are capture
+   limits, not a claim that every Fuji campaign fits. Per-exchange network/body budgets
    remain the gateway's existing bounded policy. Name its existing
    15-second acquisition budget once and pass that same value to the wrapper;
    preserve the client's existing 10-second network inactivity timeout.
@@ -240,11 +317,48 @@ B. Following commit: gateway capture and one retained public artifact
    The archive-volume initializer and exporter reuse existing selected-client
    volume ownership checks. No new image role or broad shared lifecycle layer.
 
+   Shutdown ordering is explicit: stop admission; join the active capture;
+   finalize and close the writer/archive file; atomically write one bounded
+   control receipt (at most 4 KiB); then exit the gateway. The host confirms
+   process retirement before export and requires both the receipt and retired
+   process for completion. The receipt is separate from the archive and
+   carries only state,
+   exchange counts and bounded primary/recording/cleanup categories, never
+   raw payload, header, URL or exception prose. A missing/unreadable receipt
+   or forced kill means unconfirmed completion; do not infer zero work.
+
+   The host publishes completed only when at least one admitted exchange was
+   fully recorded, no pending/truncated/failed request or budget stop remains,
+   the writer and archive file finalized/closed successfully, the gateway
+   retired, export/hash succeeded and the manifest was atomically installed.
+   An application failure with all HTTP exchanges captured is reported as an
+   independent campaign failure; it does not invent archive truncation.
+   Zero exchanges is an empty failed run, not a useful completed capture.
+   Budget/truncation/network outcomes with recoverable output are partial;
+   archive/finalization/export failures are failed or unconfirmed. If receipt
+   publication or manifest installation fails, preserve evidence and report
+   failure directly, never manufacture a completed manifest. Required cleanup
+   remains independent: a complete exported archive can coexist with a failed
+   campaign or unconfirmed volume retirement, both of which must be reported.
+
    Done: the maintained Fuji lane produces out/rpc-recordings/<capture-id>/
    with WARC and completion manifest, and a separate networkless warcio
    invocation reads/checks it without importing Conix. Confirm representative
    archived body bytes survive, not merely that two tools accept the file.
    Report partial capture as partial even if some application checks passed.
+   Add focused lifecycle cases for: successful finalize/receipt/exit/export;
+   budget or network stop followed by no later provider dispatch; missing
+   receipt or forced worker exit; finalize/export/manifest failure refusing
+   completed; and failed cleanup preserving the independent archive outcome.
+   Extend existing source/rendered-grant checks to the recorded gateway's
+   memory/PID/CPU/mount grants. A compressed response expanding beyond 2 MiB
+   must fail gateway acceptance while retaining a complete encoded archive
+   record and reporting the independent campaign failure. This test must not
+   expect capture-stop solely from consumer rejection, or claim a 2 MiB
+   allocation ceiling. The forced-exit case
+   covers unconfirmed-worker reporting without requiring an actual OOM test.
+   Use existing lifecycle seams and controlled failure injection; no separate
+   fault framework or every-combination campaign is required.
 
 C. Later commit: exact serial replay
 
@@ -261,6 +375,9 @@ C. Later commit: exact serial replay
    is bundled into this commit. The later operator uses a separately reviewed
    offline lane; it is not a prerequisite of A or B.
 
+Use concise sentence-case imperative commit subjects and explanatory bodies
+under the repository's commit discipline. Keep each slice coherent; report
+implemented, omitted, added-beyond-plan and qualification limits separately.
 Local repository-maintained lanes on the selected Engine are primary proof.
 Report implemented, omitted and beyond-plan work separately. Do not claim a
 full workflow, live Fuji/dapp32 campaign or exact-head CI from a narrower run.
@@ -282,3 +399,31 @@ our unimplemented integration. Selected release artifacts:
 The implementation uses these planned pins after exact-release review. This
 note does not claim security qualification or authorize acquisition, production
 activation or promotion by itself.
+
+
+Requested critical plan review — 15 November 2026
+-------------------------------------------------
+Three independent gpt-6.1-terra reviewers at medium reasoning assessed the
+brief against the user's ten criteria: portable usefulness; raw fidelity;
+original HTTPX/Tier-0 reuse; simple DRY configuration/ownership; contained
+bounded operation; honest partial/failure outcomes; concrete next task;
+steep delivery priorities; meaningful proportionate proof; disciplined
+commits and reporting. The initial overall ratings were 8.8, 8.8 and 9.2.
+
+After three revisions, all reviewers read the final work order and reported:
+
+  Lens                         Overall     Lowest individual criterion
+  Implementation feasibility   9.5/10      9.5/10
+  Fidelity and failure          9.5/10      9.5/10
+  Simplicity and priorities     9.6/10      9.6/10
+
+Corrections addressed partial-body success, combined failure precedence,
+physical archive-byte/short-write handling, transport-stop propagation,
+reversible header metadata, receipt-before-exit ordering, first retained
+artifact scope, memory-versus-acceptance bounds, and independent archive/
+consumer outcomes. No reviewer identified a remaining plan-level blocker.
+
+These are reviewer judgments of this unimplemented brief, not proof of WARC
+fidelity, security or runtime qualification. This user-requested plan workshop
+is complete; its scoring threshold is not a new recurring implementation gate.
+Proceed to A rather than extending the review ceremony.
