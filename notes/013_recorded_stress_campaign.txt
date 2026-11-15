@@ -36,32 +36,42 @@ source identity, initial/final heads and observation gaps. Do not rewrite WARC.
 
 The first workload uses the existing reviewed Fuji PayToPlay deployment,
 its 17 catalog event selectors, source/chain/genesis and ABI; one explicit
-observation duration and head-poll cadence are required inputs. Start at the
-first observed head with a fresh disposable journal and stop observations
-at a declared deadline, retaining initial/final samples and failed polls.
+observation duration and head-poll cadence are required inputs. Before
+configuration, observe and record a seed head; initialize a fresh disposable
+journal with start_block equal to the seed height. Start the retained CLI,
+confirm it is running, then take the first timed head sample and begin the
+measured observation window. Stop observations at the declared deadline,
+retaining initial/final samples and failed polls. If the first timed head is
+above the seed, report that initial backlog rather than inventing zero lag.
 Require a running retained original process throughout the observation
 window and final head greater than initial for a capacity result. An early
 exit, empty window or unconfirmed process continuity is unavailable, not a
 pass. Explicitly configure a maximum accepted observation gap; a failed or
 missing poll that exceeds it makes the window unavailable. Report the actual
 poll intervals as the precision limit, not exact head arrival.
-Configure sufficient bounded capture time/space explicitly and fail partial
-on exhaustion. Existing public source configuration remains authoritative.
+The seed and initial/final timed head samples must succeed. An intermediate
+completed HTTP failure, such as a recorded 429 or malformed response, remains
+a gap and is accepted only within the declared maximum gap; it is not a
+required matrix response. A transport timeout or disconnect latches the
+existing recorder stopped and ends that capture as partial. Do not assume a
+stopped recorder resumes or invent a retry/restart mechanism. Configure sufficient bounded capture
+time/space explicitly and fail partial on exhaustion. Existing public source configuration remains authoritative.
 
 After observing the bounded interval, complete its evidence: capture real
 numbered headers and every configured (blockHash, address,
 topic0) log response, plus chain/genesis admission and canonical rechecks.
 Use the original Writer for catch-up where it can establish the evidence;
 any additional read-only collector performs HTTP acquisition only and shares
-catalog selections, never a second decoder, scanner or journal. For every integer height from initial through final sampled head, require its
-header, predecessor anchor at start minus one, exact unique selector results,
+catalog selections, never a second decoder, scanner or journal. For every integer height from the configured seed start through the final
+timed head, require its header, predecessor anchor at start minus one, exact unique selector results,
 chain/genesis agreement and contiguous parent linkage. Reread each numbered
 header after collection and reject any changed or conflicting block result,
-non-200/malformed/partial WARC exchange. Each reply ID must match its own
+or non-200/malformed/partial required matrix exchange. A recorded observer
+poll failure is handled as a gap under the separate rule above. Each reply ID must match its own
 request; compare rechecked block results independently of their differing
 request IDs. Capture hash-selected headers only if the actual consumer asks. This establishes same-provider
-consistency over the window, not consensus finality. Every sampled head's
-number, hash and parent must match its corresponding admitted matrix header;
+consistency over the window, not consensus finality. The seed and every timed
+sampled head's number, hash and parent must match its corresponding admitted matrix header;
 reject decreases and conflicts. This prevents an observed fork A from being
 combined with later evidence for fork B. If evidence is
 missing, partial, conflicting or reorganized, mark the scenario unavailable;
@@ -77,6 +87,11 @@ served responses: changed polling changes request sequence. Preserve the raw
 archive. Reuse captured immutable responses for repeated reads within the
 admitted chain view; do not reuse a changing latest response as timeless data.
 
+After PostgreSQL, schema and replay services are ready, the coordinator
+releases both the head schedule and the original CLI at replay t=0. Head stays
+at its initial value before release. Use the same release event for baseline
+and slowed runs; include process startup in the observation and report it
+separately. A delayed setup test must prove the schedule has not advanced.
 Drive the visible head from the recorded monotonic observation timeline,
 independent of requests. Begin at the first observed head; change the visible
 head only at each later observed sample, allowing height jumps without
@@ -91,8 +106,12 @@ until explicitly supported and qualified.
 Replay the original CLI against real restricted-role PostgreSQL, with normal
 schema initialization and original Reader assertions. Record time series of
 visible observed head and durable checkpoint on the same replay monotonic
-origin; lag is max(0, head height minus checkpoint height). Report samples,
-window, stalls and backlog trend; compare Reader raw events and checkpoints
+origin. Once a checkpoint exists, lag is max(0, head height minus checkpoint
+height). Before the first durable checkpoint, retain the sample with checkpoint
+and checkpoint-based lag unavailable; also report pending workload blocks as
+max(0, head height minus configured start block plus one). Record release-to-
+first-checkpoint time; no first publication means no capacity pass. Report
+samples, window, stalls and backlog trend; compare Reader raw events and checkpoints
 against the admitted selected-log matrix, including duplicates. Freeze the
 final head and show eventual catch-up separately, excluding that phase from
 the live-window pace result. Initially apply zero added
