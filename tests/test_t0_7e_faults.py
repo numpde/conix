@@ -38,6 +38,7 @@ class FaultRelay:
         self.release = asyncio.Event()
         self.server = None
         self.client = None
+        self.handlers = set()
 
     async def __aenter__(self):
         self.client = httpx.AsyncClient(trust_env=False, timeout=5)
@@ -49,9 +50,53 @@ class FaultRelay:
         self.release.set()
         self.server.close()
         await self.server.wait_closed()
+        # Accepted connections outlive the listener. Retire their pending
+        # reads before closing the upstream client they would otherwise use.
+        pending = list(self.handlers)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
         await self.client.aclose()
 
+    async def response(self, message):
+        """Own the selected observation; HTTP framing remains one shared path."""
+        method = message["method"]
+        params = message["params"]
+        if method == "eth_chainId":
+            # The installed CLI registers its signal handlers before
+            # opening the writer and verifying the selected chain.
+            self.verified.set()
+        status = 200
+
+        if self.mode == "offline":
+            status, payload = 503, b""
+        elif self.mode == "wrong_chain" and method == "eth_chainId":
+            payload = json.dumps({
+                "jsonrpc": "2.0", "id": message["id"], "result": "0x2",
+            }).encode()
+        elif (self.mode == "missing_header"
+              and method == "eth_getBlockByNumber"
+              and params[0] == hex(self.target_height)):
+            payload = json.dumps({
+                "jsonrpc": "2.0", "id": message["id"], "result": None,
+            }).encode()
+        elif self.mode == "bad_logs" and method == "eth_getLogs":
+            payload = json.dumps({
+                "jsonrpc": "2.0", "id": message["id"],
+                "result": {"invalid": "not a log array"},
+            }).encode()
+        else:
+            if self.mode == "hold_logs" and method == "eth_getLogs":
+                self.entered.set()
+                await self.release.wait()
+            response = await self.client.post(self.upstream, json=message)
+            status, payload = response.status_code, response.content
+        return status, payload
+
     async def handle(self, reader, writer):
+        task = asyncio.current_task()
+        self.handlers.add(task)
         try:
             header = await reader.readuntil(b"\r\n\r\n")
             if len(header) > 8192:
@@ -64,37 +109,7 @@ class FaultRelay:
             if len(sizes) != 1 or not 0 < sizes[0] <= 65536:
                 return
             message = json.loads(await reader.readexactly(sizes[0]))
-            method = message["method"]
-            params = message["params"]
-            if method == "eth_chainId":
-                # The installed CLI registers its signal handlers before
-                # opening the writer and verifying the selected chain.
-                self.verified.set()
-            status = 200
-
-            if self.mode == "offline":
-                status, payload = 503, b""
-            elif self.mode == "wrong_chain" and method == "eth_chainId":
-                payload = json.dumps({
-                    "jsonrpc": "2.0", "id": message["id"], "result": "0x2",
-                }).encode()
-            elif (self.mode == "missing_header"
-                  and method == "eth_getBlockByNumber"
-                  and params[0] == hex(self.target_height)):
-                payload = json.dumps({
-                    "jsonrpc": "2.0", "id": message["id"], "result": None,
-                }).encode()
-            elif self.mode == "bad_logs" and method == "eth_getLogs":
-                payload = json.dumps({
-                    "jsonrpc": "2.0", "id": message["id"],
-                    "result": {"invalid": "not a log array"},
-                }).encode()
-            else:
-                if self.mode == "hold_logs" and method == "eth_getLogs":
-                    self.entered.set()
-                    await self.release.wait()
-                response = await self.client.post(self.upstream, json=message)
-                status, payload = response.status_code, response.content
+            status, payload = await self.response(message)
 
             phrase = b"OK" if status == 200 else b"Service Unavailable"
             wire = (
@@ -112,6 +127,58 @@ class FaultRelay:
                 await writer.wait_closed()
             except ConnectionError:
                 pass
+            finally:
+                self.handlers.discard(task)
+
+
+class PacedRelay(FaultRelay):
+    """Replay bounded delivery of genuine premined blocks with real RPC delay."""
+
+    def __init__(self, upstream, *, initial, ceiling, interval_seconds, latency_seconds):
+        super().__init__(upstream)
+        self.initial = initial
+        self.ceiling = ceiling
+        self.interval_seconds = interval_seconds
+        self.latency_seconds = latency_seconds
+        self.acquiring = asyncio.Event()
+        self.begin = asyncio.Event()
+        self.epoch = None
+        self.frozen = None
+
+    def delivered_height(self):
+        if self.frozen is not None:
+            return self.frozen
+        if self.epoch is None:
+            return self.initial
+        return min(self.ceiling, self.initial + int((asyncio.get_running_loop().time() - self.epoch) / self.interval_seconds))
+
+    def start_delivery(self):
+        self.epoch = asyncio.get_running_loop().time()
+        self.begin.set()
+
+    def freeze_delivery(self):
+        self.frozen = self.delivered_height()
+        return self.frozen
+
+    async def __aexit__(self, *arguments):
+        self.begin.set()
+        await super().__aexit__(*arguments)
+
+    async def response(self, message):
+        method, params = message["method"], message["params"]
+        # The first non-genesis numbered read follows completed source
+        # admission in the original writer. Chain-ID arrival alone does not.
+        if method == "eth_getBlockByNumber" and params[0] not in ("0x0", "latest") and self.epoch is None:
+            self.acquiring.set()
+            await self.begin.wait()
+        await asyncio.sleep(self.latency_seconds)
+        if method == "eth_getBlockByNumber":
+            delivered = self.delivered_height()
+            if params[0] == "latest":
+                message = {**message, "params": [hex(delivered), False]}
+            elif int(params[0], 16) > delivered:
+                return 200, json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": None}).encode()
+        return await super().response(message)
 
 
 @unittest.skipUnless(
@@ -247,6 +314,63 @@ class InstalledTier07FaultAcceptance(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(receipt["status"], "0x1")
         self.assertEqual(len(receipt["logs"]), 1)
         return transaction, int(receipt["blockNumber"], 16)
+
+    async def test_paced_quiet_delivery_proves_live_backlog_and_real_journal_resumption(self):
+        """Real RPC waits create backlog while the installed app still publishes."""
+        from history_observations import snapshot
+        from conix.catalog import prepare_catalog
+        folder = Path(__file__).parent / "fixtures/evm"
+        plan = json.loads((folder / "network_stress_workloads.json").read_text())["installed_replay"]
+        observations = json.loads((folder / "network_rates.json").read_text())
+        selected = next(row for row in observations["networks"] if row["id"] == plan["cadence_network"])
+        window = next(window for window in selected["windows"] if window["id"] == plan["cadence_window"])
+        initial, _basis = await self.baseline()
+        before = await asyncio.to_thread(snapshot, self.reader_dsn)
+        await self.rpc("anvil_mine", [hex(plan["maximum_arrivals"])])
+        await self.relay.__aexit__(None, None, None)
+        self.relay = await PacedRelay(self.url, initial=initial, ceiling=initial + plan["maximum_arrivals"],
+            interval_seconds=window["mean_numbered_block_interval_ms"] / 1000,
+            latency_seconds=plan["synthetic_rpc_delay_ms"] / 1000).__aenter__()
+        config = source_toml_for_anvil(genesis_hash=self.genesis_hash, rpc_url=self.relay.url)
+        (self.target / "config.toml").write_text(config)
+        catalog = prepare_catalog(self.target / "config.toml")
+        self.assertEqual(sum(len(contract.descriptor.events) for contract in catalog.contracts), plan["selectors"])
+        process = await self.start()
+        await asyncio.wait_for(self.relay.acquiring.wait(), timeout=10)
+        self.relay.start_delivery()
+        await self.reach(process, initial + 1)
+        first_delivered = self.relay.delivered_height()
+        first_progress = await self.progress()
+        first_backlog = first_delivered - first_progress[0]
+        await asyncio.sleep(plan["observe_after_first_progress_ms"] / 1000)
+        delivered = self.relay.delivered_height()
+        during = await self.progress()
+        self.assertIsNone(process.returncode)
+        self.assertGreater(during[0], initial)
+        self.assertGreater(delivered - during[0], 1)
+        self.assertGreater(delivered - during[0], first_backlog)
+        # Freeze a named target before shutdown; catching it later cannot be
+        # confused with a lag sampled after the application had stopped.
+        target = self.relay.freeze_delivery()
+        await self.stop(process)
+        retained = await asyncio.to_thread(snapshot, self.reader_dsn)
+        self.relay.latency_seconds = 0
+        resumed = await self.start()
+        await self.reach(resumed, target)
+        await self.stop(resumed)
+        after = await asyncio.to_thread(snapshot, self.reader_dsn)
+        self.assertEqual(after["height"], target)
+        self.assertEqual(after["source_id"], before["source_id"])
+        self.assertEqual(after["generation"], before["generation"])
+        self.assertEqual(after["blocks"][:len(retained["blocks"])], retained["blocks"])
+        self.assertEqual(after["blocks"][:len(before["blocks"])], before["blocks"])
+        self.assertEqual(after["events"], before["events"])
+        print("Installed paced-delivery witness: " + json.dumps({"selectors": plan["selectors"],
+            "delivery_interval_ms": window["mean_numbered_block_interval_ms"],
+            "synthetic_rpc_delay_ms": plan["synthetic_rpc_delay_ms"], "initial": initial,
+            "first_delivered": first_delivered, "first_checkpoint": first_progress[0],
+            "delivered_while_running": delivered, "checkpoint_while_running": during[0],
+            "frozen_target": target, "resumed_checkpoint": after["height"]}), flush=True)
 
     async def test_wrong_source_missing_header_and_bad_logs_fail_before_publication(self):
         _, initial = await self.baseline()

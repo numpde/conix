@@ -57,6 +57,71 @@
       "events_per_emitting_block": 0,
       "emit_every_n_blocks": 1,
       "expected_model": "rpc_deadline_exceeded"
+    },
+    {
+      "id": "burst-delivery-empty-contract",
+      "selectors": 17,
+      "blocks": 32,
+      "initial_backlog": 64,
+      "block_interval_ms": 10,
+      "arrival_burst_blocks": 16,
+      "header_ms": 1,
+      "log_ms": 1,
+      "transactions_per_block": 0,
+      "events_per_emitting_block": 0,
+      "emit_every_n_blocks": 1,
+      "expected_model": "rpc_bottleneck"
+    },
+    {
+      "id": "oversized-header-envelope",
+      "selectors": 17,
+      "blocks": 4,
+      "initial_backlog": 32,
+      "block_interval_ms": 200,
+      "header_ms": 1,
+      "log_ms": 1,
+      "header_response_bytes": 1048577,
+      "transactions_per_block": 0,
+      "events_per_emitting_block": 0,
+      "emit_every_n_blocks": 1,
+      "expected_model": "resource_ceiling"
+    },
+    {
+      "id": "exact-rpc-capacity-without-headroom",
+      "selectors": 17,
+      "blocks": 16,
+      "initial_backlog": 32,
+      "block_interval_ms": 200,
+      "header_ms": 10,
+      "log_ms": 10,
+      "transactions_per_block": 0,
+      "events_per_emitting_block": 0,
+      "emit_every_n_blocks": 1,
+      "expected_model": "rpc_at_capacity"
     }
-  ]
+  ],
+  "measured_replay": {
+    "blocks": 8,
+    "selectors": 17,
+    "initial_backlog": 32,
+    "selected_event_pattern": "quiescent",
+    "transaction_inventory": "Transaction count and wire bytes of the largest sampled header; not a full-window maximum or chain-wide TPS",
+    "synthetic_rpc_latency_ms": [
+      1,
+      10,
+      50,
+      250
+    ],
+    "calibration": "median of unique sampled header costs and one observed address-scoped reference selector cost; excludes admission, SQL and scheduling"
+  },
+  "installed_replay": {
+    "cadence_network": "base-mainnet",
+    "cadence_window": "head",
+    "arrival_kind": "Synthetic paced delivery of genuinely premined Anvil blocks; not Base consensus or timestamp replay",
+    "synthetic_rpc_delay_ms": 250,
+    "selectors": 2,
+    "maximum_arrivals": 32,
+    "observe_after_first_progress_ms": 4000,
+    "journal": "Original installed PostgreSQL journal and original conix run; existing disposable source"
+  }
 }

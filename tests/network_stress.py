@@ -8,16 +8,18 @@ from collections import Counter
 from fractions import Fraction
 import hashlib
 import json
+from statistics import median
 from pathlib import Path
 import tempfile
 import time
 
 import httpx
 
+from conix.abi import ResourceExceeded
 from conix.catalog import prepare_catalog
 from conix.core import Writer
 from conix.rpc import RPC
-from test_core_rpc import RecordingJournal, json_response
+from test_core_rpc import RecordingJournal
 
 FIXTURES = Path(__file__).parent / "fixtures"
 DEPLOYED = json.loads((FIXTURES / "evm/fuji_pay_to_play.json").read_text())
@@ -69,8 +71,16 @@ class StandIn:
     def block_hash(height):
         return "0x" + (bytes(32) if height == 0 else hashlib.sha256(f"stress-{height}".encode()).digest()).hex()
 
+    def head_height(self):
+        burst = self.workload.get("arrival_burst_blocks", 1)
+        period = Fraction(str(self.workload["block_interval_ms"])) * burst
+        return self.workload["initial_backlog"] + int(Fraction(self.model_ms) // period) * burst
+
     def block(self, height):
-        count = max(self.workload["transactions_per_block"], bool(self.event_count(height)))
+        identity = self.block_hash(height)
+        if identity in self.headers:
+            return self.headers[identity]
+        count = 0 if height == 0 else max(self.workload["transactions_per_block"], bool(self.event_count(height)))
         transactions = ["0x" + hashlib.sha256(f"tx-{height}-{index}".encode()).hexdigest() for index in range(count)]
         record = {"number": hex(height), "hash": self.block_hash(height),
                   "parentHash": self.block_hash(max(0, height - 1)),
@@ -88,12 +98,12 @@ class StandIn:
         if method == "eth_chainId":
             result = hex(self.catalog.chain.chain_id)
         elif method == "eth_getBlockByNumber":
-            self.model_ms += self.workload["header_ms"]
-            head = self.workload["initial_backlog"] + int(Fraction(str(self.model_ms)) // Fraction(str(self.workload["block_interval_ms"])))
+            self.model_ms += Fraction(str(self.workload["header_ms"]))
+            head = self.head_height()
             height = head if params[0] == "latest" else int(params[0], 16)
             result = self.block(height) if height <= head else None
         elif method == "eth_getLogs":
-            self.model_ms += self.workload["log_ms"]
+            self.model_ms += Fraction(str(self.workload["log_ms"]))
             (selector,) = params
             assert set(selector) == {"blockHash", "address", "topics"}
             assert selector["address"] == DEPLOYED["address"] and selector["topics"][0] in self.selectors
@@ -106,7 +116,15 @@ class StandIn:
                       for index in range(count)]
         else:
             raise AssertionError("Stand-in received an operation outside the original acquisition path.")
-        return json_response({"jsonrpc": "2.0", "id": operation["id"], "result": result})
+        document = {"jsonrpc": "2.0", "id": operation["id"], "result": result}
+        raw = json.dumps(document, separators=(",", ":")).encode()
+        if method == "eth_getBlockByNumber" and result is not None and result["number"] != "0x0":
+            target = self.workload.get("header_response_bytes", 0)
+            # JSON whitespace preserves the real envelope and byte admission.
+            # It models uninterpreted header bytes, not fabricated EVM fields.
+            if len(raw) < target:
+                raw += b" " * (target - len(raw))
+        return httpx.Response(200, stream=httpx.ByteStream(raw))
 
 
 async def replay(workload):
@@ -120,17 +138,57 @@ async def replay(workload):
         await writer.verify_source()
         stand_in.model_ms = 0  # Admission is setup, separate from steady acquisition.
         started = time.monotonic()
-        for _ in range(workload["blocks"]):
-            await writer.advance_one()
+        failure = None
+        try:
+            for _ in range(workload["blocks"]):
+                await writer.advance_one()
+        except ResourceExceeded:
+            failure = "resource_ceiling"
         actual_seconds = time.monotonic() - started
     per_block_ms = 3 * workload["header_ms"] + workload["selectors"] * workload["log_ms"]
-    if max(workload["header_ms"], workload["log_ms"]) > catalog.limits.rpc_timeout_seconds * 1000 or per_block_ms > catalog.limits.operation_timeout_seconds * 1000:
+    if failure is not None:
+        outcome = failure
+    elif per_block_ms == 0:
+        outcome = "rpc_cost_unresolved"
+    elif max(workload["header_ms"], workload["log_ms"]) > catalog.limits.rpc_timeout_seconds * 1000 or per_block_ms > catalog.limits.operation_timeout_seconds * 1000:
         outcome = "rpc_deadline_exceeded"
     else:
-        outcome = "rpc_headroom" if per_block_ms < workload["block_interval_ms"] else "rpc_bottleneck"
-    final_head = workload["initial_backlog"] + int(Fraction(str(stand_in.model_ms)) // Fraction(str(workload["block_interval_ms"])))
+        outcome = "rpc_headroom" if per_block_ms < workload["block_interval_ms"] else "rpc_at_capacity" if per_block_ms == workload["block_interval_ms"] else "rpc_bottleneck"
+    final_head = stand_in.head_height()
     return {"model": outcome, "initial_backlog": workload["initial_backlog"],
-            "final_backlog": final_head - sink.basis.last_block.number, "modeled_steady_rpc_ms_per_block": per_block_ms,
-            "modeled_elapsed_ms": stand_in.model_ms, "local_scanner_seconds": actual_seconds,
+            "final_backlog": final_head - (sink.basis.last_block.number if sink.basis.last_block else 0),
+            "completed_blocks": len(sink.publications), "modeled_steady_rpc_ms_per_block": per_block_ms,
+            "modeled_elapsed_ms": float(stand_in.model_ms), "local_scanner_seconds": actual_seconds,
             "demand_blocks_per_second": 1000 / workload["block_interval_ms"],
-            "capacity_upper_bound_blocks_per_second": None if outcome == "rpc_deadline_exceeded" else 1000 / per_block_ms}, sink, stand_in
+            "capacity_upper_bound_blocks_per_second": None if outcome in {"rpc_deadline_exceeded", "resource_ceiling", "rpc_cost_unresolved"} else 1000 / per_block_ms}, sink, stand_in
+
+
+def measured_workloads(observations, specification):
+    """Separate observed cost calibration from declared synthetic latency sweeps."""
+    template = specification["measured_replay"]
+    for network in observations["networks"]:
+        context = {"network": network["id"], "identity_assurance": network["identity_assurance"]}
+        if not network["windows"]:
+            yield {**context, "basis": "unavailable", "observation_status": network["status"]}, None
+        for window in network["windows"]:
+            selected = {**context, "window": window["id"]}
+            if window["status"] != "observed":
+                yield {**selected, "basis": "unavailable", "observation_status": window["status"]}, None
+                continue
+            headers = {item["height"]: item for item in [window["first"], window["last"], *window["tail"]]}
+            largest = max(headers.values(), key=lambda item: item["response_bytes"])
+            common = {"selectors": template["selectors"], "blocks": template["blocks"], "initial_backlog": template["initial_backlog"],
+                      "block_interval_ms": window["mean_numbered_block_interval_ms"],
+                      "transactions_per_block": largest["transactions"], "header_response_bytes": largest["response_bytes"],
+                      "events_per_emitting_block": 0, "emit_every_n_blocks": 1}
+            for latency in template["synthetic_rpc_latency_ms"]:
+                yield {**selected, "basis": "synthetic_latency_sweep", "rpc_ms": latency}, {
+                    **common, "header_ms": latency, "log_ms": latency,
+                }
+            reference = window["selector_probe"]
+            if reference["status"] == "observed":
+                yield {**selected, "basis": "observed_reference_selector_cost", "reference_log_count": reference["log_count"]}, {
+                    **common, "header_ms": median(item["elapsed_ms"] for item in headers.values()), "log_ms": reference["elapsed_ms"],
+                }
+            else:
+                yield {**selected, "basis": "unavailable_reference_selector_cost", "observation_status": reference["status"]}, None
