@@ -1,0 +1,162 @@
+Recorded-network stress campaign
+================================
+
+Status: proposed; supersedes Note 012's Fuji-first B and exact-conversation C.
+Date: 2026-11-15
+
+Goal: find out whether the original installed Conix process keeps up with an
+observed chain while indexing all selected contract events, including when
+none occur. Keep portable raw WARC evidence and use real disposable PostgreSQL
+and the original Reader. This is a new stress campaign; existing Fuji
+acceptance remains a separate correctness and lifecycle test. Note 005 owns
+acquisition semantics; Note 012 owns the WARC transport and raw format.
+
+Why capture must do more than record Conix
+-----------------------------------------
+Writer.advance_one asks for latest only when the next numbered block is not
+available. If Conix falls behind, its traffic may not show how far the head
+advanced. Different replay speeds can also request evidence absent from the
+original conversation. Neither a request-by-request tape nor an invented
+empty response can establish keep-pace behavior.
+
+The capture records an independent, timestamped head observation on the
+same selected source while the original installed process runs. Monotonic
+elapsed time and polling interval describe when the observer saw each head;
+these are sampled observation times, not exact consensus arrival times.
+Record poll failures and gaps; never infer arrival times from block timestamps.
+Use separate owned capture streams for observer and application so the
+existing serial recorder never drops overlapping requests. One coordinator
+on the selected Engine records a shared monotonic run origin and each
+worker's measured offset to that origin; prove the mapping and uncertainty
+for separate processes before accepting a run. Persist poll start/end times,
+head response time and gaps on that common elapsed scale; UTC is provenance,
+not the pacing clock. Refuse an uncalibrated clock or invalid sample order. Each stream remains
+a standard WARC; a small manifest links the streams and their common clock,
+source identity, initial/final heads and observation gaps. Do not rewrite WARC.
+
+The first workload uses the existing reviewed Fuji PayToPlay deployment,
+its 17 catalog event selectors, source/chain/genesis and ABI; one explicit
+observation duration and head-poll cadence are required inputs. Start at the
+first observed head with a fresh disposable journal and stop observations
+at a declared deadline, retaining initial/final samples and failed polls.
+Require a running retained original process throughout the observation
+window and final head greater than initial for a capacity result. An early
+exit, empty window or unconfirmed process continuity is unavailable, not a
+pass. Explicitly configure a maximum accepted observation gap; a failed or
+missing poll that exceeds it makes the window unavailable. Report the actual
+poll intervals as the precision limit, not exact head arrival.
+Configure sufficient bounded capture time/space explicitly and fail partial
+on exhaustion. Existing public source configuration remains authoritative.
+
+After observing the bounded interval, complete its evidence: capture real
+numbered headers and every configured (blockHash, address,
+topic0) log response, plus chain/genesis admission and canonical rechecks.
+Use the original Writer for catch-up where it can establish the evidence;
+any additional read-only collector performs HTTP acquisition only and shares
+catalog selections, never a second decoder, scanner or journal. For every integer height from initial through final sampled head, require its
+header, predecessor anchor at start minus one, exact unique selector results,
+chain/genesis agreement and contiguous parent linkage. Reread each numbered
+header after collection and reject any changed or conflicting block result,
+non-200/malformed/partial WARC exchange. Each reply ID must match its own
+request; compare rechecked block results independently of their differing
+request IDs. Capture hash-selected headers only if the actual consumer asks. This establishes same-provider
+consistency over the window, not consensus finality. Every sampled head's
+number, hash and parent must match its corresponding admitted matrix header;
+reject decreases and conflicts. This prevents an observed fork A from being
+combined with later evidence for fork B. If evidence is
+missing, partial, conflicting or reorganized, mark the scenario unavailable;
+do not treat it as zero events. Preserve partial archives and the failure.
+
+Offline replay
+--------------
+Load complete evidence from WARC; admit each upstream WARC Target-URI against
+the selected public source, then map only the transport destination to the
+local offline endpoint. Match RPC method and exact parameters,
+including source, block hash, address and topic. Rebind only JSON-RPC IDs in
+served responses: changed polling changes request sequence. Preserve the raw
+archive. Reuse captured immutable responses for repeated reads within the
+admitted chain view; do not reuse a changing latest response as timeless data.
+
+Drive the visible head from the recorded monotonic observation timeline,
+independent of requests. Begin at the first observed head; change the visible
+head only at each later observed sample, allowing height jumps without
+inventing intermediate arrival times. Freeze the final observed head at the
+end. Record gaps and polling uncertainty. Latest returns the exact captured
+header for the current sampled head, rebinding only its response ID. A numbered block above that visible head returns a derived null;
+label this as a timing projection. At or below the visible head, missing
+header or selected-log evidence is failure, never null or an empty log list.
+No network fallback. Reorganization or contradictory evidence is unavailable
+until explicitly supported and qualified.
+
+Replay the original CLI against real restricted-role PostgreSQL, with normal
+schema initialization and original Reader assertions. Record time series of
+visible observed head and durable checkpoint on the same replay monotonic
+origin; lag is max(0, head height minus checkpoint height). Report samples,
+window, stalls and backlog trend; compare Reader raw events and checkpoints
+against the admitted selected-log matrix, including duplicates. Freeze the
+final head and show eventual catch-up separately, excluding that phase from
+the live-window pace result. Initially apply zero added
+RPC latency for baseline and one explicitly fixed artificial delay for a
+slowdown comparison. Report both; head pacing alone cannot reproduce provider
+throughput, and these results do not claim live provider capacity. A synthetic slowdown
+is labeled as such. A replay result applies to its recorded interval, selected
+source, latency policy and execution environment only.
+
+Orthogonal acceptance criteria
+-------------------------------
+1. Provenance and raw fidelity: WARC request/response bytes, pairing, source
+   identity and timestamps are independently readable. Relevance: a sanitized
+   provider error or wrong source would make the archive misleading elsewhere.
+2. Coverage: every replay-visible height and selected filter has actual,
+   canonicality-checked source evidence. Relevance: a missing empty-result
+   response cannot be assumed empty without inventing indexing evidence.
+3. Clock: observed head advances without client requests. Relevance: a slow
+   client must not slow the replayed chain and hide backlog.
+4. Protocol: exact method/params matching and ID correlation; missing,
+   truncated and contradictory data fail. Relevance: changed polling alters
+   IDs, and a URL-only match can return a different block or contract's logs.
+5. Real effects: installed original Conix, PostgreSQL and Reader establish
+   checkpoint and event continuity. Relevance: a recording sink cannot prove
+   SQL publication or the Reader's view.
+6. Measurement: report observation window, sampling gaps, latency treatment,
+   lag trajectory and frozen-head catch-up. Relevance: a single endpoint or
+   unlabelled artificial latency does not establish sustained capacity.
+7. Authority and lifecycle: selected rootless Engine, reviewed public source,
+   explicit capture egress, replay offline, bounded resources, private output
+   and verified owned cleanup. Relevance: an interrupted export must not be
+   reported as a complete archive or delete the only retained evidence.
+8. Simplicity and scope: preserve one WARC evidence authority and original
+   Tier-0 validation/publication; no parallel indexing implementation or
+   generalized service framework. Relevance: duplicate scanners or mutable
+   summaries can drift from the evidence used for the real workload.
+
+Work order and priority
+-----------------------
+A. Implement test/indexer/stress/capture using the existing recorder and gateway,
+   selected public network/catalog, separate observer, bounded time/bytes,
+   durable owned outputs and explicit incomplete status. Apply Note 012's
+   existing volume ownership, byte/time caps, close-before-export receipt and
+   separate cleanup outcomes. Preserve an unexported or uncertain volume and
+   recovery record; never automatically retire the sole remaining evidence.
+   Run a short real capture and inspect raw WARC independently. Capture is deliverable before
+   replay; do not couple it to the Fuji acceptance campaign.
+B. Complete and admit the evidence matrix for the observed interval. Verify
+   the actual selected ABI/event filters and report unavailable coverage.
+   Do not create a competing source definition or claim head observation is
+   exact arrival. Exercise missing and inconsistent evidence failures.
+C. Implement test/indexer/stress/replay, an offline timed replay lane. Prove head advancement with no
+   requests, ID adaptation, exact selector matching and fail-closed absence.
+   Run the real CLI/PG/Reader. Compare baseline and deliberately slowed
+   replay, then freeze the head and establish eventual durable catch-up.
+D. Only after A-C, add more networks/windows and measured latency replay
+   where evidence supports it. No all-network gate, arbitrary test-count
+   target, invented latency distribution, generic proxy framework, repeated
+   unchanged CI or production activation.
+
+Each stage is a small coherent Sentence-case commit with explanatory body;
+run the maintained local checks appropriate to its effects. Report separately
+what was implemented, omitted and added beyond scope, with revision-bound
+results. These criteria are review goals for the plan and implementation;
+no score constitutes execution evidence. These target names are proposed;
+they are not exported yet. Existing operator literal-value and ownership rules
+apply; no raw WARC is printed through terminal output.
