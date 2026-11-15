@@ -20,7 +20,9 @@ READ_METHODS = frozenset({
     "eth_chainId", "eth_getBlockByNumber", "eth_getBlockByHash", "eth_getLogs",
     "eth_getCode", "eth_call", "eth_getTransactionReceipt",
 })
-MAX_BYTES = 2 * 1024 * 1024
+HTTPS_PORT = 443
+MAX_REQUEST_BYTES = 16 * 1024
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 
 class GatewayRefusal(ValueError):
@@ -38,7 +40,7 @@ class UpstreamFailure(RuntimeError):
 
 def admit(raw):
     """Only bounded, single JSON-RPC reads reach the fixed public endpoint."""
-    if not 0 < len(raw) <= 16384:
+    if not 0 < len(raw) <= MAX_REQUEST_BYTES:
         raise GatewayRefusal("Gateway request exceeds the admitted size.")
     try:
         request = json.loads(raw)
@@ -67,7 +69,7 @@ def admit_configuration(upstream_url, head_ceiling):
         endpoint = urlsplit(upstream_url)
         admitted = (
             endpoint.scheme == "https" and endpoint.hostname
-            and endpoint.port in (None, 443) and endpoint.username is None
+            and endpoint.port in (None, HTTPS_PORT) and endpoint.username is None
             and endpoint.password is None and not endpoint.fragment
             and not endpoint.query and not any(character.isspace() or ord(character) < 32
                                                for character in upstream_url)
@@ -107,7 +109,7 @@ def forward(client, request, *, upstream_url):
             if time.monotonic() >= deadline:
                 raise UpstreamFailure("deadline")
             body.extend(chunk)
-            if len(body) > MAX_BYTES:
+            if len(body) > MAX_RESPONSE_BYTES:
                 raise UpstreamFailure("reply_size")
     try:
         result = json.loads(body)
@@ -129,7 +131,7 @@ def forward(client, request, *, upstream_url):
 def upstream_addresses(*, upstream_url):
     """Resolve only the selected public upstream for the confined TCP control."""
     try:
-        addresses = socket.getaddrinfo(urlsplit(upstream_url).hostname, 443, type=socket.SOCK_STREAM)
+        addresses = socket.getaddrinfo(urlsplit(upstream_url).hostname, HTTPS_PORT, type=socket.SOCK_STREAM)
         selected = list(dict.fromkeys(str(ipaddress.ip_address(value[4][0])) for value in addresses))
         if not selected or len(selected) > 8 or any(not ipaddress.ip_address(value).is_global for value in selected):
             raise ValueError("Selected upstream has no bounded public address evidence.")
@@ -175,13 +177,12 @@ def serve(*, upstream_url, head_ceiling=None):
                 self.reply(200 if self.path == "/healthz" else 404, {"view": mode})
 
         def do_POST(self):
-            self.connection.settimeout(12)
             if not capacity.acquire(blocking=False):
                 self.reply(503, {"error": "Gateway read capacity is occupied."})
                 return
             try:
                 length = self.headers.get("Content-Length", "")
-                if self.path != "/" or not length.isdecimal() or not 0 < int(length) <= 16384:
+                if self.path != "/" or not length.isdecimal() or not 0 < int(length) <= MAX_REQUEST_BYTES:
                     raise GatewayRefusal("Gateway request framing is not admitted.")
                 request = admit(self.rfile.read(int(length)))
                 selected, absent = bounded_view(request, head_ceiling=head_ceiling)

@@ -20,6 +20,12 @@ from rpc_gateway import READ_METHODS
 
 SOURCE = json.loads((Path(__file__).parent / "fixtures/evm/fuji_pay_to_play.json").read_text())
 ZERO = "0x" + "00" * 20
+GATEWAY_URL = "http://gateway:8080"
+# These bound the probe's own inputs, not the gateway's upstream wire bytes.
+MAX_REPLY_BYTES = 2 * 1024 * 1024
+MAX_ADDRESS_EVIDENCE_BYTES = 4096
+MAX_INPUT_BYTES = 16 * 1024
+UPSTREAM_PORT = 443
 
 
 class CheckFailed(ValueError):
@@ -43,12 +49,12 @@ class ReadRejected(RuntimeError):
 
 def rpc(method, params):
     """Read only through the test gateway; do not print its response prose."""
-    request = urllib.request.Request("http://gateway:8080", data=json.dumps({
+    request = urllib.request.Request(GATEWAY_URL, data=json.dumps({
         "jsonrpc": "2.0", "id": 1, "method": method, "params": params,
     }).encode(), headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
-            raw = response.read(2 * 1024 * 1024 + 1)
+            raw = response.read(MAX_REPLY_BYTES + 1)
     except urllib.error.HTTPError as error:
         upstream = None
         try:
@@ -62,7 +68,7 @@ def rpc(method, params):
         except (OSError, ValueError, TypeError, AttributeError):
             pass  # Unadmitted gateway content never contributes to diagnostics.
         raise ReadRejected(method, "HTTP", error.code, upstream=upstream) from error
-    if len(raw) > 2 * 1024 * 1024:
+    if len(raw) > MAX_REPLY_BYTES:
         raise CheckFailed("reply_size")
     result = json.loads(raw)
     if type(result) is dict and "error" in result:
@@ -87,9 +93,9 @@ def direct_upstream_denied():
     try:
         # Internal peers intentionally need no public DNS. The fixed gateway
         # supplies public numeric targets; it cannot select another hostname.
-        with urllib.request.urlopen("http://gateway:8080/upstream-addresses", timeout=5) as response:
-            raw = response.read(4097)
-        if len(raw) > 4096:
+        with urllib.request.urlopen(GATEWAY_URL + "/upstream-addresses", timeout=5) as response:
+            raw = response.read(MAX_ADDRESS_EVIDENCE_BYTES + 1)
+        if len(raw) > MAX_ADDRESS_EVIDENCE_BYTES:
             raise ValueError("Oversized address evidence.")
         document = json.loads(raw)
         addresses = document["addresses"]
@@ -108,12 +114,12 @@ def direct_upstream_denied():
         with socket.socket(socket.AF_INET if address.version == 4 else socket.AF_INET6, socket.SOCK_STREAM) as direct:
             direct.settimeout(min(1, remaining))
             try:
-                direct.connect((str(address), 443))
+                direct.connect((str(address), UPSTREAM_PORT))
             except OSError:
                 continue
         raise CheckFailed("direct_egress")
     return {"gateway_read": "passed", "upstream_dns": "resolved_by_gateway",
-            "upstream_addresses": [str(address) for address in addresses], "upstream_port": 443,
+            "upstream_addresses": [str(address) for address in addresses], "upstream_port": UPSTREAM_PORT,
             "direct_upstream_tcp": "blocked"}
 
 
@@ -151,8 +157,8 @@ async def reader_observation(request):
 
 def main():
     try:
-        raw = sys.stdin.buffer.read(16385)
-        if len(raw) > 16384:
+        raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
+        if len(raw) > MAX_INPUT_BYTES:
             raise CheckFailed("input_size")
         request = json.loads(raw)
         operation = request["operation"]
@@ -186,7 +192,7 @@ def main():
                 raise CheckFailed("gateway_control")
             result = direct_upstream_denied()
         elif operation == "deny-write":
-            attempted = urllib.request.Request("http://gateway:8080", data=json.dumps({
+            attempted = urllib.request.Request(GATEWAY_URL, data=json.dumps({
                 "jsonrpc": "2.0", "id": 1, "method": "eth_sendRawTransaction", "params": [],
             }).encode(), headers={"Content-Type": "application/json"})
             try:

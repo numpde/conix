@@ -154,3 +154,44 @@ Local qualification on rootless agentic:
 This records local source-content qualification. It does not establish a new
 live Fuji run, broader runtime egress isolation or hosted exact-commit CI.
 Capture/replay and clock-driven stress replay remain outside this slice.
+
+Gateway policy and proof ownership — 15 November 2026
+----------------------------------------------------
+The follow-up DRY audit found duplicated request limits, repeated probe URLs
+and generic behavior proofs left in the Fuji suite after extraction.
+The gateway now owns one request limit for both framing and raw admission,
+and explicitly names its response limit and HTTPS port. The probe owns its
+one gateway URL, independent reply/input/address-evidence limits and TCP
+control port. Its read bound and subsequent length check use the same value.
+The repeated POST timeout assignment was removed; connection setup still
+sets the existing timeout before any handler reads.
+
+Generic configuration, protocol and provider-failure proofs now live only in
+test_rpc_gateway.py. Fuji source, launcher and probe proofs live only in
+test_fuji_gateway.py. Redundant forwarding/header/DNS successes were removed;
+finalized-tag refusal, unsafe-address refusal before sockets, credential
+non-disclosure and actual process/HTTP enforcement remain covered.
+
+Review also caught a false-positive response-size test: invalid JSON could
+raise an unrelated failure even with no byte limit. Valid JSON at the exact
+limit now succeeds; one extra byte must fail with the reply_size cause.
+Raw request-size edges use valid JSON too. The actual launcher receives an
+oversized declared request without a body, proving framing refuses before
+reading. Probe read/DNS/write controls assert their selected destination.
+
+No policy boundary was merged merely because its current value matches:
+upstream wire bytes and the probe's reserialized reply bytes remain separate
+limits. Deployment selection and independent acceptance evidence remain
+separate, as do Compose declarations and pre-effect authority admission.
+No new configuration transport, dependency, Make operation or runtime feature
+was introduced. Application Tier 0 and Tier 1 are unchanged.
+
+Independent reviews found no remaining actionable issue after corrections.
+Local rootless agentic validation passed: 212 repository checks, six input
+checks, 21 focused gateway/probe tests, and the maintained contained lane's
+156 tests with two expected skips plus both owner-initialization tests.
+Final offline test image:
+ sha256:93eb8e1a1eb0f0a4238a6a49b4a8c49d18883291e7aa314a2a24a3a848a0bdb5.
+The contained lane retired its disposable containers, SQL volume and network.
+These results qualify the changed source content; live Fuji acceptance,
+record/replay and hosted exact-commit CI were not rerun or established.

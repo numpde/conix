@@ -1,13 +1,19 @@
-"""Offline proof of the exact gateway and deployed ABI used by the live lane."""
+"""Fuji source, launcher and confined-probe contracts for the live lane."""
 
 import hashlib
+import http.client
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
+import time
 import unittest
+from unittest.mock import patch
 
 import httpx
 
-import rpc_gateway
+import fuji_rpc
 from conix.abi import compile_contract, decode_event, decode_return
 from fuji_probe import position_record
 
@@ -15,65 +21,6 @@ SOURCE = json.loads((Path(__file__).parent / "fixtures/evm/fuji_pay_to_play.json
 
 
 class FujiGatewayContracts(unittest.TestCase):
-    def request(self, method="eth_getBlockByNumber", params=None):
-        return {"jsonrpc": "2.0", "id": 1, "method": method, "params": ["latest", False] if params is None else params}
-
-    def test_read_is_forwarded_to_only_the_fixed_https_upstream(self):
-        seen = []
-
-        def upstream(request):
-            seen.append((str(request.url), json.loads(request.content)))
-            return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": "0xa869"})
-
-        request = self.request("eth_chainId", [])
-        with httpx.Client(transport=httpx.MockTransport(upstream), trust_env=False, follow_redirects=False) as client:
-            result = rpc_gateway.forward(client, rpc_gateway.admit(json.dumps(request).encode()), upstream_url=SOURCE["rpc_url"])
-        self.assertEqual(seen, [(SOURCE["rpc_url"], request)])
-        self.assertEqual(result["result"], "0xa869")
-
-    def test_writes_batches_unknown_methods_and_invalid_frames_are_refused(self):
-        invalid = [self.request("eth_sendRawTransaction", []), self.request("eth_sendTransaction", []),
-                   self.request("anvil_mine", []), self.request("debug_traceTransaction", []),
-                   [self.request()], {**self.request(), "id": True}, {**self.request(), "method": {}},
-                   {**self.request(), "upstream": "http://private/"}]
-        for value in invalid:
-            with self.subTest(kind=type(value).__name__), self.assertRaises(rpc_gateway.GatewayRefusal):
-                rpc_gateway.admit(json.dumps(value).encode())
-        for raw in (b"", b"not json", b" " * 16385):
-            with self.assertRaises(rpc_gateway.GatewayRefusal):
-                rpc_gateway.admit(raw)
-
-    def test_historical_head_is_explicit_and_live_head_is_unmodified(self):
-        request = self.request()
-        selected, absent = rpc_gateway.bounded_view(request, head_ceiling=SOURCE["initial_interval"]["end_block"])
-        self.assertFalse(absent)
-        self.assertEqual(selected["params"], [hex(SOURCE["initial_interval"]["end_block"]), False])
-        self.assertEqual(rpc_gateway.bounded_view(request, head_ceiling=None), (request, False))
-        beyond = self.request(params=[hex(SOURCE["initial_interval"]["end_block"] + 1), False])
-        self.assertTrue(rpc_gateway.bounded_view(beyond, head_ceiling=SOURCE["initial_interval"]["end_block"])[1])
-        with self.assertRaises(rpc_gateway.GatewayRefusal):
-            rpc_gateway.bounded_view(self.request(params=["finalized", False]), head_ceiling=SOURCE["initial_interval"]["end_block"])
-
-    def test_provider_prose_and_redirects_never_escape_the_gateway(self):
-        secret = "postgresql://private:do-not-print@provider/db"
-        with httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(
-            200, json={"id": 1, "error": {"code": -32000, "message": secret}},
-        )), trust_env=False) as client:
-            result = rpc_gateway.forward(client, self.request(), upstream_url=SOURCE["rpc_url"])
-        self.assertNotIn(secret, json.dumps(result))
-        with httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(
-            302, headers={"Location": "http://private/"},
-        )), follow_redirects=False, trust_env=False) as client:
-            with self.assertRaises(rpc_gateway.UpstreamFailure):
-                rpc_gateway.forward(client, self.request(), upstream_url=SOURCE["rpc_url"])
-
-    def test_oversized_reply_is_refused(self):
-        with httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(
-            200, content=b" " * (rpc_gateway.MAX_BYTES + 1),
-        )), trust_env=False) as client:
-            with self.assertRaises(rpc_gateway.UpstreamFailure):
-                rpc_gateway.forward(client, self.request(), upstream_url=SOURCE["rpc_url"])
-
     def test_built_image_contains_the_pinned_full_abi_and_decodes_real_creation(self):
         raw = (Path(__file__).parent / "fixtures/abi/fuji_pay_to_play.json").read_bytes()
         self.assertEqual(hashlib.sha256(raw).hexdigest(), SOURCE["abi_sha256"])
@@ -117,24 +64,14 @@ class FujiGatewayContracts(unittest.TestCase):
             def read(self, _limit):
                 return json.dumps({"error": {"code": -32602, "message": "private-provider-prose"}}).encode()
 
-        with patch.object(fuji_probe.urllib.request, "urlopen", return_value=Reply()):
-            with self.assertRaises(fuji_probe.ReadRejected) as caught:
-                fuji_probe.rpc("eth_getLogs", [])
+        with patch.object(fuji_probe, "GATEWAY_URL", "http://selected-gateway:8080"):
+            with patch.object(fuji_probe.urllib.request, "urlopen", return_value=Reply()) as open_url:
+                with self.assertRaises(fuji_probe.ReadRejected) as caught:
+                    fuji_probe.rpc("eth_getLogs", [])
+        self.assertEqual(open_url.call_args.args[0].full_url, "http://selected-gateway:8080")
         self.assertEqual(caught.exception.code, -32602)
         self.assertEqual(caught.exception.method, "eth_getLogs")
         self.assertNotIn("private-provider-prose", str(caught.exception))
-
-
-    def test_provider_http_rejection_retains_its_status_as_upstream_failure(self):
-        for status in (429, 503):
-            with httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(
-                status, text="private provider explanation",
-            )), trust_env=False) as client:
-                with self.assertRaises(rpc_gateway.UpstreamFailure) as caught:
-                    rpc_gateway.forward(client, self.request(), upstream_url=SOURCE["rpc_url"])
-            self.assertEqual(caught.exception.status, status)
-            self.assertNotIn("private", str(caught.exception))
-
 
     def test_probe_preserves_upstream_status_but_rejects_untrusted_prose(self):
         import io
@@ -151,6 +88,23 @@ class FujiGatewayContracts(unittest.TestCase):
         self.assertEqual(caught.exception.code, 502)
         self.assertNotIn("private", str(caught.exception))
 
+    def test_write_denial_probe_uses_the_same_selected_gateway(self):
+        """The forbidden-write control must exercise the endpoint used for reads."""
+        import io
+        from types import SimpleNamespace
+        import urllib.error
+        import fuji_probe
+
+        output = io.StringIO()
+        request = SimpleNamespace(buffer=io.BytesIO(b'{"operation":"deny-write"}'))
+        refused = urllib.error.HTTPError("http://selected-gateway:8080", 403, "private", {}, None)
+        with patch.object(fuji_probe, "GATEWAY_URL", "http://selected-gateway:8080"):
+            with patch.object(fuji_probe.urllib.request, "urlopen", side_effect=refused) as open_url:
+                with patch.object(fuji_probe.sys, "stdin", request), patch.object(fuji_probe.sys, "stdout", output):
+                    fuji_probe.main()
+        self.assertEqual(open_url.call_args.args[0].full_url, "http://selected-gateway:8080")
+        self.assertEqual(json.loads(output.getvalue()), {"transaction_method": "denied"})
+
     def test_known_source_failure_exposes_its_check_without_rpc_values(self):
         import io
         from types import SimpleNamespace
@@ -163,8 +117,6 @@ class FujiGatewayContracts(unittest.TestCase):
         self.assertIn("Check chain.", str(caught.exception))
         self.assertIn("CheckFailed", str(caught.exception))
         self.assertNotIn("0x1", str(caught.exception))
-
-
 
     def test_missing_gateway_dns_does_not_prove_direct_upstream_denial(self):
         import urllib.error
@@ -186,36 +138,31 @@ class FujiGatewayContracts(unittest.TestCase):
                 peer.__enter__.return_value = peer
                 peer.connect.side_effect = outcome
             response = io.BytesIO(json.dumps({"addresses": addresses}).encode())
-            with patch.object(fuji_probe.urllib.request, "urlopen", return_value=response):
-                with patch.object(fuji_probe.socket, "socket", side_effect=peers):
-                    if outcomes[-1] is None:
-                        with self.assertRaises(fuji_probe.CheckFailed) as caught:
-                            fuji_probe.direct_upstream_denied()
-                        self.assertEqual(caught.exception.check, "direct_egress")
-                    else:
-                        result = fuji_probe.direct_upstream_denied()
-                        self.assertEqual(result["direct_upstream_tcp"], "blocked")
-                        self.assertEqual(result["upstream_addresses"], addresses)
+            with patch.object(fuji_probe, "GATEWAY_URL", "http://selected-gateway:8080"):
+                with patch.object(fuji_probe.urllib.request, "urlopen", return_value=response) as open_url:
+                    with patch.object(fuji_probe.socket, "socket", side_effect=peers):
+                        if outcomes[-1] is None:
+                            with self.assertRaises(fuji_probe.CheckFailed) as caught:
+                                fuji_probe.direct_upstream_denied()
+                            self.assertEqual(caught.exception.check, "direct_egress")
+                        else:
+                            result = fuji_probe.direct_upstream_denied()
+                            self.assertEqual(result["direct_upstream_tcp"], "blocked")
+                            self.assertEqual(result["upstream_addresses"], addresses)
+            self.assertEqual(open_url.call_args.args[0], "http://selected-gateway:8080/upstream-addresses")
             for peer, address in zip(peers, addresses):
                 peer.connect.assert_called_once_with((address, 443))
 
-    def test_address_evidence_is_fixed_to_public_upstream_and_admitted_before_use(self):
+    def test_probe_refuses_unsafe_address_evidence_before_opening_sockets(self):
         import io
-        import socket
         from unittest.mock import patch
         import fuji_probe
-        records = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("1.1.1.1", 443))]
-        with patch.object(rpc_gateway.socket, "getaddrinfo", return_value=records) as resolve:
-            self.assertEqual(rpc_gateway.upstream_addresses(upstream_url=SOURCE["rpc_url"]), ["1.1.1.1"])
-        self.assertEqual(resolve.call_args.args[1], 443)
-        self.assertIn(resolve.call_args.args[0], SOURCE["rpc_url"])
         for addresses in ([], ["127.0.0.1"], ["private"], [1], ["1.1.1.1"] * 9):
             with patch.object(fuji_probe.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps({"addresses": addresses}).encode())):
                 with patch.object(fuji_probe.socket, "socket") as connect:
                     with self.assertRaises(fuji_probe.CheckFailed):
                         fuji_probe.direct_upstream_denied()
                     connect.assert_not_called()
-
 
     def test_unreadable_gateway_error_body_keeps_the_http_failure(self):
         import urllib.error
@@ -228,3 +175,61 @@ class FujiGatewayContracts(unittest.TestCase):
                     fuji_probe.rpc("eth_getLogs", [])
         self.assertEqual(caught.exception.code, 502)
         self.assertIsNone(caught.exception.upstream)
+
+    def test_fuji_launcher_derives_both_views_from_its_existing_source(self):
+        """Fuji owns scenario values; the transport has no Fuji defaults."""
+        for (mode, ceiling) in (("live", None), ("historical", SOURCE["initial_interval"]["end_block"])):
+            with patch.dict(os.environ, {"CONIX_FUJI_VIEW": mode}, clear=True):
+                with patch.object(fuji_rpc, "serve") as serve:
+                    fuji_rpc.main()
+            serve.assert_called_once_with(upstream_url=SOURCE["rpc_url"], head_ceiling=ceiling)
+        for mode in (None, "unknown"):
+            environment = {} if mode is None else {"CONIX_FUJI_VIEW": mode}
+            with patch.dict(os.environ, environment, clear=True), patch.object(fuji_rpc, "serve") as serve:
+                with self.assertRaises(SystemExit):
+                    fuji_rpc.main()
+                serve.assert_not_called()
+
+    def test_container_entrypoint_enforces_write_and_request_size_admission(self):
+        """The real launcher must reject forbidden requests before contacting upstream."""
+        launcher = Path(__file__).parent / "fuji_rpc.py"
+        process = subprocess.Popen(
+            [sys.executable, "-E", "-s", str(launcher)],
+            env={"CONIX_FUJI_VIEW": "historical"}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        try:
+            with httpx.Client(trust_env=False, timeout=0.2) as client:
+                deadline = time.monotonic() + 5
+                while True:
+                    self.assertIsNone(process.poll(), "Gateway launcher exited before becoming ready.")
+                    try:
+                        response = client.get("http://127.0.0.1:8080/healthz")
+                        break
+                    except httpx.RequestError:
+                        self.assertLess(time.monotonic(), deadline, "Gateway launcher did not become ready.")
+                        time.sleep(0.05)
+                self.assertEqual(response.json(), {"view": "historical"})
+                response = client.post("http://127.0.0.1:8080/", json={
+                    "jsonrpc": "2.0", "id": 1, "method": "eth_sendRawTransaction", "params": ["private"],
+                })
+                self.assertEqual(response.status_code, 403)
+                self.assertEqual(response.json()["origin"], "admission")
+                self.assertNotIn("private", response.text)
+            # Send no body: reading before checking the declared size would stall.
+            connection = http.client.HTTPConnection("127.0.0.1", 8080, timeout=1)
+            try:
+                connection.putrequest("POST", "/")
+                connection.putheader("Content-Length", str(16 * 1024 + 1))
+                connection.endheaders()
+                response = connection.getresponse()
+                self.assertEqual(response.status, 403)
+                self.assertEqual(json.loads(response.read())["origin"], "admission")
+            finally:
+                connection.close()
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
