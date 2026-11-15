@@ -1,0 +1,62 @@
+{
+  "kind": "synthetic_acquisition_workloads",
+  "assumptions": [
+    "Numbered EVM block arrivals, not subblocks or preconfirmations",
+    "Serial fixed RPC costs; no SQL, retry or scheduling cost",
+    "Synthetic selected OwnershipTransferred logs, not measured contract activity"
+  ],
+  "cases": [
+    {
+      "id": "quiet-fast-arrivals-slow-rpc",
+      "selectors": 17,
+      "blocks": 16,
+      "initial_backlog": 32,
+      "block_interval_ms": 200,
+      "header_ms": 250,
+      "log_ms": 250,
+      "transactions_per_block": 0,
+      "events_per_emitting_block": 0,
+      "emit_every_n_blocks": 1,
+      "expected_model": "rpc_bottleneck"
+    },
+    {
+      "id": "quiet-slow-arrivals",
+      "selectors": 1,
+      "blocks": 16,
+      "initial_backlog": 32,
+      "block_interval_ms": 12000,
+      "header_ms": 50,
+      "log_ms": 50,
+      "transactions_per_block": 0,
+      "events_per_emitting_block": 0,
+      "emit_every_n_blocks": 1,
+      "expected_model": "rpc_headroom"
+    },
+    {
+      "id": "bursts-with-unselected-transactions",
+      "selectors": 17,
+      "blocks": 16,
+      "initial_backlog": 32,
+      "block_interval_ms": 200,
+      "header_ms": 1,
+      "log_ms": 2,
+      "transactions_per_block": 64,
+      "events_per_emitting_block": 8,
+      "emit_every_n_blocks": 4,
+      "expected_model": "rpc_headroom"
+    },
+    {
+      "id": "model-exceeds-operation-deadline",
+      "selectors": 17,
+      "blocks": 4,
+      "initial_backlog": 32,
+      "block_interval_ms": 200,
+      "header_ms": 2000,
+      "log_ms": 2000,
+      "transactions_per_block": 0,
+      "events_per_emitting_block": 0,
+      "emit_every_n_blocks": 1,
+      "expected_model": "rpc_deadline_exceeded"
+    }
+  ]
+}

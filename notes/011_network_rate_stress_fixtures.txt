@@ -1,0 +1,48 @@
+Measured network rates and offline acquisition stress
+=====================================================
+
+The first question is the cost of observing each numbered EVM block even
+when selected contracts emit no events. A stopped-process lag observation
+cannot answer whether a running indexer keeps pace.
+
+Keep three authorities separate:
+- Public source snapshot: the reviewed dapp32 network catalog's keyless
+  endpoints, chain IDs, documentation and explicitly retired entries.
+- Observations: source-reported block identities/timestamps, bounded method
+  response sizes and endpoint latency, dated and bound to exact heights.
+- Synthetic workloads: declared selector counts, selected-event patterns,
+  backlog and latency assumptions. These are not measured contract activity.
+
+The stand-in executes the original Writer.advance_one and original streamed
+RPC decoder. Its recording journal is a test sink, not PostgreSQL, and its
+request-cost clock is an explicit model, not patched production time.
+Measure real local scanner/decode elapsed time separately. Modelled serial
+RPC capacity is an upper bound before SQL and scheduling costs, not an
+end-to-end throughput certificate. Real timeout behavior remains owned by
+the existing transport tests; a model exceeding configured deadlines must
+not report usable capacity.
+
+Use the existing contained test lane; no scanner, journal, reader or
+recovery policy changes. Acquisition strategies remain owned by Note 005.
+Online sampling is explicit and separate from offline CI, and cannot mutate
+committed fixtures automatically. Networked workers receive public reviewed
+inputs only, no repository bind or credentials. Admit sampled output before
+promoting a bounded snapshot to JSON test data.
+
+Start with synthetic quiet, sparse and burst cases, then measure current and
+historical numbered-block rates for the existing major mainnet/testnet set.
+Historical height fractions are positions, not named protocol eras: retain
+actual timestamps, and document protocol changes separately. Wide-span
+endpoint deltas measure average block-number growth; small contiguous tails
+show timestamp granularity and sampled burst behavior. Missing, throttled,
+pruned or retired evidence is unavailable, never zero traffic.
+
+Whole-second timestamps cannot resolve subsecond interarrival quantiles.
+Mini-blocks, Flashblocks, acceptance/execution and settled views require
+explicit provenance and must not silently replace the numbered EVM stream.
+Sparse transaction counts do not establish chain-wide TPS or selected-event
+rates. The first workload model uses explicitly labelled synthetic selected
+logs; broad network load and empty-selector latency remain separate facts.
+
+Implement on a branch from tier-0 and qualify before upward integration.
+Keep main unchanged; no production activation, signing or sibling edits.
