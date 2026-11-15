@@ -313,3 +313,16 @@ Scope remains same-Engine immutable Reader preparation and one-shot live
 source/role admission. Consumers own their process lifetimes. This does not
 activate production, create a Reader daemon or cross-host service, start
 T1-C, or qualify arbitrary Engines or providers.
+
+Network-rate observation
+------------------------
+network/rates/measure requires DOCKER_CONTEXT and an immutable test-runner
+RUNNER_IMAGE. It performs a network-disabled source-snapshot hash check before
+granting egress on one newly owned bridge to the read-only measurement worker.
+The worker contacts only its reviewed keyless HTTPS sources, requests numbered
+headers and a fixed address-scoped Transfer selector, and performs no chain or
+SQL mutations. No host bind, credential, wallet, socket or host port is granted.
+Exact ownership precedes retirement; uncertain cleanup prevents final receipt
+publication. Private results remain under out/network-rate-measurements/.
+The operation does not edit committed fixtures. Offline test/indexer/run
+executes the original-scanner stand-in against committed JSON workload data.

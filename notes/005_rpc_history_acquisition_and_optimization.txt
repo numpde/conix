@@ -323,3 +323,20 @@ Further reading (source-specific technical details, not additional rules):
   Ethereum JSON-RPC eth_getLogs and block/transaction reads
     https://ethereum.org/developers/docs/apis/json-rpc/
   Existing Conix endpoint observations: Note 004 section 7.
+
+8. Rate research and stand-in stress fixtures
+---------------------------------------------
+Note 011 owns the reproducible measurement/workload plan. Reviewed public
+source endpoints, documented cadence eras, observed numbered-block windows,
+and synthetic acquisition workloads are separate JSON fixtures under
+tests/fixtures/evm/. Protocol limits or preview streams never substitute for
+measured numbered-block arrivals. Historical positions retain timestamps;
+height percentages are not dates or named upgrade eras.
+
+The offline stand-in calls the original Writer.advance_one and RPC decoder.
+Its recording publication sink and modelled serial request costs are test
+assumptions, not an alternate journal or a PostgreSQL throughput benchmark.
+Measured local scanner time, reference empty-selector latency, modeled RPC
+capacity and real end-to-end throughput are distinct results. Modelled costs
+beyond configured deadlines cannot establish usable capacity. No acquisition
+optimization or new evidence form is authorized by these fixtures.

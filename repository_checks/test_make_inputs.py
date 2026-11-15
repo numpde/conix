@@ -15,6 +15,7 @@ import unittest
 ROOT = Path(__file__).resolve().parent.parent
 
 PARAMETERS = {
+    "network/rates/measure": "RUNNER_IMAGE",
     "image/python-base/acquire": "DOCKER_CONTEXT",
     "image/postgres/acquire": "DOCKER_CONTEXT",
     "image/dockerfile-frontend/acquire": "DOCKER_CONTEXT",

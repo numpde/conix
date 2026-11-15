@@ -8,7 +8,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {
-    "help",
+    "help", "network/rates/measure",
     "test/repository/run", "repository/inputs/check",
     "image/python-base/acquire", "image/postgres/acquire",
     "image/dockerfile-frontend/acquire", "image/foundry/acquire",

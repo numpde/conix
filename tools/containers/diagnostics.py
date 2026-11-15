@@ -12,7 +12,7 @@ from pathlib import Path
 import traceback
 
 PREFIX = b"CONIX-FAILURE-V1 "
-PHASES = frozenset({"staging", "verification", "staged_inputs", "advance", "reader_check", "operator", "schema_init"})
+PHASES = frozenset({"staging", "verification", "staged_inputs", "advance", "reader_check", "operator", "schema_init", "network_measure"})
 CAUSES = frozenset({
     "InputError", "OSError", "CommitOutcomeUnknown",
     "BranchConflict", "HistoryConflict", "StorageUnavailable", "WriterBusy",

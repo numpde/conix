@@ -1,0 +1,378 @@
+{
+  "kind": "reviewed_public_network_rate_sources",
+  "catalog": {
+    "repository": "https://github.com/numpde/dapp32",
+    "revision": "a146b5ec272e10108dc2900695d02e7ba2b5a846",
+    "path": "js/packages/cam-viewer/src/rpc-catalog.json",
+    "sha256": "f466729ca82cf8f8c7c9c8ab8d2bc869e2e405f224db38b5ebb138f4f103ee2b"
+  },
+  "sampling": {
+    "window_span_blocks": 8192,
+    "contiguous_tail_blocks": 8,
+    "height_positions_percent": [
+      100,
+      90,
+      50,
+      10
+    ],
+    "request_timeout_seconds": 8,
+    "network_budget_seconds": 150,
+    "workers": 4,
+    "response_limit_bytes": 4194304
+  },
+  "selector_probe": {
+    "address": "0x0000000000000000000000000000000000000000",
+    "topic0": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+    "meaning": "Address-scoped Transfer query at a synthetic reference address; not a deployed-contract activity measurement"
+  },
+  "networks": [
+    {
+      "id": "ethereum-mainnet",
+      "name": "Ethereum",
+      "chain_id": 1,
+      "rpc_url": "https://ethereum-rpc.publicnode.com",
+      "retired": false,
+      "references": [
+        "https://ethereum.org/en/developers/docs/networks/",
+        "https://ethereum.publicnode.com/",
+        "https://www.alchemy.com/docs/reference/node-supported-chains"
+      ],
+      "note": null
+    },
+    {
+      "id": "ethereum-sepolia",
+      "name": "Sepolia",
+      "chain_id": 11155111,
+      "rpc_url": "https://ethereum-sepolia-rpc.publicnode.com",
+      "retired": false,
+      "references": [
+        "https://ethereum.org/en/developers/docs/networks/",
+        "https://ethereum.publicnode.com/",
+        "https://www.alchemy.com/docs/reference/node-supported-chains"
+      ],
+      "note": "Application testnet. Hoodi is maintained separately for validator, staking, and protocol testing."
+    },
+    {
+      "id": "base-mainnet",
+      "name": "Base",
+      "chain_id": 8453,
+      "rpc_url": "https://base-rpc.publicnode.com",
+      "retired": false,
+      "references": [
+        "https://docs.base.org/get-started/connect-to-base",
+        "https://base.publicnode.com/",
+        "https://www.alchemy.com/docs/reference/node-supported-chains"
+      ],
+      "note": null
+    },
+    {
+      "id": "base-sepolia",
+      "name": "Base Sepolia",
+      "chain_id": 84532,
+      "rpc_url": "https://base-sepolia-rpc.publicnode.com",
+      "retired": false,
+      "references": [
+        "https://docs.base.org/get-started/connect-to-base",
+        "https://base.publicnode.com/",
+        "https://www.alchemy.com/docs/reference/node-supported-chains"
+      ],
+      "note": null
+    },
+    {
+      "id": "arbitrum-one",
+      "name": "Arbitrum One",
+      "chain_id": 42161,
+      "rpc_url": "https://arb1.arbitrum.io/rpc",
+      "retired": false,
+      "references": [
+        "https://docs.arbitrum.io/chain-info",
+        "https://www.alchemy.com/docs/reference/node-supported-chains"
+      ],
+      "note": null
+    },
+    {
+      "id": "arbitrum-sepolia",
+      "name": "Arbitrum Sepolia",
+      "chain_id": 421614,
+      "rpc_url": "https://sepolia-rollup.arbitrum.io/rpc",
+      "retired": false,
+      "references": [
+        "https://docs.arbitrum.io/chain-info",
+        "https://www.alchemy.com/docs/reference/node-supported-chains"
+      ],
+      "note": null
+    },
+    {
+      "id": "op-mainnet",
+      "name": "OP Mainnet",
+      "chain_id": 10,
+      "rpc_url": "https://mainnet.optimism.io",
+      "retired": false,
+      "references": [
+        "https://docs.optimism.io/op-mainnet/network-information/connecting-to-op",
+        "https://www.alchemy.com/docs/reference/node-supported-chains"
+      ],
+      "note": null
+    },
+    {
+      "id": "op-sepolia",
+      "name": "OP Sepolia",
+      "chain_id": 11155420,
+      "rpc_url": "https://sepolia.optimism.io",
+      "retired": false,
+      "references": [
+        "https://docs.optimism.io/op-mainnet/network-information/connecting-to-op",
+        "https://www.alchemy.com/docs/reference/node-supported-chains"
+      ],
+      "note": null
+    },
+    {
+      "id": "polygon-mainnet",
+      "name": "Polygon PoS",
+      "chain_id": 137,
+      "rpc_url": "https://polygon.drpc.org",
+      "retired": false,
+      "references": [
+        "https://docs.polygon.technology/pos/reference/rpc-endpoints",
+        "https://www.alchemy.com/docs/reference/node-supported-chains"
+      ],
+      "note": null
+    },
+    {
+      "id": "polygon-amoy",
+      "name": "Amoy",
+      "chain_id": 80002,
+      "rpc_url": "https://polygon-amoy.drpc.org",
+      "retired": false,
+      "references": [
+        "https://docs.polygon.technology/pos/reference/rpc-endpoints",
+        "https://www.alchemy.com/docs/reference/node-supported-chains"
+      ],
+      "note": null
+    },
+    {
+      "id": "bsc-mainnet",
+      "name": "BNB Smart Chain",
+      "chain_id": 56,
+      "rpc_url": "https://bsc-dataseed.bnbchain.org",
+      "retired": false,
+      "references": [
+        "https://docs.bnbchain.org/bnb-opbnb/get-started/wallet-configuration/"
+      ],
+      "note": null
+    },
+    {
+      "id": "bsc-testnet",
+      "name": "BSC Testnet",
+      "chain_id": 97,
+      "rpc_url": "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      "retired": false,
+      "references": [
+        "https://docs.bnbchain.org/bnb-opbnb/get-started/wallet-configuration/"
+      ],
+      "note": "This documented RPC uses port 8545; the repository release proxy accepts HTTPS on port 443 only. Use a compatible provider for release commands."
+    },
+    {
+      "id": "avalanche-mainnet",
+      "name": "Avalanche C-Chain",
+      "chain_id": 43114,
+      "rpc_url": "https://api.avax.network/ext/bc/C/rpc",
+      "retired": false,
+      "references": [
+        "https://build.avax.network/docs/primary-network"
+      ],
+      "note": null
+    },
+    {
+      "id": "avalanche-fuji",
+      "name": "Fuji",
+      "chain_id": 43113,
+      "rpc_url": "https://api.avax-test.network/ext/bc/C/rpc",
+      "retired": false,
+      "references": [
+        "https://build.avax.network/docs/primary-network"
+      ],
+      "note": null
+    },
+    {
+      "id": "opbnb-mainnet",
+      "name": "opBNB",
+      "chain_id": 204,
+      "rpc_url": "https://opbnb-mainnet-rpc.bnbchain.org",
+      "retired": false,
+      "references": [
+        "https://docs.bnbchain.org/bnb-opbnb/get-started/network-info/"
+      ],
+      "note": null
+    },
+    {
+      "id": "opbnb-testnet",
+      "name": "opBNB Testnet",
+      "chain_id": 5611,
+      "rpc_url": "https://opbnb-testnet-rpc.bnbchain.org",
+      "retired": false,
+      "references": [
+        "https://docs.bnbchain.org/bnb-opbnb/get-started/network-info/"
+      ],
+      "note": null
+    },
+    {
+      "id": "linea-mainnet",
+      "name": "Linea",
+      "chain_id": 59144,
+      "rpc_url": "https://rpc.linea.build",
+      "retired": false,
+      "references": [
+        "https://docs.linea.build/get-started/build/network-info/"
+      ],
+      "note": null
+    },
+    {
+      "id": "linea-sepolia",
+      "name": "Linea Sepolia",
+      "chain_id": 59141,
+      "rpc_url": "https://rpc.sepolia.linea.build",
+      "retired": false,
+      "references": [
+        "https://docs.linea.build/get-started/build/network-info/"
+      ],
+      "note": null
+    },
+    {
+      "id": "megaeth-mainnet",
+      "name": "MegaETH",
+      "chain_id": 4326,
+      "rpc_url": "https://mainnet.megaeth.com/rpc",
+      "retired": false,
+      "references": [
+        "https://docs.megaeth.com/user-guide/connect"
+      ],
+      "note": null
+    },
+    {
+      "id": "megaeth-testnet",
+      "name": "MegaETH Testnet",
+      "chain_id": 6343,
+      "rpc_url": "https://carrot.megaeth.com/rpc",
+      "retired": false,
+      "references": [
+        "https://docs.megaeth.com/user-guide/connect"
+      ],
+      "note": null
+    },
+    {
+      "id": "monad-mainnet",
+      "name": "Monad",
+      "chain_id": 143,
+      "rpc_url": "https://rpc.monad.xyz",
+      "retired": false,
+      "references": [
+        "https://docs.monad.xyz/developer-essentials/network-information",
+        "https://docs.monad.xyz/developer-essentials/testnet"
+      ],
+      "note": null
+    },
+    {
+      "id": "monad-testnet",
+      "name": "Monad Testnet",
+      "chain_id": 10143,
+      "rpc_url": "https://testnet-rpc.monad.xyz",
+      "retired": false,
+      "references": [
+        "https://docs.monad.xyz/developer-essentials/network-information",
+        "https://docs.monad.xyz/developer-essentials/testnet"
+      ],
+      "note": null
+    },
+    {
+      "id": "zksync-mainnet",
+      "name": "ZKsync Era",
+      "chain_id": 324,
+      "rpc_url": "https://mainnet.era.zksync.io",
+      "retired": false,
+      "references": [
+        "https://docs.zksync.io/zksync-network/zksync-era/network-details"
+      ],
+      "note": "EraVM has chain-specific execution and tooling differences; check ZKsync's compatibility documentation before deploying."
+    },
+    {
+      "id": "zksync-sepolia",
+      "name": "ZKsync Era Sepolia",
+      "chain_id": 300,
+      "rpc_url": "https://sepolia.era.zksync.dev",
+      "retired": false,
+      "references": [
+        "https://docs.zksync.io/zksync-network/zksync-era/network-details"
+      ],
+      "note": "EraVM has chain-specific execution and tooling differences; check ZKsync's compatibility documentation before deploying."
+    },
+    {
+      "id": "gnosis-mainnet",
+      "name": "Gnosis",
+      "chain_id": 100,
+      "rpc_url": "https://rpc.gnosischain.com",
+      "retired": false,
+      "references": [
+        "https://docs.gnosischain.com/about/networks/mainnet",
+        "https://docs.gnosischain.com/about/networks/chiado"
+      ],
+      "note": null
+    },
+    {
+      "id": "gnosis-chiado",
+      "name": "Chiado",
+      "chain_id": 10200,
+      "rpc_url": "https://rpc.chiadochain.net",
+      "retired": false,
+      "references": [
+        "https://docs.gnosischain.com/about/networks/mainnet",
+        "https://docs.gnosischain.com/about/networks/chiado"
+      ],
+      "note": null
+    },
+    {
+      "id": "celo-mainnet",
+      "name": "Celo",
+      "chain_id": 42220,
+      "rpc_url": "https://forno.celo.org",
+      "retired": false,
+      "references": [
+        "https://docs.celo.org/learn/network/overview"
+      ],
+      "note": null
+    },
+    {
+      "id": "celo-sepolia",
+      "name": "Celo Sepolia",
+      "chain_id": 11142220,
+      "rpc_url": "https://forno.celo-sepolia.celo-testnet.org",
+      "retired": false,
+      "references": [
+        "https://docs.celo.org/learn/network/overview"
+      ],
+      "note": null
+    },
+    {
+      "id": "scroll-mainnet",
+      "name": "Scroll",
+      "chain_id": 534352,
+      "rpc_url": "https://rpc.scroll.io",
+      "retired": false,
+      "references": [
+        "https://docs.scroll.io/en/developers/scroll-contracts/"
+      ],
+      "note": null
+    },
+    {
+      "id": "scroll-sepolia",
+      "name": "Scroll Sepolia",
+      "chain_id": 534351,
+      "rpc_url": null,
+      "retired": true,
+      "references": [
+        "https://docs.scroll.io/en/developers/scroll-contracts/"
+      ],
+      "note": "Shut down after 2026-07-30; RPC and bridge endpoints were removed. No replacement public testnet is listed on the cited network page."
+    }
+  ]
+}

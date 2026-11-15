@@ -1,0 +1,20 @@
+{
+  "kind": "documented_rate_eras_not_measurements",
+  "checked_on": "2026-11-15",
+  "scope": "Primary-source context; observations remain authoritative for sampled provider cadence. Network-generic descriptions do not establish identical mainnet/testnet behavior.",
+  "references": [
+    {"family":"ethereum","numbered_block_interval_ms":12000,"basis":"Proof-of-stake slot cadence; missed slots can increase observed spacing","url":"https://ethereum.org/developers/docs/blocks/","historical_note":"Pre-Merge proof-of-work timing was variable; do not project the current slot cadence backward."},
+    {"family":"base","era":"pre-denim","numbered_block_interval_ms":2000,"auxiliary_stream_interval_ms":200,"auxiliary_stream":"Flashblocks were previews within a numbered block","url":"https://www.base.org/blog/flashblocks-deep-dive"},
+    {"family":"base","era":"denim","numbered_block_interval_ms":200,"mainnet_activation_utc":"2026-11-05T18:00:00Z","sepolia_activation_utc":"2026-10-21T18:00:00Z","timestamp_note":"Whole-second timestamp remains; optional timestampMs carries subsecond information. Flashblocks are retired.","url":"https://docs.base.org/upgrades/denim/200ms-blocks"},
+    {"family":"megaeth","numbered_block_interval_ms":1000,"auxiliary_stream_interval_ms":10,"auxiliary_stream":"Mini-blocks use a separate stream and height; not the standard EVM numbered-block cadence","url":"https://docs.megaeth.com/mini-block"},
+    {"family":"monad","era":"v0.15.1-MIP-12","numbered_block_interval_ms":300,"previous_numbered_block_interval_ms":400,"mainnet_activation_round":89758000,"activation_note":"Round is the activation basis; release estimates July 23, 2026 14:30 UTC","url":"https://github.com/category-labs/monad-bft/releases/tag/v0.15.1"},
+    {"family":"arbitrum","kind":"demand-dependent","minimum_default_spacing_ms":250,"loaded_numbered_blocks_per_second_range":[4,8],"note":"Sequencer rounds and actual blocks differ; empty demand need not produce a block. No historical PGA activation date verified.","url":"https://developer.arbitrum.io/how-arbitrum-works/deep-dives/sequencer-transaction-flow"},
+    {"family":"bsc","era":"lorentz","previous_numbered_block_interval_ms":3000,"numbered_block_interval_ms":1500,"mainnet_activation_utc":"2025-04-29T05:05:00Z","url":"https://docs.bnbchain.org/announce/lorentz-bsc/"},
+    {"family":"bsc","era":"maxwell","numbered_block_interval_ms":750,"mainnet_activation_utc":"2025-06-30T02:30:00Z","url":"https://docs.bnbchain.org/announce/maxwell-bsc/"},
+    {"family":"bsc","era":"fermi","numbered_block_interval_ms":450,"mainnet_activation_utc":"2026-01-14T02:30:00Z","testnet_activation_utc":"2025-11-10T02:25:00Z","url":"https://docs.bnbchain.org/announce/fermi-bsc/"},
+    {"family":"opbnb","era":"volta","previous_numbered_block_interval_ms":1000,"numbered_block_interval_ms":500,"mainnet_activation_utc":"2025-04-21T03:00:00Z","testnet_activation_utc":"2025-04-02T03:00:00Z","url":"https://docs.bnbchain.org/announce/volta-opbnb/"},
+    {"family":"opbnb","era":"fourier","numbered_block_interval_ms":250,"mainnet_activation_utc":"2026-01-07T03:00:00Z","testnet_activation_utc":"2025-11-06T03:00:00Z","url":"https://docs.bnbchain.org/announce/fourier-opbnb/"},
+    {"family":"avalanche","era":"granite","kind":"dynamic-minimum-spacing","mainnet_activation_utc":"2025-11-19T16:00:00Z","fuji_activation_utc":"2025-10-29T15:00:00Z","note":"Dynamic minimum delay replaces the previous approximately 2-second target. A 1ms protocol lower bound is not an observed block rate.","url":"https://build.avax.network/docs/acps/226-dynamic-minimum-block-times","activation_url":"https://build.avax.network/blog/granite-upgrade"},
+    {"family":"avalanche","era":"helicon","mainnet_activation_utc":"2026-09-22T15:00:00Z","fuji_activation_utc":"2026-07-28T15:00:00Z","note":"Accepted, executed and settled views differ. Preserve the sampled method/tag rather than treating them as equivalent.","url":"https://build.avax.network/docs/primary-network/coreth-architecture","rpc_url":"https://build.avax.network/docs/rpcs/c-chain"}
+  ]
+}

@@ -437,7 +437,7 @@ def main():
         "wheelhouse/check", "wheelhouse/acquire",
         "image/indexer/build", "image/test-runner/build", "image/evm-test-runner/build",
         "image/indexer/check", "image/evm-test-runner/check",
-        "test/indexer/run", "test/deployment/acceptance/run", "test/indexer/acceptance/fuji/run", "test/input-staging/run",
+        "network/rates/measure", "test/indexer/run", "test/deployment/acceptance/run", "test/indexer/acceptance/fuji/run", "test/input-staging/run",
         "history/block/advance",
         "deployment/inputs/stage", "deployment/inputs/remove",
         "deployment/config/init", "deployment/prepare", "deployment/database/schema/init",
@@ -524,6 +524,11 @@ def main():
                 wheel_pool = SharedWheelhouse(docker, image_manifest, options.wheelhouse)
                 selected_wheels = wheel_pool.check() if options.action.endswith("/check") else wheel_pool.acquire()
                 print(f"Verified {len(selected_wheels)} hash-locked artifacts in WHEELHOUSE.", file=sys.stderr)
+
+            elif options.action == "network/rates/measure":
+                from tools.fixtures.network_rates import collect
+
+                collect(docker, options.runner_image or "")
 
             elif options.action == "test/indexer/run":
                 docker.test(options.runner_image or "", image_manifest)
