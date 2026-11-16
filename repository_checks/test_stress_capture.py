@@ -1,14 +1,18 @@
 """Stress capture admission, timing and retirement are testable without Docker."""
 
+from contextlib import nullcontext
 from copy import deepcopy
 import json
 from pathlib import Path
+import tempfile
 import subprocess
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from tools.containers.client import OperationError
+from tools.fixtures.process import CampaignError
+import tools.fixtures.stress_capture as stress_capture
 from tools.fixtures.stress_capture import (
     OWNER_LABEL, StressCapture, selected_source, supplied,
 )
@@ -205,6 +209,90 @@ class CaptureAdmissionContracts(unittest.TestCase):
         )
         fixture.owned_volume.assert_called_once_with("pgdata")
         fixture.compose_run.assert_called_once()
+
+
+
+class CaptureFailureReportingContracts(unittest.TestCase):
+    """Report admitted primary failure facts separately from resource cleanup."""
+
+    def run_failed_capture(self, *, primary=None, phase="Stress deployment/up", cleanup=()):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            private = base / "private"
+            private.mkdir()
+            run = Mock()
+            run.folder = private
+            run.phase = phase
+            run.records = {"capture": "unconfirmed", "export": {}, "cleanup": []}
+            run.fixture_attempted = False
+            run.runner = None
+            run.retired = set()
+            run.child.side_effect = [b"a" * 40 + b"\n", b""]
+            run.observe.side_effect = primary
+            run.cleanup.return_value = list(cleanup)
+            if primary is None:
+                run.complete.side_effect = lambda: run.records.update(capture="complete")
+            shown = []
+            config = SimpleNamespace(context="agentic", wheelhouse="",
+                                     **vars(parameters()))
+            with (
+                patch.object(stress_capture, "ROOT", base),
+                patch.object(stress_capture.os, "geteuid", return_value=1000),
+                patch.object(stress_capture, "protect_source_profile"),
+                patch.object(stress_capture, "selected_source",
+                             return_value=({}, {"docker_context": "agentic", "wheelhouse": "/pool"}, b"", b"")),
+                patch.object(stress_capture, "campaign_lock", return_value=nullcontext()),
+                patch.object(stress_capture, "cancellation", return_value=nullcontext()),
+                patch.object(stress_capture, "select_endpoint", return_value="unix:///selected"),
+                patch.object(stress_capture, "StressCapture", return_value=run),
+                patch.object(stress_capture, "progress", side_effect=shown.append),
+            ):
+                with self.assertRaises(OperationError) as caught:
+                    stress_capture.run_capture(
+                        config,
+                        client_cls=lambda *_args: SimpleNamespace(require_rootless_engine=lambda: None),
+                        pinned_images=lambda: {},
+                    )
+            manifest = json.loads((private / "manifest.json").read_text())
+            return str(caught.exception), shown, manifest, caught.exception.__cause__
+
+    def test_subprocess_failure_reports_original_phase_cause_and_exit_last(self):
+        first = CampaignError("PRIVATE_PROVIDER_BODY", exit_code=17)
+        message, terminal, manifest, cause = self.run_failed_capture(
+            primary=first, phase="Stress deployment/up",
+            cleanup=("fixture: OSError",),
+        )
+        self.assertIn("phase=Stress deployment/up", message)
+        self.assertIn("cause=CampaignError", message)
+        self.assertIn("exit=17", message)
+        self.assertNotIn("PRIVATE_PROVIDER_BODY", message)
+        self.assertIs(cause, first)
+        self.assertEqual(manifest["primary_failure"], "CampaignError")
+        self.assertTrue(any("cleanup" in line.lower() and "OSError" in line for line in terminal))
+        self.assertEqual(manifest["failed_phase"], "Stress deployment/up")
+
+    def test_admitted_producer_cause_survives_without_stderr_prose(self):
+        diagnostic = (b'CONIX-FAILURE-V1 '
+                      b'{"phase":"schema_init","cause":"StorageUnavailable","effect":"unconfirmed"}')
+        first = OperationError("PRIVATE_DATABASE_DETAIL", exit_code=7, diagnostic=diagnostic)
+        message, _, _, cause = self.run_failed_capture(
+            primary=first, phase="Stress deployment/database/schema/init",
+        )
+        self.assertIn("phase=Stress deployment/database/schema/init", message)
+        self.assertIn("cause=StorageUnavailable", message)
+        self.assertIn("exit=7", message)
+        self.assertNotIn("PRIVATE_DATABASE_DETAIL", message)
+        self.assertIs(cause, first)
+
+    def test_cleanup_only_has_clear_phase_and_cause(self):
+        message, terminal, manifest, cause = self.run_failed_capture(
+            cleanup=("fixture: OSError",),
+        )
+        self.assertIn("phase=cleanup", message)
+        self.assertIn("OSError", message)
+        self.assertIn("cleanup", terminal[-1].lower())
+        self.assertEqual(manifest["cleanup"], ["fixture: OSError"])
+        self.assertIsNone(cause)
 
 
 if __name__ == "__main__":
