@@ -139,6 +139,7 @@ class StressCapture:
         self.environment.update({
             "CONIX_STRESS_OWNER": self.owner,
             "CONIX_POSTGRES_IMAGE": images["postgres"],
+            "CONIX_FOUNDRY_IMAGE": images["foundry"],
             "CONIX_STRESS_DURATION_SECONDS": str(selection["stress_duration_seconds"]),
             "CONIX_STRESS_CADENCE_MS": str(selection["stress_poll_cadence_ms"]),
             "CONIX_STRESS_MAX_GAP_MS": str(selection["stress_max_gap_ms"]),
