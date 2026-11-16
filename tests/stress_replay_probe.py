@@ -18,6 +18,7 @@ import psycopg
 
 from conix.catalog import prepare_catalog
 from conix.reader import open_reader
+from conix.process_diagnostic import emit_unexpected
 from stress_replay import ReplayEvidence, require, selected_event
 
 EVIDENCE = Path("/evidence")
@@ -63,7 +64,7 @@ async def verify_reader(evidence, catalog, dsn):
                            rpc_url=catalog.chain.rpc_url) as reader:
         checkpoint = await reader.checkpoint()
         require(checkpoint is not None and checkpoint.block.number == evidence.final
-                and checkpoint.block.hash.hex() == evidence.headers[evidence.final]["hash"][2:]
+                and checkpoint.block.hash.hex() == evidence.headers[evidence.final]["hash"][2:].lower()
                 and checkpoint.source_id == evidence.catalog.source_id
                 and checkpoint.history_start == evidence.start,
                 "Original Reader did not observe the admitted complete checkpoint.")
@@ -97,6 +98,18 @@ async def verify_reader(evidence, catalog, dsn):
                 "source_id": checkpoint.source_id.hex(),
                 "generation": str(checkpoint.generation),
                 "events": sum(observed.values()), "distinct_raw_events": len(observed)}
+
+
+async def verify_before_deadline(evidence, catalog, dsn, *, remaining_seconds):
+    """The final Reader proof shares the catch-up grant with publication."""
+    if remaining_seconds <= 0:
+        raise TimeoutError("Reader verification has no remaining catch-up time.")
+    deadline = time.monotonic() + remaining_seconds
+    async with asyncio.timeout(remaining_seconds):
+        verified = await verify_reader(evidence, catalog, dsn)
+    if time.monotonic() >= deadline:
+        raise TimeoutError("Reader verification exceeded the catch-up deadline.")
+    return verified
 
 
 def row(state, checkpoint, start):
@@ -148,6 +161,7 @@ def observe(*, cadence_ms, catchup_seconds, start_wait_seconds):
         "reader": None, "failure": None,
     }
     report = RESULTS / "result.json"
+    primary = None
     try:
         ready = service()
         require(not ready["released"] and ready["elapsed_ns"] == 0
@@ -173,6 +187,7 @@ def observe(*, cadence_ms, catchup_seconds, start_wait_seconds):
         while True:
             before = service()
             checkpoint = progress(dsn)
+            status_requested_at = time.monotonic()
             state = service()
             require(checkpoint["source_id"] == catalog.source_id.hex()
                     and checkpoint["blocked"] is None,
@@ -186,28 +201,43 @@ def observe(*, cadence_ms, catchup_seconds, start_wait_seconds):
                 result["catchup"].append(measured)
             if checkpoint["height"] is not None and result["first_checkpoint_ns"] is None:
                 result["first_checkpoint_ns"] = state["elapsed_ns"]
-            if state["frozen"] and checkpoint["height"] == evidence.final:
-                result["reader"] = asyncio.run(verify_reader(evidence, catalog, dsn))
-                result["status"] = "complete"
-                break
-            if state["elapsed_ns"] > final_deadline:
+            if state["elapsed_ns"] >= final_deadline:
                 result["status"] = "incomplete_catchup"
                 result["failure"] = "catchup_deadline"
+                break
+            if state["frozen"] and checkpoint["height"] == evidence.final:
+                # Charge the whole control roundtrip conservatively. No
+                # assumption about shared container monotonic clocks is needed.
+                remaining = ((final_deadline - state["elapsed_ns"]) / 1000000000
+                             - (time.monotonic() - status_requested_at))
+                try:
+                    result["reader"] = asyncio.run(verify_before_deadline(
+                        evidence, catalog, dsn, remaining_seconds=remaining))
+                except TimeoutError:
+                    result["status"] = "incomplete_catchup"
+                    result["failure"] = "catchup_deadline"
+                else:
+                    result["status"] = "complete"
                 break
             next_sample += cadence_ms / 1000
             time.sleep(max(0, next_sample - time.monotonic()))
         result["service"] = service()
-        require(result["window"] and result["first_checkpoint_ns"] is not None,
-                "No first durable publication or measured live window.")
+        require(result["window"], "Replay has no measured live window.")
         require(result["service"]["errors"] == 0,
                 "Original client issued unsupported or unadmitted RPC reads.")
     except BaseException as error:
+        primary = error
         result["status"] = "unavailable"
         result["failure"] = type(error).__name__
-    finally:
+    try:
         emit(report, result)
-    if result["status"] == "unavailable":
-        raise SystemExit("Replay observation was unavailable.")
+    except BaseException as error:
+        if primary is None:
+            primary = error
+        else:
+            primary.add_note("Replay observation result publication also failed.")
+    if primary is not None:
+        raise primary
 
 
 def main():
@@ -238,5 +268,8 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, OSError, KeyError, TypeError):
-        raise SystemExit("Replay observation failed; see retained private receipt.") from None
+    except SystemExit:
+        raise
+    except BaseException as error:
+        emit_unexpected(phase="reader_check", error=error, effect="unconfirmed")
+        raise SystemExit(1) from None

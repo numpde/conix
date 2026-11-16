@@ -18,6 +18,7 @@ import threading
 import time
 
 from conix.core import _block
+from conix.process_diagnostic import emit_unexpected
 from stress_archive import _decoded, document, read_archive, rpc_key
 from stress_complete import load, verify_completion
 from stress_protocol import BUNDLE_INPUTS
@@ -155,7 +156,7 @@ class ReplayEvidence:
             raw = self.headers[height]
             for contract in self.catalog.contracts:
                 for event in contract.descriptor.events:
-                    params = [{"blockHash": raw["hash"], "address": "0x" + contract.address.hex(),
+                    params = [{"blockHash": raw["hash"].lower(), "address": "0x" + contract.address.hex(),
                                "topics": ["0x" + event.topic0.hex()]}]
                     key = rpc_key("eth_getLogs", params)
                     require(key in self.results and type(self.results[key]) is list,
@@ -270,6 +271,7 @@ class ReplayHTTP(HTTPServer):
         self.errors = 0
         self.wait_ns = 0
         self.first_rpc_ns = None
+        self.pre_release_requests = 0
         super().__init__(address, ReplayHandler)
 
     def status(self):
@@ -277,6 +279,7 @@ class ReplayHTTP(HTTPServer):
         return dict(view, requests=self.requests, errors=self.errors,
                     actual_wait_ns=self.wait_ns,
                     first_rpc_elapsed_ns=self.first_rpc_ns, delay_ms=self.delay_ms,
+                    pre_release_requests=self.pre_release_requests,
                     window_ns=self.evidence.window_ns, sampled_gaps=self.evidence.gaps,
                     clock_uncertainty_ns=self.evidence.clock_uncertainty_ns)
 
@@ -335,6 +338,8 @@ class ReplayHandler(BaseHTTPRequestHandler):
             return
         if self.server.first_rpc_ns is None:
             self.server.first_rpc_ns = self.server.schedule.view()["elapsed_ns"]
+        if not view["released"]:
+            self.server.pre_release_requests += 1
         self.server.requests += 1
         if self.server.delay_ms:
             before = time.monotonic_ns()
@@ -387,6 +392,8 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, KeyError, OSError, RuntimeError) as error:
-        # No WARC bodies, URL, SQL DSN or exception prose may reach Docker logs.
-        raise SystemExit("Replay operation failed (" + type(error).__name__ + ").") from None
+    except SystemExit:
+        raise
+    except BaseException as error:
+        emit_unexpected(phase="verification", error=error, effect="unconfirmed")
+        raise SystemExit(1) from None

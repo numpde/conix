@@ -4,6 +4,8 @@ from contextlib import contextmanager
 from http.server import HTTPServer
 import io
 import json
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 import tarfile
@@ -11,18 +13,24 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+import asyncio
 
 import httpx
 
 from stress_archive import rpc_key
 import stress_replay as replay
+import stress_replay_probe as probe
+from host_diagnostics import extract, admitted
 
 
-def specimen():
+def specimen(*, uppercase_hashes=False):
     """Small immutable matrix; no surrogate scanner, SQL or provider transport."""
     start = 100
-    hashes = {n: "0x" + format(n, "064x") for n in (0, 99, 100, 101, 102)}
+    hashes = {n: "0x" + "ab" * 31 + format(n, "02x") for n in (0, 99, 100, 101, 102)}
+    if uppercase_hashes:
+        hashes = {n: "0x" + value[2:].upper() for n, value in hashes.items()}
     observed = []
     results = {}
 
@@ -38,7 +46,7 @@ def specimen():
     address = "0x" + "a" * 40
     topic = "0x" + "b" * 64
     for number in range(start, 103):
-        put("eth_getLogs", [{"blockHash": hashes[number], "address": address,
+        put("eth_getLogs", [{"blockHash": hashes[number].lower(), "address": address,
                              "topics": [topic]}], [])
     # The live original process can legitimately request a numbered header
     # before that block exists. That historical null must not conflict with
@@ -78,6 +86,12 @@ def specimen():
 
 
 class HeadScheduleContracts(unittest.TestCase):
+    def test_provider_hash_spelling_does_not_change_original_writer_query_keys(self):
+        evidence, hashes, address, topic = specimen(uppercase_hashes=True)
+        params = [{"blockHash": hashes[100].lower(), "address": address, "topics": [topic]}]
+        self.assertEqual(evidence.response("eth_getLogs", params, 100), [])
+        self.assertEqual(evidence.response("eth_getBlockByNumber", ["latest", False], 100)["hash"], hashes[100])
+
     def test_pre_release_is_frozen_and_head_advances_without_client_requests(self):
         evidence, _, _, _ = specimen()
         self.assertEqual(evidence.timeline, [(0, 100), (8000, 102)])
@@ -172,6 +186,12 @@ class ReplayProtocolContracts(unittest.TestCase):
                 self.assertNotEqual(response.status_code, 200)
                 self.assertNotIn("result", response.json())
 
+    def test_pre_release_rpc_is_observable_and_cannot_be_hidden_as_startup(self):
+        before = self.server.status()["pre_release_requests"]
+        response = self.post({"jsonrpc": "2.0", "id": 55, "method": "eth_chainId", "params": []})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.server.status()["pre_release_requests"], before + 1)
+
     def test_delay_applies_to_repeated_immutable_and_latest_queries(self):
         self.server.delay_ms = 20
         try:
@@ -204,6 +224,66 @@ class BundleContracts(unittest.TestCase):
                         with self.assertRaises(ValueError):
                             replay.unpack(data, Path(child))
                     self.assertFalse((Path(directory) / "unexpected").exists())
+
+
+class CatchupDeadlineContracts(unittest.TestCase):
+    def test_late_final_checkpoint_cannot_report_completed_catchup(self):
+        """Final progress observed after expiry cannot authorize a success report."""
+        catalog = SimpleNamespace(source_id=b"c" * 32,
+                                  chain=SimpleNamespace(rpc_url="http://replay:8080", start_block=100))
+        evidence = SimpleNamespace(catalog=catalog, start=100, final=102,
+                                   timeline=[(0, 100), (1000000000, 102)], window_ns=1000000000)
+        def state(elapsed, head, released=True):
+            return {"released": released, "elapsed_ns": elapsed, "head": head,
+                    "frozen": elapsed >= 1000000000, "errors": 0}
+        states = [state(0, 100, False), state(0, 100),
+                  state(100000000, 100), state(100000000, 100),
+                  state(2100000000, 102), state(2100000000, 102), state(2100000000, 102)]
+        checkpoints = [{"height": height, "revision": 1, "source_id": catalog.source_id.hex(), "blocked": None}
+                       for height in (100, 102)]
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            credential = folder / "reader.dsn"
+            credential.write_text("disposable fixture")
+            with patch.object(probe, "ReplayEvidence", return_value=evidence), \
+                 patch.object(probe, "prepare_catalog", return_value=catalog), \
+                 patch.object(probe, "CREDENTIAL", credential), patch.object(probe, "RESULTS", folder), \
+                 patch.object(probe, "service", side_effect=states), \
+                 patch.object(probe, "progress", side_effect=checkpoints), \
+                 patch.object(probe.time, "sleep"), \
+                 patch.object(probe, "verify_reader", new_callable=AsyncMock, return_value={"events": 0}) as reader:
+                probe.observe(cadence_ms=100, catchup_seconds=1, start_wait_seconds=10)
+            result = json.loads((folder / "result.json").read_bytes())
+            self.assertEqual(result["status"], "incomplete_catchup")
+            self.assertIsNone(result["reader"])
+            reader.assert_not_awaited()
+
+    def test_reader_verification_must_finish_inside_the_remaining_grant(self):
+        """A timely checkpoint alone does not qualify late Reader verification."""
+        async def slow_reader(*args):
+            await asyncio.sleep(0.05)
+            return {"events": 0}
+        with patch.object(probe, "verify_reader", side_effect=slow_reader):
+            with self.assertRaises(TimeoutError):
+                asyncio.run(probe.verify_before_deadline(None, None, None, remaining_seconds=0.001))
+
+
+class ReplayDiagnosticContracts(unittest.TestCase):
+    def test_real_entrypoints_preserve_startup_failure_type_and_location(self):
+        """An unavailable input must cross the real child boundary with its cause."""
+        for module, arguments, phase in (
+            (replay, ["serve"], "verification"),
+            (probe, ["--sample-ms", "1000", "--catchup-seconds", "10", "--start-wait-seconds", "10"], "reader_check"),
+        ):
+            with self.subTest(entrypoint=module.__name__):
+                result = subprocess.run([sys.executable, "-E", "-s", module.__file__, *arguments],
+                                        capture_output=True, timeout=15)
+                self.assertNotEqual(result.returncode, 0)
+                fields = admitted(extract(result.stderr))
+                self.assertIsNotNone(fields)
+                self.assertEqual(fields["cause"], "FileNotFoundError")
+                self.assertEqual(fields["phase"], phase)
+                self.assertNotEqual(fields["location"], "unavailable")
 
 
 if __name__ == "__main__":
