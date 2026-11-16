@@ -329,10 +329,10 @@ class ReplayHandler(BaseHTTPRequestHandler):
         if self.server.first_rpc_ns is None:
             self.server.first_rpc_ns = self.server.schedule.view()["elapsed_ns"]
         self.server.requests += 1
-        before = time.monotonic_ns()
         if self.server.delay_ms:
+            before = time.monotonic_ns()
             time.sleep(self.server.delay_ms / 1000)
-        self.server.wait_ns += time.monotonic_ns() - before
+            self.server.wait_ns += time.monotonic_ns() - before
         self.reply(200, payload)
 
 
