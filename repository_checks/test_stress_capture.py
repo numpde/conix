@@ -194,18 +194,54 @@ class CaptureAdmissionContracts(unittest.TestCase):
         ended = started + timedelta(seconds=5)
 
         def feed(actions):
-            fixture.docker.run.return_value = "\n".join(json.dumps({
+            return "\n".join(json.dumps({
                 "Action": action, "Type": "container",
                 "Actor": {"ID": identity}, "timeNano": (i + 1) * 1_000_000_000,
             }) for i, action in enumerate(actions))
-        feed(["start"])
-        result = fixture.history(identity, started, ended)
+        result = fixture.history(identity, started, ended, feed(["start"]))
         self.assertEqual(result["events"][0]["action"], "start")
         for actions in ([], ["die"], ["start", "die"], ["start", "restart"], ["start", "start"]):
             with self.subTest(actions=actions):
-                feed(actions)
                 with self.assertRaises(OperationError):
-                    fixture.history(identity, started, ended)
+                    fixture.history(identity, started, ended, feed(actions))
+
+    def test_live_lifecycle_receipt_survives_history_loss_and_retires_child(self):
+        """Keep the subscribed start event even when later history is unavailable."""
+        import sys
+        from datetime import datetime, timezone
+
+        original_popen = subprocess.Popen
+        identity = "a" * 64
+        event = json.dumps({"Action": "start", "Type": "container",
+                            "Actor": {"ID": identity}, "timeNano": 1_000_000_000})
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = StressCapture.__new__(StressCapture)
+            fixture.folder = Path(directory)
+            fixture.selection = {"stress_duration_seconds": 1}
+            fixture.records = {}
+            fixture.docker = Mock()
+            fixture.docker.docker_command_prefix = ["docker", "--host", "unix:///selected"]
+            fixture.docker.docker_environment = {}
+            fixture.docker.run.side_effect = AssertionError("Retrospective history is unavailable")
+
+            def stream(argv, **kwargs):
+                self.assertIn("events", argv)
+                self.assertIn("container=" + identity, argv)
+                return original_popen(
+                    [sys.executable, "-c", "import time; print(" + repr(event) +
+                     ", flush=True); time.sleep(60)"], **kwargs,
+                )
+
+            failure = RuntimeError("original observation failure")
+            with patch("tools.fixtures.stress_capture.subprocess.Popen", side_effect=stream):
+                with self.assertRaises(RuntimeError) as caught:
+                    with fixture.lifecycle_stream(identity, datetime.now(timezone.utc)) as child:
+                        self.assertIn(identity, fixture.read_lifecycle_stream())
+                        raise failure
+            self.assertIs(caught.exception, failure)
+            self.assertIsNotNone(child.poll())
+            self.assertEqual((fixture.folder / "indexer-events.jsonl").stat().st_mode & 0o777, 0o600)
+            fixture.docker.run.assert_not_called()
 
     def test_nonzero_recorder_exit_is_retired_but_not_successful_capture(self):
         fixture = StressCapture.__new__(StressCapture)

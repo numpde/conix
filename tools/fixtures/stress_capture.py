@@ -5,6 +5,7 @@ remain authoritative. This test owns only its disposable PostgreSQL fixture,
 two recorded public-RPC streams, clock observations and retained artifacts.
 """
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -14,6 +15,7 @@ import re
 import secrets
 import shutil
 import stat
+import subprocess
 import time
 import tomllib
 
@@ -416,13 +418,69 @@ class StressCapture:
                 "Original Conix process identity or grants changed.")
         return ids[0]
 
-    def history(self, identity, since, until):
+    @contextmanager
+    def lifecycle_stream(self, identity, since):
+        """Subscribe before measurement; Docker's retrospective ring is finite."""
         self.phase = "retained process lifecycle"
-        raw = self.docker.run(
-            "events", "--since", since.isoformat(), "--until", until.isoformat(),
-            "--filter", "container=" + identity, "--format", "{{json .}}",
-            capture=True, timeout=30,
+        output = self.folder / "indexer-events.jsonl"
+        error_file = self.folder / "indexer-events.err"
+        until = datetime.now(timezone.utc) + timedelta(
+            seconds=self.selection["stress_duration_seconds"] + 60,
         )
+        argv = self.docker.docker_command_prefix + [
+            "events", "--since", since.isoformat(), "--until", until.isoformat(),
+            "--filter", "container=" + identity,
+            "--filter", "event=start", "--filter", "event=die", "--filter", "event=restart",
+            "--format", "{{json .}}",
+        ]
+        with output.open("xb") as stdout, error_file.open("xb") as stderr:
+            output.chmod(0o600)
+            error_file.chmod(0o600)
+            process = subprocess.Popen(
+                argv, cwd=ROOT, env=self.docker.docker_environment,
+                stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+            )
+        primary = None
+        try:
+            deadline = time.monotonic() + 10
+            while True:
+                require(process.poll() is None, "Lifecycle stream ended before measurement.")
+                raw = self.read_lifecycle_stream()
+                if raw.endswith("\n"):
+                    self.history(identity, since, datetime.now(timezone.utc), raw)
+                    break
+                require(time.monotonic() < deadline, "Lifecycle stream did not establish its start anchor.")
+                time.sleep(0.05)
+            yield process
+            require(process.poll() is None, "Lifecycle stream ended during measurement.")
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            try:
+                if process.poll() is None:
+                    process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+                    raise OperationError("Lifecycle stream required forced retirement.")
+            except BaseException:
+                self.records["lifecycle_stream_retirement"] = "unconfirmed"
+                if primary is None:
+                    raise
+                primary.add_note("Lifecycle stream retirement is unconfirmed.")
+
+    def read_lifecycle_stream(self):
+        """Bound the private event receipt before parsing any Engine records."""
+        with (self.folder / "indexer-events.jsonl").open("r") as source:
+            raw = source.read(65537)
+        require(len(raw) <= 65536, "Lifecycle event receipt exceeds its bounded grant.")
+        return raw
+
+    def history(self, identity, since, until, raw):
+        self.phase = "retained process lifecycle"
         events = [json.loads(line) for line in raw.splitlines()]
         relevant = [{"action": event["Action"], "time_ns": event.get("timeNano")}
                     for event in events
@@ -446,34 +504,38 @@ class StressCapture:
         identity = self.deployed()
         self.records["indexer_id"] = identity
         self.records["indexer_image"] = named.inspect_prepared(self.name).image
-        before = {service: self.calibrate(service) for service in ("gateway", "observer")}
-        release_send = time.monotonic_ns()
-        self.control("observer", "release")
-        self.records["origin_ns"] = release_send
-        self.records["released_utc"] = datetime.now(timezone.utc).isoformat()
-        # The independent observer is one bounded running process, not a tape
-        # advanced by application requests.
-        deadline = time.monotonic() + self.selection["stress_duration_seconds"] + 40
-        while True:
-            self.deployed()
-            self.container("observer", running=True)
-            try:
-                result = json.loads(self.control("observer", "done"))
-                require(result["status"] in ("complete", "partial"),
-                        "Observer returned an unknown final capture status.")
-                break
-            except OperationError:
-                if time.monotonic() >= deadline:
-                    raise OperationError("Independent observer exceeded its bounded capture budget.")
-                time.sleep(0.5)
-        after = {service: self.calibrate(service) for service in ("gateway", "observer")}
-        self.records["clocks"] = {
-            service: self.clock_mapping(before[service], after[service])
-            for service in ("gateway", "observer")
-        }
-        finished_events = datetime.now(timezone.utc) + timedelta(seconds=1)
-        require(self.deployed() == identity, "Retained Conix identity changed before the final head.")
-        self.records["indexer_events"] = self.history(identity, started_events, finished_events)
+        with self.lifecycle_stream(identity, started_events) as events:
+            before = {service: self.calibrate(service) for service in ("gateway", "observer")}
+            release_send = time.monotonic_ns()
+            self.control("observer", "release")
+            self.records["origin_ns"] = release_send
+            self.records["released_utc"] = datetime.now(timezone.utc).isoformat()
+            # The independent observer is one bounded running process, not a tape
+            # advanced by application requests.
+            deadline = time.monotonic() + self.selection["stress_duration_seconds"] + 40
+            while True:
+                require(events.poll() is None, "Lifecycle stream ended during measurement.")
+                self.deployed()
+                self.container("observer", running=True)
+                try:
+                    result = json.loads(self.control("observer", "done"))
+                    require(result["status"] in ("complete", "partial"),
+                            "Observer returned an unknown final capture status.")
+                    break
+                except OperationError:
+                    if time.monotonic() >= deadline:
+                        raise OperationError("Independent observer exceeded its bounded capture budget.")
+                    time.sleep(0.5)
+            after = {service: self.calibrate(service) for service in ("gateway", "observer")}
+            self.records["clocks"] = {
+                service: self.clock_mapping(before[service], after[service])
+                for service in ("gateway", "observer")
+            }
+            finished_events = datetime.now(timezone.utc)
+            require(self.deployed() == identity, "Retained Conix identity changed before the final head.")
+        self.records["indexer_events"] = self.history(
+            identity, started_events, finished_events, self.read_lifecycle_stream(),
+        )
         self.records["process_continuity"] = "confirmed"
         self.control("observer", "retire")
         retirement_deadline = time.monotonic() + 15
