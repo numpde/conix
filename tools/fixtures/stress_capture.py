@@ -63,6 +63,25 @@ def supplied(options):
     return values
 
 
+def protect_source_profile():
+    """Apply the ordinary Fuji operator's ownership and private-mode policy."""
+    for directory in (PROFILE, PROFILE / "abi", PROFILE / "secrets"):
+        details = directory.lstat()
+        require(stat.S_ISDIR(details.st_mode) and details.st_uid == os.geteuid(),
+                "Selected Fuji source directory is not an owned regular directory.")
+        directory.chmod(0o700)
+    files = (
+        PROFILE / "deployment.toml", PROFILE / "abi/pay_to_play.json",
+        *(PROFILE / "secrets" / (name + ".dsn") for name in ("owner", "runtime", "reader")),
+    )
+    for file in files:
+        details = file.lstat()
+        require(stat.S_ISREG(details.st_mode) and details.st_uid == os.geteuid(),
+                "Selected Fuji source file must be an owned regular file.")
+        file.chmod(0o600)
+    named.inspect_named("fuji-acceptance")
+
+
 def selected_source():
     """Bind one reviewed public source, ABI and existing 17-event catalog."""
     raw = SOURCE_FILE.read_bytes()
@@ -688,6 +707,7 @@ def run_capture(options, *, client_cls, pinned_images):
     """Maintained operator: one bounded live capture and independently verified export."""
     require(os.geteuid() != 0, "Stress capture requires an ordinary non-root operator.")
     selection = supplied(options)
+    protect_source_profile()
     source, profile, _, _ = selected_source()
     require(not options.context or options.context == profile["docker_context"],
             "Use the reviewed Fuji profile's selected Docker Engine.")
