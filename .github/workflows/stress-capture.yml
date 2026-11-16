@@ -46,6 +46,7 @@ jobs:
           runner="$(make -s image/test-runner/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
           export CONIX_TEST_RUNNER_IMAGE="$runner"
           export CONIX_POSTGRES_IMAGE="$(python3 -c 'from tools.containers.operator import pinned_images; print(pinned_images()["postgres"])')"
+          export CONIX_FOUNDRY_IMAGE="$(python3 -c 'from tools.containers.operator import pinned_images; print(pinned_images()["foundry"])')"
           export CONIX_STRESS_OWNER=0123456789abcdef01234567
           export CONIX_STRESS_DURATION_SECONDS=120
           export CONIX_STRESS_CADENCE_MS=1000
