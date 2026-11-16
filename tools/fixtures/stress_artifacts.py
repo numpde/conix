@@ -247,6 +247,9 @@ def report_facts(repository, folder, records, *, original_directory=None):
                         else _count(row["launch_request_offset_host_ns"])),
                     "max_sampled_lag": (
                         None if row["max_sampled_lag"] is None else _count(row["max_sampled_lag"])),
+                    "checkpoint_stall_intervals": _count(row.get("checkpoint_stall_intervals", 0)),
+                    "checkpoint_stalled_ns": _count(row.get("checkpoint_stalled_ns", 0)),
+                    "longest_checkpoint_stall_ns": _count(row.get("longest_checkpoint_stall_ns", 0)),
                     "catchup_status": row["catchup_status"],
                     "reader_verified": row["reader_verified"],
                     "request_count": _count(row["request_count"]),
