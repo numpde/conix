@@ -21,7 +21,7 @@ from tools.fixtures.stress_protocol import BUNDLE_INPUTS
 
 PRIVATE_RUNS = Path("out/indexer/stress/runs")
 PUBLIC_RUNS = Path("qualification/indexer/stress/runs")
-PHASES = {"capture": "manifest.json", "evidence-completion": "admission.json"}
+PHASES = {"capture": "manifest.json", "evidence-completion": "admission.json", "replay": "result.json"}
 SUBJECT = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*\Z")
 STAMP = re.compile(r"[0-9]{8}-[0-9]{6}\Z")
 HASH = re.compile(r"[0-9a-f]{64}\Z")
@@ -156,7 +156,7 @@ def report_facts(repository, folder, records, *, original_directory=None):
         if any(type(address) is not str or re.fullmatch(r"0x[0-9a-fA-F]{40}", address) is None for address in addresses):
             raise OperationError("Stress report contract address is malformed.")
         result["source"] = {"chain_id": chain_id, "contracts": addresses}
-    archives = ("application", "observer") if phase == "capture" else ("completion",)
+    archives = {"capture": ("application", "observer"), "evidence-completion": ("completion",), "replay": ()}[phase]
     result["archives"] = {}
     for name in archives:
         archive = folder / (name + ".warc.gz")
@@ -201,6 +201,54 @@ def report_facts(repository, folder, records, *, original_directory=None):
         if records["process_continuity"] not in ("confirmed", "unconfirmed"):
             raise OperationError("Stress report process continuity is unknown.")
         result["process_continuity"] = records["process_continuity"]
+    if phase == "replay":
+        control = records["controls"]
+        result["controls"] = {
+            "artificial_delay_ms": _count(control["stress_replay_delay_ms"]),
+            "checkpoint_cadence_ms": _count(control["stress_checkpoint_cadence_ms"]),
+            "catchup_timeout_seconds": _count(control["stress_catchup_timeout_seconds"]),
+        }
+        result["admitted_completion_sha256"] = _digest(records["completion_sha256"])
+        result["runs"] = {}
+        for name in ("baseline", "slowdown"):
+            if name not in records["runs"]:
+                if status == "complete":
+                    raise OperationError("Completed replay lacks a required measured run.")
+                continue
+            facts = records["runs"][name]
+            measured = folder / name / "measurement.json"
+            if not measured.exists():
+                if status == "complete":
+                    raise OperationError("Completed replay lacks a measured report.")
+                continue
+            digest, _ = _hash_file(measured, 2 * 1048576)
+            if digest != _digest(facts["measurement_sha256"]):
+                raise OperationError("Measured report differs from its retained verification hash.")
+            result["runs"][name] = {
+                "report_sha256": digest,
+                "status": facts["status"],
+                "added_latency_ms": _count(facts["delay_ms"]),
+                "indexer_image": facts["indexer_image"],
+            }
+        if records.get("comparison") is not None:
+            result["comparison"] = {}
+            for name in ("baseline", "slowdown"):
+                row = records["comparison"][name]
+                result["comparison"][name] = {
+                    "window_samples": _count(row["window_samples"]),
+                    "window_ns": _count(row["window_ns"]),
+                    "first_checkpoint_ns": (
+                        None if row["first_checkpoint_ns"] is None
+                        else _count(row["first_checkpoint_ns"])),
+                    "first_rpc_ns": (
+                        None if row["first_rpc_ns"] is None else _count(row["first_rpc_ns"])),
+                    "max_sampled_lag": (
+                        None if row["max_sampled_lag"] is None else _count(row["max_sampled_lag"])),
+                    "catchup_status": row["catchup_status"],
+                    "reader_verified": row["reader_verified"],
+                    "request_count": _count(row["request_count"]),
+                    "actual_wait_ns": _count(row["actual_wait_ns"]),
+                }
     diagnostic = records.get("diagnostic")
     if type(diagnostic) is str:
         fields = admitted(diagnostic.encode("ascii"))
