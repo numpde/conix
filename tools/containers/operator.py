@@ -451,7 +451,7 @@ def main():
         "wheelhouse/check", "wheelhouse/acquire",
         "image/indexer/build", "image/test-runner/build", "image/evm-test-runner/build",
         "image/indexer/check", "image/evm-test-runner/check",
-        "network/rates/measure", "test/http/recording/run", "test/indexer/run", "test/deployment/acceptance/run", "test/indexer/acceptance/fuji/run", "test/input-staging/run",
+        "network/rates/measure", "test/http/recording/run", "test/indexer/stress/capture", "test/indexer/run", "test/deployment/acceptance/run", "test/indexer/acceptance/fuji/run", "test/input-staging/run",
         "history/block/advance",
         "deployment/inputs/stage", "deployment/inputs/remove",
         "deployment/config/init", "deployment/prepare", "deployment/database/schema/init",
@@ -470,6 +470,10 @@ def main():
     parser.add_argument("--deployment")
     parser.add_argument("--database-network")
     parser.add_argument("--rpc-network")
+    for name in ("stress_duration_seconds", "stress_poll_cadence_ms", "stress_max_gap_ms",
+                 "stress_clock_tolerance_ms", "stress_archive_bytes", "stress_exchanges",
+                 "stress_start_wait_seconds"):
+        parser.add_argument("--" + name.replace("_", "-"))
     options = parser.parse_args()
 
     try:
@@ -481,6 +485,9 @@ def main():
                 "INDEXER_IMAGE", "CONFIG_FILE", "DSN_FILE",
                 "INPUT_VOLUME", "DEPLOYMENT",
                 "DATABASE_NETWORK", "RPC_NETWORK",
+                "STRESS_DURATION_SECONDS", "STRESS_POLL_CADENCE_MS", "STRESS_MAX_GAP_MS",
+                "STRESS_CLOCK_TOLERANCE_MS", "STRESS_ARCHIVE_BYTES", "STRESS_EXCHANGES",
+                "STRESS_START_WAIT_SECONDS",
             )}
 
             options.context = make_inputs["DOCKER_CONTEXT"]
@@ -494,6 +501,16 @@ def main():
             options.deployment = make_inputs["DEPLOYMENT"]
             options.database_network = make_inputs["DATABASE_NETWORK"]
             options.rpc_network = make_inputs["RPC_NETWORK"]
+            for name in ("STRESS_DURATION_SECONDS", "STRESS_POLL_CADENCE_MS", "STRESS_MAX_GAP_MS",
+                         "STRESS_CLOCK_TOLERANCE_MS", "STRESS_ARCHIVE_BYTES", "STRESS_EXCHANGES",
+                         "STRESS_START_WAIT_SECONDS"):
+                setattr(options, name.lower(), make_inputs[name])
+
+        if options.action == "test/indexer/stress/capture":
+            from tools.fixtures.stress_capture import run_capture
+
+            run_capture(options, client_cls=Docker, pinned_images=pinned_images)
+            return
 
         if options.action == "test/indexer/acceptance/fuji/run":
             from tools.fixtures.fuji import run_acceptance
