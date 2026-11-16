@@ -242,6 +242,9 @@ def report_facts(repository, folder, records, *, original_directory=None):
                         else _count(row["first_checkpoint_ns"])),
                     "first_rpc_ns": (
                         None if row["first_rpc_ns"] is None else _count(row["first_rpc_ns"])),
+                    "launch_request_offset_host_ns": (
+                        None if row.get("launch_request_offset_host_ns") is None
+                        else _count(row["launch_request_offset_host_ns"])),
                     "max_sampled_lag": (
                         None if row["max_sampled_lag"] is None else _count(row["max_sampled_lag"])),
                     "catchup_status": row["catchup_status"],
