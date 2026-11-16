@@ -220,11 +220,13 @@ class CaptureAdmissionContracts(unittest.TestCase):
             fixture = StressCapture.__new__(StressCapture)
             fixture.folder = Path(directory)
             fixture.archive_exported = set()
+            fixture.selection = {"stress_exchanges": 4096}
             fixture.records = {"export": {"observer": {"status": "unconfirmed"}}}
             (fixture.folder / "observer-receipt.json").write_text(json.dumps({
                 "status": "partial", "exchanges": 3, "transport_stopped": True,
                 "failure": "ReadTimeout",
             }))
+            (fixture.folder / "observer-receipt.json").chmod(0o600)
             fixture.report_archive_outcomes()
             observed = fixture.records["archive_evidence"]["observer"]
             self.assertEqual(observed["archive"], "unconfirmed")
