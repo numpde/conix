@@ -71,7 +71,7 @@ class HeadScheduleContracts(unittest.TestCase):
         self.assertEqual(schedule.view()["head"], 100)
         schedule.release()
         self.assertEqual(schedule.view()["elapsed_ns"], 0)
-        now[0] += 7
+        now[0] += 7999
         self.assertEqual(schedule.view()["head"], 100)
         now[0] += 1
         self.assertEqual(schedule.view()["head"], 102)
