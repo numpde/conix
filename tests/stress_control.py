@@ -32,8 +32,8 @@ def write_record(name, document):
 
 
 def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in ("clock", "seed", "release"):
-        raise SystemExit("Select clock, seed or release.")
+    if len(sys.argv) != 2 or sys.argv[1] not in ("clock", "seed", "release", "done", "retire"):
+        raise SystemExit("Select clock, seed, release, done or retire.")
     action = sys.argv[1]
     if action == "clock":
         print(time.monotonic_ns())
@@ -43,9 +43,16 @@ def main():
         if not 0 < len(raw) <= 4096:
             raise SystemExit("Seed record is unavailable.")
         print(json.dumps(json.loads(raw), separators=(",", ":")))
+    elif action == "done":
+        raw = (CAPTURE / "receipt.json").read_bytes()
+        if not 0 < len(raw) <= 4096 or not (CAPTURE / "observations.json").is_file():
+            raise SystemExit("Observation completion is unavailable.")
+        record = json.loads(raw)
+        print(json.dumps({"status": record["status"]}, separators=(",", ":")))
     else:
-        # The observer records its own actual release observation.
-        descriptor = os.open(CAPTURE / "release", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        # The worker records its own observation of the release/retire signal.
+        name = "release" if action == "release" else "retire"
+        descriptor = os.open(CAPTURE / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         os.close(descriptor)
 
 
