@@ -1,7 +1,8 @@
 Recorded-network stress campaign
 ================================
 
-Status: Stage A locally qualified at 08c28f6; stages B-D remain proposed.
+Status: Stage A locally qualified at 08c28f6; Stage B implemented, qualification
+pending below; stages C-D remain proposed.
 Supersedes Note 012's Fuji-first B and exact-conversation C.
 Date: 2026-11-15
 
@@ -364,5 +365,40 @@ Earlier attempts remain evidence, not superseded successes:
 
 This qualifies the named successful bounded Stage A run and its corrected
 harness. It does not establish unattended reliability, complete replay
-coverage, SQL throughput or keep-pace capacity. Stages B/C remain unimplemented.
+coverage, SQL throughput or keep-pace capacity. At this Stage A revision,
+stages B/C remained unimplemented.
 The qualification record is documentation only beyond the named executable.
+
+Stage B implementation (2026-11-16)
+-----------------------------------
+The maintained operation is test/indexer/stress/evidence/complete; Note 002
+owns its exact inputs and resource grants. It leaves the Stage A directory
+untouched and writes a separate private out/rpc-evidence/<attempt-id>/.
+The retained named declaration is projected through the existing named
+operator, with its retired gateway URL replaced by its own reviewed source.
+The worker uses prepare_catalog, core.verify_source, core._block and the
+original RPC.call. It does not instantiate a Writer, decode events or open SQL.
+The current Stage A format retains one ABI and one deployed contract; B
+refuses a snapshot that cannot be represented by those exact retained files.
+
+One bounded stdin bundle supplies exact immutable inputs. The collector
+streams WARC directly to a private file, with Docker logging disabled. This
+avoids staging volumes, output volumes and export containers. Common process
+ownership now supports a bounded binary attachment whose content has no
+diagnostic authority; its private stderr and exact stopped-container facts
+are retained before removal. A networkless worker admits A before any egress,
+and another reads the finalized archives and reconstructs complete coverage.
+All canonical rereads must form the completion archive's final sequence.
+
+WARC inspection now consumes each body before checking digest completion.
+The altered-body regression failed before this correction. Both genuine A
+archives pass the corrected check. The shared reader retains raw encoded
+bytes and failed responses, checks linkage and each RPC reply's own ID, and
+decodes gzip only under an explicit output bound. It does not reinterpret a
+failed poll as an empty log result. A seed-to-first-timed-head decrease also
+has a demonstrated failing/passing regression; the predecessor anchor cannot
+conceal it. Rechecks compare complete block results independently of RPC IDs.
+
+Stage B qualification and the resulting artifact are still pending at this
+implementation checkpoint. Stage C replay, SQL throughput and keep-pace
+capacity remain unimplemented and unqualified.

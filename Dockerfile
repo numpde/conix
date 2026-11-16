@@ -50,6 +50,7 @@ RUN --network=none \
     && python -m pip check
 USER 65532:65532
 COPY tools/fixtures/http_recording.py /tests/http_recording.py
+COPY tools/fixtures/stress_protocol.py /tests/stress_protocol.py
 COPY tests /tests
 # One reviewed public deployed ABI; no deployment config or credential enters this image.
 COPY config/deployments/fuji-acceptance/abi/pay_to_play.json /tests/fixtures/abi/fuji_pay_to_play.json

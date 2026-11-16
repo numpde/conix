@@ -456,7 +456,7 @@ def main():
         "wheelhouse/check", "wheelhouse/acquire",
         "image/indexer/build", "image/test-runner/build", "image/evm-test-runner/build",
         "image/indexer/check", "image/evm-test-runner/check",
-        "network/rates/measure", "test/http/recording/run", "test/indexer/stress/capture", "test/indexer/run", "test/deployment/acceptance/run", "test/indexer/acceptance/fuji/run", "test/input-staging/run",
+        "network/rates/measure", "test/http/recording/run", "test/indexer/stress/capture", "test/indexer/stress/evidence/complete", "test/indexer/run", "test/deployment/acceptance/run", "test/indexer/acceptance/fuji/run", "test/input-staging/run",
         "history/block/advance",
         "deployment/inputs/stage", "deployment/inputs/remove",
         "deployment/config/init", "deployment/prepare", "deployment/database/schema/init",
@@ -475,6 +475,8 @@ def main():
     parser.add_argument("--deployment")
     parser.add_argument("--database-network")
     parser.add_argument("--rpc-network")
+    parser.add_argument("--capture-dir")
+    parser.add_argument("--stress-completion-seconds")
     for name in ("stress_duration_seconds", "stress_poll_cadence_ms", "stress_max_gap_ms",
                  "stress_clock_tolerance_ms", "stress_archive_bytes", "stress_exchanges",
                  "stress_start_wait_seconds"):
@@ -493,6 +495,7 @@ def main():
                 "STRESS_DURATION_SECONDS", "STRESS_POLL_CADENCE_MS", "STRESS_MAX_GAP_MS",
                 "STRESS_CLOCK_TOLERANCE_MS", "STRESS_ARCHIVE_BYTES", "STRESS_EXCHANGES",
                 "STRESS_START_WAIT_SECONDS",
+                "CAPTURE_DIR", "STRESS_COMPLETION_SECONDS",
             )}
 
             options.context = make_inputs["DOCKER_CONTEXT"]
@@ -506,10 +509,18 @@ def main():
             options.deployment = make_inputs["DEPLOYMENT"]
             options.database_network = make_inputs["DATABASE_NETWORK"]
             options.rpc_network = make_inputs["RPC_NETWORK"]
+            options.capture_dir = make_inputs["CAPTURE_DIR"]
+            options.stress_completion_seconds = make_inputs["STRESS_COMPLETION_SECONDS"]
             for name in ("STRESS_DURATION_SECONDS", "STRESS_POLL_CADENCE_MS", "STRESS_MAX_GAP_MS",
                          "STRESS_CLOCK_TOLERANCE_MS", "STRESS_ARCHIVE_BYTES", "STRESS_EXCHANGES",
                          "STRESS_START_WAIT_SECONDS"):
                 setattr(options, name.lower(), make_inputs[name])
+
+        if options.action == "test/indexer/stress/evidence/complete":
+            from tools.fixtures.stress_evidence import run_completion
+
+            run_completion(options, client_cls=Docker)
+            return
 
         if options.action == "test/indexer/stress/capture":
             from tools.fixtures.stress_capture import run_capture

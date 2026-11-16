@@ -108,6 +108,7 @@ def source_allowlist(root=ROOT):
         "Dockerfile", "pyproject.toml", "requirements/runtime.lock",
         "requirements/build.lock", "requirements/recording.lock",
         "tools/fixtures/http_recording.py",
+        "tools/fixtures/stress_protocol.py",
         # Test-only wire protocol shared by the host fixture operator and
         # installed EVM images; never included in the product wheel.
         "tools/fixtures/protocol.py",

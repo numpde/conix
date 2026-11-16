@@ -334,3 +334,40 @@ Exact ownership precedes retirement; uncertain cleanup prevents final receipt
 publication. Private results remain under out/network-rate-measurements/.
 The operation does not edit committed fixtures. Offline test/indexer/run
 executes the original-scanner stand-in against committed JSON workload data.
+
+Recorded stress evidence completion
+------------------------------------
+test/indexer/stress/evidence/complete consumes an explicit private CAPTURE_DIR
+from a completed Stage A capture. It requires DOCKER_CONTEXT, immutable
+test-runner RUNNER_IMAGE, STRESS_COMPLETION_SECONDS (1..1800),
+STRESS_EXCHANGES (1..16384), and STRESS_ARCHIVE_BYTES (1048576..67108864).
+These grants have no operator defaults. Example for the retained Fuji capture:
+
+  make test/indexer/stress/evidence/complete \
+    CAPTURE_DIR=out/rpc-recordings/53b35dc53d2ab111af37df89 \
+    DOCKER_CONTEXT=agentic RUNNER_IMAGE=sha256:<selected-test-runner-id> \
+    STRESS_COMPLETION_SECONDS=900 STRESS_EXCHANGES=4096 \
+    STRESS_ARCHIVE_BYTES=67108864
+
+The named operator projects only the retained deployment and ABI, restoring
+the retained public transport URL in place of A's retired gateway. No current
+deployment selection participates. A networkless worker first admits exact
+input hashes, finalized archives, clock/timeline evidence and process
+continuity. Only then may the collector use one new owned egress bridge.
+It completes the full immutable header/selector matrix and rechecks every
+numbered header through the existing RPC and header validation. There is no
+SQL, scanner, event decoding, replay service, wallet or contract mutation.
+
+Exact bounded input files travel over stdin, never a runtime host mount.
+The collector's raw WARC stdout is captured privately with daemon logging
+disabled; only admitted stderr diagnostics may reach the terminal. Each
+stopped worker's identity, exit and attached-file hashes are retained before
+container removal. A separate networkless process rebuilds coverage from the
+closed archives. No volume, host port or Engine socket is granted.
+
+Each attempt writes out/rpc-evidence/<id>/catalog.toml, completion.warc.gz,
+private phase output and admission.json. The receipt binds A's exact files,
+the derived catalog and the completion archive. Original A files stay intact;
+partial or conflicting evidence remains unavailable, without narrowing the
+window. Failed publication and uncertain cleanup remain separate from the
+primary failure. This operation admits evidence; it makes no keep-pace claim.
