@@ -500,8 +500,17 @@ class ReplayAttempt:
                 "Delayed setup advanced the recorded chain clock.")
         release_utc = datetime.now(timezone.utc) - timedelta(seconds=2)
         gate = threading.Event()
+
+        def launch_original():
+            gate.wait()
+            self.records["launch_request_host_ns"] = time.monotonic_ns()
+            try:
+                self.make("deployment/up")
+            finally:
+                self.records["launch_completion_host_ns"] = time.monotonic_ns()
+
         with ThreadPoolExecutor(max_workers=1) as pool:
-            task = pool.submit(lambda: (gate.wait(), self.make("deployment/up")))
+            task = pool.submit(launch_original)
             try:
                 self.phase = "common replay release"
                 sent = time.monotonic_ns()
@@ -518,6 +527,11 @@ class ReplayAttempt:
         self.consumer_started = True
         identity = self.original()
         self.records["indexer_id"] = identity
+        self.records["launch_request_offset_host_ns"] = (
+            self.records["launch_request_host_ns"] - self.records["launch_trigger_host_ns"])
+        record = json.loads(self.docker.run("container", "inspect", "--format", "{{json .}}",
+                                            identity, capture=True))
+        self.records["indexer_started_utc"] = record["State"]["StartedAt"]
         with self.lifecycle(identity, release_utc):
             # The wall budget follows the *recorded observation interval*
             # plus the explicit catch-up grant, not an assumed block rate.
@@ -553,6 +567,13 @@ class ReplayAttempt:
         result["service"] = self.records["service"]
         result["original_process"] = self.records["lifecycle"]
         result["indexer_image"] = self.records["indexer_image"]
+        result["process_launch"] = {
+            "requested_host_monotonic_ns": self.records["launch_request_host_ns"],
+            "completed_host_monotonic_ns": self.records["launch_completion_host_ns"],
+            "trigger_offset_host_ns": self.records["launch_request_offset_host_ns"],
+            "started_utc": self.records["indexer_started_utc"],
+            "release_server_monotonic_ns": self.records["release_ns"],
+        }
         json_record(self.folder / "measurement.json", result)
         self.records["status"] = result["status"]
         self.records["measurement_sha256"] = check_file(self.folder / "measurement.json", 2 * 1048576)
@@ -629,6 +650,8 @@ def comparison(observations):
             "window_samples": len(window), "window_ns": measured["window_ns"],
             "first_checkpoint_ns": measured["first_checkpoint_ns"],
             "first_rpc_ns": measured["service"]["first_rpc_elapsed_ns"],
+            "launch_request_offset_host_ns": measured.get("process_launch", {}).get(
+                "trigger_offset_host_ns"),
             "initial_lag": window[0]["checkpoint_lag"],
             "final_sampled_lag": window[-1]["checkpoint_lag"],
             "max_sampled_lag": max((r["checkpoint_lag"] for r in window
