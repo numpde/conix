@@ -18,7 +18,7 @@ import threading
 import time
 
 from conix.core import _block
-from stress_archive import document, read_archive, rpc_key
+from stress_archive import _decoded, document, read_archive, rpc_key
 from stress_complete import load, verify_completion
 from stress_protocol import BUNDLE_INPUTS
 
@@ -107,6 +107,7 @@ class ReplayEvidence:
         self.start = self.catalog.chain.start_block
         self.final = polls[-1]["header"]["height"]
         self.results = {}
+        self.envelopes = {}
         for exchange in exchanges:
             if exchange.key == rpc_key("eth_getBlockByNumber", ["latest", False]):
                 continue  # Observed head is a time series, not a reusable result.
@@ -115,12 +116,21 @@ class ReplayEvidence:
             except ValueError:
                 # A failed, non-matrix capture is not an immutable RPC answer.
                 continue
+            envelope = document(_decoded(exchange.body, exchange.headers).decode("utf-8"))
+            require(type(envelope) is dict and type(envelope.get("id")) is int
+                    and envelope["id"] == exchange.request["id"],
+                    "Recorded immutable reply does not correlate to its exact request.")
             key = exchange.key
+            # Recorded IDs differ across repeated immutable reads. Keep every
+            # other member of the upstream response, not just result bytes.
+            immutable_envelope = dict(envelope, id=None)
             if key in self.results:
-                require(self.results[key] == value,
+                require(self.results[key] == value
+                        and self.envelopes[key] == immutable_envelope,
                         "Repeated immutable RPC evidence conflicts.")
             else:
                 self.results[key] = value
+                self.envelopes[key] = immutable_envelope
         require(rpc_key("eth_chainId", []) in self.results
                 and int(self.results[rpc_key("eth_chainId", [])], 16) == self.catalog.chain.chain_id,
                 "Admitted chain identity is missing.")
@@ -202,6 +212,20 @@ class ReplayEvidence:
                     and key in self.results, "Selected log evidence is unavailable at this head.")
             return self.results[key]
         raise ValueError("Unsupported original-consumer RPC method.")
+
+
+    def served_envelope(self, method, params, head, request_id):
+        """Preserve all captured envelope members except the caller's new ID."""
+        value = self.response(method, params, head)
+        if value is None:
+            # An above-head numbered null is a derived timing projection.
+            return {"jsonrpc": "2.0", "id": request_id, "result": None}
+        key = (rpc_key("eth_getBlockByNumber", [hex(head), False])
+               if method == "eth_getBlockByNumber" and params[0] == "latest"
+               else rpc_key(method, params))
+        require(key in self.envelopes,
+                "Immutable reply envelope is absent from admitted WARC evidence.")
+        return dict(self.envelopes[key], id=request_id)
 
 
 class HeadSchedule:
@@ -296,7 +320,8 @@ class ReplayHandler(BaseHTTPRequestHandler):
                     and request["jsonrpc"] == "2.0" and type(request["id"]) is int
                     and 0 <= request["id"] < 2**63, "Unsupported JSON-RPC request.")
             view = self.server.schedule.view()
-            value = self.server.evidence.response(request["method"], request["params"], view["head"])
+            payload = self.server.evidence.served_envelope(
+                request["method"], request["params"], view["head"], request["id"])
         except (ValueError, KeyError, TypeError):
             self.server.errors += 1
             self.reply(409, {"error": "Exact admitted RPC evidence is unavailable."})
@@ -308,7 +333,7 @@ class ReplayHandler(BaseHTTPRequestHandler):
         if self.server.delay_ms:
             time.sleep(self.server.delay_ms / 1000)
         self.server.wait_ns += time.monotonic_ns() - before
-        self.reply(200, {"jsonrpc": "2.0", "id": request["id"], "result": value})
+        self.reply(200, payload)
 
 
 def control(operation):
