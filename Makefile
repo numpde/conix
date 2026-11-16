@@ -8,7 +8,8 @@ unexport DOCKER_CONTEXT WHEELHOUSE IMAGE RUNNER_IMAGE INDEXER_IMAGE DAPP32_DIR F
 unexport CONFIG_FILE DSN_FILE INPUT_VOLUME DEPLOYMENT DATABASE_NETWORK RPC_NETWORK
 unexport STRESS_DURATION_SECONDS STRESS_POLL_CADENCE_MS STRESS_MAX_GAP_MS STRESS_CLOCK_TOLERANCE_MS
 unexport STRESS_ARCHIVE_BYTES STRESS_EXCHANGES STRESS_START_WAIT_SECONDS
-unexport CAPTURE_DIR STRESS_COMPLETION_SECONDS
+unexport CAPTURE_DIR STRESS_COMPLETION_SECONDS EVIDENCE_DIR
+unexport STRESS_REPLAY_DELAY_MS STRESS_CHECKPOINT_CADENCE_MS STRESS_CATCHUP_TIMEOUT_SECONDS
 override export CONIX_MAKE_DOCKER_CONTEXT := $(value DOCKER_CONTEXT)
 override export CONIX_MAKE_WHEELHOUSE := $(value WHEELHOUSE)
 override export CONIX_MAKE_IMAGE := $(value IMAGE)
@@ -31,8 +32,12 @@ override export CONIX_MAKE_STRESS_EXCHANGES := $(value STRESS_EXCHANGES)
 override export CONIX_MAKE_STRESS_START_WAIT_SECONDS := $(value STRESS_START_WAIT_SECONDS)
 override export CONIX_MAKE_CAPTURE_DIR := $(value CAPTURE_DIR)
 override export CONIX_MAKE_STRESS_COMPLETION_SECONDS := $(value STRESS_COMPLETION_SECONDS)
+override export CONIX_MAKE_EVIDENCE_DIR := $(value EVIDENCE_DIR)
+override export CONIX_MAKE_STRESS_REPLAY_DELAY_MS := $(value STRESS_REPLAY_DELAY_MS)
+override export CONIX_MAKE_STRESS_CHECKPOINT_CADENCE_MS := $(value STRESS_CHECKPOINT_CADENCE_MS)
+override export CONIX_MAKE_STRESS_CATCHUP_TIMEOUT_SECONDS := $(value STRESS_CATCHUP_TIMEOUT_SECONDS)
 
-.PHONY: network/rates/measure test/http/recording/run test/indexer/stress/capture test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/indexer/run test/deployment/acceptance/run test/indexer/acceptance/fuji/run test/input-staging/run test/indexer/acceptance/borrowed/run test/indexer/acceptance/owned/run history/block/advance deployment/inputs/stage deployment/inputs/remove deployment/config/init deployment/prepare deployment/database/schema/init deployment/config/check deployment/up deployment/status deployment/logs deployment/down deployment/reader/prepare deployment/reader/check deployment/reader/status deployment/reader/remove help
+.PHONY: network/rates/measure test/http/recording/run test/indexer/stress/replay test/indexer/stress/capture test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/indexer/run test/deployment/acceptance/run test/indexer/acceptance/fuji/run test/input-staging/run test/indexer/acceptance/borrowed/run test/indexer/acceptance/owned/run history/block/advance deployment/inputs/stage deployment/inputs/remove deployment/config/init deployment/prepare deployment/database/schema/init deployment/config/check deployment/up deployment/status deployment/logs deployment/down deployment/reader/prepare deployment/reader/check deployment/reader/status deployment/reader/remove help
 
 # Each action's declaration is also the help authority. Recipes share the
 # literal-value dispatchers; no Make target aliases or duplicate help list.
@@ -96,6 +101,9 @@ test/indexer/stress/capture: ## Record original Conix on live Fuji with independ
 	$(RUN_OPERATOR)
 
 .PHONY: test/indexer/stress/evidence/complete
+test/indexer/stress/replay: ## Offline original CLI/PG/Reader baseline and delayed replay; CAPTURE_DIR EVIDENCE_DIR DOCKER_CONTEXT RUNNER_IMAGE STRESS_REPLAY_DELAY_MS STRESS_CHECKPOINT_CADENCE_MS STRESS_CATCHUP_TIMEOUT_SECONDS are mandatory
+	$(RUN_OPERATOR)
+
 test/indexer/stress/evidence/complete: ## Complete retained immutable RPC evidence; CAPTURE_DIR, DOCKER_CONTEXT, RUNNER_IMAGE, STRESS_COMPLETION_SECONDS, STRESS_EXCHANGES and STRESS_ARCHIVE_BYTES required; no replay or SQL
 	$(RUN_OPERATOR)
 
