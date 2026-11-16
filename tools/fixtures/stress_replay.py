@@ -68,6 +68,8 @@ def private_folder(input_value):
     folder = Path(input_value).expanduser()
     if not folder.is_absolute():
         folder = ROOT / folder
+    for ancestor in (folder, *folder.parents):
+        require(not ancestor.is_symlink(), "Replay evidence paths must not traverse symlinks.")
     details = folder.lstat()
     require(stat.S_ISDIR(details.st_mode) and details.st_uid == os.geteuid()
             and not details.st_mode & 0o077,
