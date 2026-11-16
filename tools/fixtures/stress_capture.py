@@ -185,7 +185,7 @@ class StressCapture:
                                            ids[0], capture=True))
         require(record["Id"] == ids[0] and record["Config"]["Labels"].get(OWNER_LABEL) == self.owner
                 and record["Config"]["Labels"].get("com.docker.compose.service") == service
-                and record["Image"] == (self.runner if service in ("gateway", "observer") else self.images["postgres"]),
+                and record["Config"]["Image"] == (self.runner if service in ("gateway", "observer") else self.images["postgres"]),
                 "Capture service changed immutable identity or owner.")
         if running:
             require(record["State"]["Running"] is True, "Capture service exited during the observation window.")
@@ -392,16 +392,18 @@ class StressCapture:
         # advanced by application requests.
         deadline = time.monotonic() + self.selection["stress_duration_seconds"] + 40
         while True:
-            state = self.container("observer")[1]["State"]
-            if not state["Running"]:
-                break
-            require(time.monotonic() < deadline, "Independent observer exceeded its bounded capture budget.")
             self.deployed()
-            time.sleep(0.5)
-        after = {"gateway": self.calibrate("gateway")}
-        # The observer may already have exited; its post-window clock sample
-        # is taken from an owned helper in the same Engine and clock namespace.
-        after["observer"] = self.calibrate("gateway")
+            self.container("observer", running=True)
+            try:
+                result = json.loads(self.control("observer", "done"))
+                require(result["status"] in ("complete", "partial"),
+                        "Observer returned an unknown final capture status.")
+                break
+            except OperationError:
+                if time.monotonic() >= deadline:
+                    raise OperationError("Independent observer exceeded its bounded capture budget.")
+                time.sleep(0.5)
+        after = {service: self.calibrate(service) for service in ("gateway", "observer")}
         self.records["clocks"] = {
             service: self.clock_mapping(before[service], after[service])
             for service in ("gateway", "observer")
@@ -410,6 +412,14 @@ class StressCapture:
         require(self.deployed() == identity, "Retained Conix identity changed before the final head.")
         self.records["indexer_events"] = self.history(identity, started_events, finished_events)
         self.records["process_continuity"] = "confirmed"
+        self.control("observer", "retire")
+        retirement_deadline = time.monotonic() + 15
+        while self.container("observer")[1]["State"]["Running"]:
+            require(time.monotonic() < retirement_deadline,
+                    "Observer worker retirement remained unconfirmed.")
+            time.sleep(0.1)
+        require(self.container("observer")[1]["State"]["ExitCode"] == 0,
+                "Independent observer exited without a clean archive/receipt.")
 
     def stop(self):
         self.phase = "retirement before export"
