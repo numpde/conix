@@ -116,7 +116,7 @@ class ReplayEvidence:
             except ValueError:
                 # A failed, non-matrix capture is not an immutable RPC answer.
                 continue
-            if exchange.request["method"] == "eth_getBlockByNumber" and value is None:
+            if exchange.key[0] == "eth_getBlockByNumber" and value is None:
                 # A numbered header above the live provider's head was
                 # genuinely absent at the time of capture. It is not timeless
                 # negative evidence: the later admitted header is immutable
