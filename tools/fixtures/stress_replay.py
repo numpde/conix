@@ -27,6 +27,7 @@ import tomllib
 from tools.containers import named
 from tools.containers.client import IMAGE_ID, OperationError, select_endpoint
 from tools.containers.deployment import _candidate_ids
+from tools.containers.process_evidence import require_running
 from tools.containers.diagnostics import PHASES, error_record, explanation
 from tools.fixtures.deployment import campaign_lock
 from tools.fixtures.process import cancellation, clean_environment, owned_command, progress, retire_deployment
@@ -330,7 +331,7 @@ class ReplayAttempt:
         self.compose("run", "--rm", "--no-deps", "--pull", "never",
                      "--interactive=false", "-T", "bootstrap", timeout=90)
         self.replay_id, replay = self.owned("replay")
-        require(replay["State"]["Running"], "Offline replay service never became ready.")
+        require_running(self.docker, replay, "Offline replay service")
         self.create_profile()
         for action in ("deployment/prepare", "deployment/database/schema/init",
                        "deployment/config/check", "deployment/reader/prepare"):
@@ -378,8 +379,17 @@ class ReplayAttempt:
                 and record["Config"]["Labels"].get(OWNER_LABEL) == self.owner
                 and record["HostConfig"]["LogConfig"]["Type"] == "none",
                 "Reader sampler identity or confinement changed.")
-        if running:
-            require(record["State"]["Running"] is True, "Reader sampler exited before release.")
+        if running and not record["State"]["Running"]:
+            # Logging is deliberately disabled. Retain daemon exit/OOM facts
+            # and the exact owned identity rather than a generic liveness loss.
+            self.records["sampler_terminal"] = {
+                "id": record["Id"], "exit": record["State"]["ExitCode"],
+                "oom": record["State"]["OOMKilled"],
+            }
+            raise OperationError("Reader sampler stopped before release; "
+                                 "daemon exit=" + str(record["State"]["ExitCode"]) +
+                                 "; OOM=" + str(record["State"]["OOMKilled"]),
+                                 exit_code=record["State"]["ExitCode"])
         return record
 
     def status(self):
@@ -399,12 +409,13 @@ class ReplayAttempt:
             "container", "inspect", "--format", "{{json .}}", ids[0], capture=True))
         prepared = named.inspect_prepared(self.name)
         require(prepared is not None and record["Id"] == ids[0]
-                and record["Image"] == prepared.image and record["State"]["Running"]
+                and record["Image"] == prepared.image
                 and record["Config"]["User"] == "65532:65532"
                 and record["Config"]["Cmd"] == ["-I", "-m", "conix", "run"]
                 and set(record["NetworkSettings"]["Networks"]) ==
                     {self.project + "_tests", self.project + "_rpc"},
                 "Original installed Conix execution or grants changed.")
+        require_running(self.docker, record, "Original installed Conix")
         return ids[0]
 
     @contextmanager
