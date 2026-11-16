@@ -29,6 +29,7 @@ ROOT = named.ROOT
 SOURCE_FILE = ROOT / "tests/fixtures/evm/fuji_pay_to_play.json"
 PROFILE = ROOT / "config/deployments/fuji-acceptance"
 OWNER_LABEL = "io.conix.stress-owner"
+STREAM_WORKERS = {"application": "gateway", "observer": "observer"}
 HASH = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 ID = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -527,7 +528,7 @@ class StressCapture:
 
     def export(self, name):
         """A networkless volume-only helper; Docker cp never prints WARC bytes."""
-        require(name in self.retired, "Archive cannot be exported before confirmed recorder retirement.")
+        require(STREAM_WORKERS[name] in self.retired, "Archive cannot be exported before confirmed recorder retirement.")
         volume = self.owned_volume(name)
         helper = "conix-export-" + name + "-" + self.owner
         self.phase = "export " + name
@@ -770,7 +771,7 @@ def _recorder_diagnostics(records):
             messages.append(f"recorder_{name}_failure={cause}")
         elif receipt.get("transport_stopped") is True:
             messages.append(f"recorder_{name}_transport_stopped=true")
-        exit_code = exits.get("gateway" if name == "application" else name)
+        exit_code = exits.get(STREAM_WORKERS[name])
         if type(exit_code) is int and 0 < exit_code <= 255:
             messages.append(f"recorder_{name}_exit={exit_code}")
     return "; ".join(messages)
@@ -822,8 +823,8 @@ def run_capture(options, *, client_cls, pinned_images):
                     failed_phase = capture.phase
             # Retain partial archives even when the observer or Conix failed.
             if capture.fixture_attempted and capture.runner is not None:
-                for name in ("application", "observer"):
-                    if name not in capture.retired:
+                for name, worker in STREAM_WORKERS.items():
+                    if worker not in capture.retired:
                         capture.records["export"][name] = {"status": "unconfirmed", "failure": "retirement"}
                         continue
                     try:

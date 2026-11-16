@@ -175,6 +175,15 @@ class CaptureAdmissionContracts(unittest.TestCase):
             fixture.export("application")
         fixture.docker.assert_not_called()
 
+    def test_application_export_uses_gateway_retirement(self):
+        """The application stream belongs to the gateway, not an application service."""
+        fixture = StressCapture.__new__(StressCapture)
+        fixture.retired = {"gateway"}
+        fixture.owned_volume = Mock(side_effect=LookupError("volume admission reached"))
+        with self.assertRaises(LookupError):
+            fixture.export("application")
+        fixture.owned_volume.assert_called_once_with("application")
+
     def test_engine_lifecycle_events_must_cover_one_uninterrupted_process(self):
         from datetime import datetime, timedelta, timezone
 
