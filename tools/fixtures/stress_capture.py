@@ -165,6 +165,12 @@ class StressCapture:
             "abi_sha256": hashlib.sha256(self.abi).hexdigest(),
             "capture": "unconfirmed", "export": {}, "cleanup": [],
         }
+        json_record(self.folder / "recovery.json", {
+            "owner": self.owner, "engine": docker.endpoint, "project": self.project,
+            "deployment": self.name, "archive_volumes": [
+                self.project + "_application", self.project + "_observer",
+            ], "status": "retain until verified export and cleanup",
+        })
 
     def child(self, argv, label, *, environment=None, timeout=90):
         self.steps += 1
@@ -330,7 +336,10 @@ class StressCapture:
         document = dict(self.profile)
         document["chain"] = {**document["chain"], "start_block": seed}
         document.update(database_network=self.project + "_tests", rpc_network=self.project + "_rpc")
-        put_private(self.profile_dir / "deployment.toml", named.render_deployment(document).encode())
+        config = named.render_deployment(document).encode()
+        put_private(self.profile_dir / "deployment.toml", config)
+        self.records["deployment_sha256"] = hashlib.sha256(config).hexdigest()
+        self.records["start_block"] = seed
         put_private(self.profile_dir / "abi/pay_to_play.json", self.abi)
         for role in ("owner", "runtime", "reader"):
             credential = f"postgresql://conix_{role}:conix-disposable-{role}@postgres:5432/conix_rpc_test\n"
@@ -541,10 +550,14 @@ class StressCapture:
                 and last["header"]["height"] > first["header"]["height"],
                 "Fuji observed head did not advance through a complete window.")
         inspection_seed = self.records["export"]["observer"]["inspection"]["first_header"]
-        require(inspection_seed["height"] == seed["header"]["height"]
+        require(inspection_seed["id"] == seed["id"]
+                and inspection_seed["height"] == seed["header"]["height"]
                 and inspection_seed["hash"] == seed["header"]["hash"]
                 and inspection_seed["parent_hash"] == seed["header"]["parent_hash"],
                 "Raw WARC seed body conflicts with observer control record.")
+        for stream, receipt in (("application", gateway), ("observer", observed_receipt)):
+            require(receipt["exchanges"] == self.records["export"][stream]["inspection"]["exchanges"],
+                    "Recorded exchange count differs from independent WARC inspection.")
         require(self.records.get("process_continuity") == "confirmed",
                 "Original retained process continuity is unconfirmed.")
         for sample in observer["samples"]:
