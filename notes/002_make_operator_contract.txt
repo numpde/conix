@@ -344,7 +344,7 @@ STRESS_EXCHANGES (1..16384), and STRESS_ARCHIVE_BYTES (1048576..67108864).
 These grants have no operator defaults. Example for the retained Fuji capture:
 
   make test/indexer/stress/evidence/complete \
-    CAPTURE_DIR=out/rpc-recordings/53b35dc53d2ab111af37df89 \
+    CAPTURE_DIR=out/indexer/stress/runs/20261116-124233/fuji-pay-to-play/capture \
     DOCKER_CONTEXT=agentic RUNNER_IMAGE=sha256:<selected-test-runner-id> \
     STRESS_COMPLETION_SECONDS=900 STRESS_EXCHANGES=4096 \
     STRESS_ARCHIVE_BYTES=67108864
@@ -365,8 +365,16 @@ stopped worker's identity, exit and attached-file hashes are retained before
 container removal. A separate networkless process rebuilds coverage from the
 closed archives. No volume, host port or Engine socket is granted.
 
-Each attempt writes out/rpc-evidence/<id>/catalog.toml, completion.warc.gz,
-private phase output and admission.json. The receipt binds A's exact files,
+Each attempt writes under out/indexer/stress/runs/<UTC timestamp>/<subject>/
+evidence-completion/: catalog.toml, completion.warc.gz, private phase output
+and admission.json. Capture uses the same layout with a capture/ phase.
+Docker owner IDs remain unchanged inside private provenance. Reviewable
+report.json files are published under the matching qualification/indexer/
+stress/runs/ path. A reviewed source identity supplies the subject name;
+private input directory names never supply public labels. Existing valid
+CAPTURE_DIR selections remain supported regardless of their directory names.
+An already allocated timestamp/subject/phase is refused without overwriting it.
+The receipt binds A's exact files,
 the derived catalog and the completion archive. Original A files stay intact;
 partial or conflicting evidence remains unavailable, without narrowing the
 window. Failed publication and uncertain cleanup remain separate from the

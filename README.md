@@ -310,3 +310,8 @@ automatic uncertain-COMMIT reconciliation (T1-D2) is not implemented.
 
 [Note 007](notes/007_tier_1_qualification.txt) records policies, exact revisions,
 CI evidence and qualification limits.
+
+Recorded stress captures and evidence-completion results are indexed in
+[the qualification reports](qualification/indexer/stress/README.md).
+Raw WARC and full receipts remain private; [Note 013](notes/013_recorded_stress_campaign.txt)
+records exact revisions and the remaining timed-replay qualification.

@@ -320,7 +320,7 @@ this successful run's containers, networks, database/input/archive volumes and
 generated deployment were retired.
 
 Private artifact directory:
-  out/rpc-recordings/53b35dc53d2ab111af37df89/
+  out/indexer/stress/runs/20261116-124233/fuji-pay-to-play/capture/
 It includes application.warc.gz, observer.warc.gz, manifest.json, the source/ABI
 and deployment snapshots, lifecycle receipt and local qualification logs.
 Application SHA-256:
@@ -373,7 +373,8 @@ Stage B implementation (2026-11-16)
 -----------------------------------
 The maintained operation is test/indexer/stress/evidence/complete; Note 002
 owns its exact inputs and resource grants. It leaves the Stage A directory
-untouched and writes a separate private out/rpc-evidence/<attempt-id>/.
+untouched and writes a separate private dated subject/phase directory under
+out/indexer/stress/runs/, with a review report under qualification/.
 The retained named declaration is projected through the existing named
 operator, with its retired gateway URL replaced by its own reviewed source.
 The worker uses prepare_catalog, core.verify_source, core._block and the
@@ -411,9 +412,9 @@ grant, 4096 exchanges and 67108864 archive bytes. Acquisition took 418 seconds;
 the separate networkless verification completed successfully afterward.
 
 Retained admission:
-  out/rpc-evidence/ce496dc4bca1c8327da4f6e4/admission.json
+  out/indexer/stress/runs/20261116-155440/fuji-pay-to-play/evidence-completion/admission.json
 Raw completion archive:
-  out/rpc-evidence/ce496dc4bca1c8327da4f6e4/completion.warc.gz
+  out/indexer/stress/runs/20261116-155440/fuji-pay-to-play/evidence-completion/completion.warc.gz
 SHA-256:
   3b69f3ca1ba975c50744bc03d4a7fb4ac10e156dc26092727c82bb25ed38e49f
 Physical archive size: 4367975 bytes.
@@ -454,3 +455,35 @@ consensus finality, SQL throughput or keep-pace capacity. Stage C's maintained
 replay lane, timed baseline/slowdown runs and Stage D remain unimplemented.
 No scanner, publication, journal or Reader algorithm was changed. No maintained
 branch promotion, production activation or sibling-repository change occurred.
+
+Reviewable artifact layout (2026-11-16)
+----------------------------------------
+The current entry point is qualification/indexer/stress/README.md, with dated
+capture and evidence-completion reports linked below it. The report generator
+publishes only selected public source identities, bounded outcomes/counts and
+receipt/archive hashes. Raw WARC, complete receipts and logs remain private
+under the matching out/indexer/stress/runs/<UTC>/<subject>/<phase>/ path.
+Known reviewed source identities supply descriptive names; other sources use
+their declared numeric chain identity. Private directory names do not supply
+public labels and do not participate in source admission. Existing valid
+CAPTURE_DIR inputs retain their original admission contract.
+
+The two successful historical directories were moved, without changing their
+contents, into the current locations above. The original directories were:
+  out/rpc-recordings/53b35dc53d2ab111af37df89
+  out/rpc-evidence/ce496dc4bca1c8327da4f6e4
+The tracked reports retain these names as original_private_directory. All 42
+capture files and nine completion files retained their bytes, modes and file
+identities. Original manifest/admission bytes and hashes remain unchanged;
+embedded old paths are execution-time provenance. The earlier command above
+accurately records the CAPTURE_DIR used during that run, not its new location.
+Other historical partial runs and their retained resources were not moved.
+The import is an organization change, not a new capture or qualification run.
+Migration proof is private under
+  out/qualification/stress-artifact-layout-74537be/migration.json.
+
+Host naming/report checks passed: 281 repository checks and six input checks,
+including collision refusal, private-field exclusion, empty failed streams,
+portable legacy inputs and first-failure preservation through report failure.
+The previous contained image, live qualification revisions and their limits
+are unchanged; no additional RPC acquisition or replay was performed here.

@@ -1,0 +1,50 @@
+{
+  "abi_sha256": "88fac0e8f8376dbf66d991bddbb9c36cc976d5894203192f5da4653c1c2ee20e",
+  "archives": {
+    "application.warc.gz": {
+      "bytes": 1097639,
+      "sha256": "80bdb3e7f54a7fb3f63774135a16292689a7c839d0468dbda1a82785ba725fd0",
+      "verification": "verified"
+    },
+    "observer.warc.gz": {
+      "bytes": 393861,
+      "sha256": "443a4f73ba190d88c4d7d069e25ce4d978716ab7dc13a946190233de1c7eb616",
+      "verification": "verified"
+    }
+  },
+  "cleanup_failure_count": 0,
+  "deployment_sha256": "e6c350df7fd58909a04ef56c6d48a80f4b7b7dfe6e9e376213dee2bae70d66dd",
+  "indexer_image": "sha256:bf995b223cbbf97e2b5e267ade1036febfb38c20ed7306d16fe70da1b8438757",
+  "observation": {
+    "duration_ns": 120439096604,
+    "final_height": 61175387,
+    "initial_height": 61175303,
+    "samples": 116,
+    "seed_height": 61175289
+  },
+  "original_private_directory": "out/rpc-recordings/53b35dc53d2ab111af37df89",
+  "phase": "capture",
+  "private_directory": "out/indexer/stress/runs/20261116-124233/fuji-pay-to-play/capture",
+  "process_continuity": "confirmed",
+  "receipt": {
+    "file": "manifest.json",
+    "sha256": "d5ad080b02b3e17e7ba168108865132a0b21b93b02a059c943d2d3479fb80153"
+  },
+  "revision": "08c28f60abd3298c29d68f8a3c3c02dc60a82ae2",
+  "run": "20261116-124233",
+  "source": {
+    "chain_id": 43113,
+    "contracts": [
+      "0xfd4daafcae28b7037ccb87d54b89c657e79be19f"
+    ]
+  },
+  "source_dirty": false,
+  "source_sha256": "21d431f5f5e88eac0c8b9ace89e01b5d3044afdf69e0e9914cdd27ad2e3b0459",
+  "status": "complete",
+  "subject": "fuji-pay-to-play",
+  "test_image": "sha256:0d4a7b53099d440db23115e33090e2efefde547eea085dfd897fbc4418ed03c4",
+  "worker_exits": {
+    "gateway": 0,
+    "observer": 0
+  }
+}

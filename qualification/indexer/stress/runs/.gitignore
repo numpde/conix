@@ -1,0 +1,5 @@
+# Only explicit review summaries belong in Git; raw evidence stays under out/.
+*
+!*/
+!report.json
+!.gitignore
