@@ -1,0 +1,118 @@
+Error transparency across process retirement
+============================================
+
+Implemented on work/network-rate-fixtures-20261115. Executable source:
+b878359d135769969169d9bc10131d8c839e8361. This note records the change and
+local qualification; it does not promote main, tier-0 or tier-1.
+
+Defect and required behavior
+----------------------------
+Stage A run 4d1bb1e52cba49ba73ee0592 observed an indexer exit after 48.63 s.
+The host converted stopped state to a generic OperationError, then removed
+the container without retaining its application diagnostic. Its original
+cause cannot now be reconstructed. Note 013 retains that historical limit.
+
+An owning lifecycle must admit the exact container, stop it if necessary,
+re-admit its ownership and retain its observed terminal facts and bounded
+logs before removal. Failed evidence capture/publication withholds removal.
+The primary operation failure, recovered producer outcome and cleanup result
+are separate facts. A failed consumer may have been successfully removed;
+its dependencies may retire only after independently confirming absence.
+
+Enforcement and provenance
+---------------------------
+The port source is pay-to-play@8875439e2f05bb0e3ea262a6bfd190d846d5b8db,
+repository_checks/quality/test_error_transparency_posture.py. Original donor
+fixtures remain, with Conix source roots and host error families adapted.
+The port detects fixed filesystem-cause translations and raw broad-exception
+projections, including SystemExit. The authored source inventory is src/ and
+tools/; both roots must exist.
+
+The new process-outcome posture check detects fixed errors derived from
+observed unsuccessful exit/liveness predicates. It distinguishes successful
+operation demands from confirmed-stop admission, and rejects obvious empty
+or constant evidence keyword bypasses. These are local AST heuristics, not
+proof of arbitrary Python control flow or transitive teardown ordering.
+
+The complementary lifecycle contract runs the real operator CLI, named
+recovery dispatch and Docker client against an external Engine executable.
+A real child emits the failure; the Engine fixture deletes logs on removal.
+The tests require actual terminal cause/phase/effect/exit, private retention
+before removal, no disclosure of surrounding private prose, primary-last
+reporting, and refusal to remove when collection/publication fails. Oversized
+log output is stopped during collection. Foreign ownership blocks access.
+This follows Agent Mail's diagnostic-before-teardown lifecycle precedent.
+
+Owning boundaries
+-------------------
+- The original installed CLI emits the existing bounded process protocol for
+  staged-input, run and explicit history failures. Application algorithms and
+  the standalone loop are unchanged. No exception messages enter that record.
+- DockerClient.container_logs captures both streams with a combined 64-KiB
+  byte bound, a 20-second collection deadline and bounded client retirement.
+- process_evidence retains selected identity/image, exit, OOM, restart and
+  timing facts plus private log bytes under out/process-evidence/<id>.*.
+  Records exclude inspection environment/configuration and refuse changed or
+  unsafe prior evidence. Publication is private and atomic per file; the JSON
+  receipt is published after the log files and includes their hashes.
+- The shared decoder admits one bounded producer record. Optional child_exit
+  preserves the innermost observed native status across Docker/Make wrappers;
+  outer exit statuses remain independently reported. It accepts only bounded
+  integers, not prose or command arguments.
+- Ordinary deployment/down retains evidence before deletion. History and
+  Reader retirement use the same observation boundary; Reader automatic and
+  forced removal are gone. Exact ownership is rechecked before retention.
+- Shared child-command handling carries admitted diagnostics across campaign
+  boundaries. Deployment, Fuji and stress acceptance distinguish consumer
+  failure from cleanup completion. Recovered outcomes remain visible when
+  another primary failure already exists.
+- Filesystem wrappers retain safe cause records. Offline wheel selection
+  carries native child status through its real renderer and host decoder;
+  missing-artifact exit 10 remains the only acquisition authorization.
+
+Review corrections
+--------------------
+Independent review corrected an initially invented test seam, static keyword
+bypasses, loss of producer facts on receipt-publication failure, post-read
+rather than during-read log limits, and a Reader result/inspection variable
+collision. The Reader regression includes a private inspection sentinel and
+an actual retained cleanup candidate. Review also closed history removal and
+verification-failure combinations, nested exit-status preservation, and
+campaign cleanup's producer-failure/confirmed-absence distinction.
+
+Qualification — fw / rootless agentic, 2026-11-16
+--------------------------------------------------
+- Behavioral RED: three public-CLI lifecycle cases reproduced the original
+  destruction/loss; source checks found eight filesystem translations and
+  seven process-state translations. Installed CLI baseline had three failing
+  cases for absent structured diagnostics and exception-value disclosure.
+- Final host checks at b878359: 262 repository tests passed. Input checks:
+  6 passed. Python compilation and git diff --check passed.
+- Contained PostgreSQL/Anvil: 174 tests passed, 2 expected skips, plus 2
+  owner/schema initialization tests. The COMMIT-reply-loss assertion now checks
+  CommitOutcomeUnknown/commit_unknown instead of freezing the word COMMIT.
+- The qualified test image is:
+  sha256:7ed78114f300e28a92d90dea0d039ab55496c16ab6e70ce1b7834a0e622f54fc
+  Its copied-source inventory matches the committed source:
+  6f03bd21c4decae69f737693b676dc7de9ce1ce5f49cfa4aa8e00063a5254350
+- The maintained retained-deployment acceptance lane passed from the clean
+  b878359 checkout, including restart, live Reader, normal shutdown and owned
+  cleanup. It retained private terminal receipts before removing containers.
+- Source-aware independent review closed without remaining findings in scope.
+
+Private local qualification receipts:
+  out/qualification/error-transparency-b878359/
+Raw logs and process evidence remain private and Git-ignored. This tracked
+note is the qualification record. Container, network and ephemeral test
+storage cleanup completed for these qualification runs.
+
+Scope and limits
+------------------
+No scanner, journal or Reader algorithm, automatic retry/recovery policy,
+production deployment, dependency pin or Make target was changed. No sibling
+repository was modified. The selected Fuji capture remains qualification of
+its recorded revision; it was not repeated for these diagnostic changes.
+The Engine lifecycle contract models Docker externally; real installed
+failures and normal retained lifecycle are separately qualified by the
+contained and retained-service lanes. These checks do not prove every possible
+failure path, and they cannot restore the diagnostic destroyed in the old run.
