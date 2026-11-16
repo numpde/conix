@@ -1,7 +1,8 @@
 Recorded-network stress campaign
 ================================
 
-Status: proposed; supersedes Note 012's Fuji-first B and exact-conversation C.
+Status: Stage A locally qualified at 08c28f6; stages B-D remain proposed.
+Supersedes Note 012's Fuji-first B and exact-conversation C.
 Date: 2026-11-15
 
 Goal: find out whether the original installed Conix process keeps up with an
@@ -295,3 +296,73 @@ The isolated B reader correctly identified which missing evidence can be
 acquired and which historical failures cannot be repaired. Work-order readers
 correctly preserved evidence after failed export and withheld unavailable
 coverage from C. This establishes plan comprehension, not runtime qualification.
+
+Stage A local qualification — 2026-11-16
+---------------------------------------
+Executable/test revision: 08c28f60abd3298c29d68f8a3c3c02dc60a82ae2.
+Host: fw; selected rootless Engine: agentic. Source tree was clean at capture.
+No main, tier-0 or tier-1 promotion and no production activation occurred.
+
+Local compilation passed. Maintained checks passed: 234 repository tests,
+6 input checks, 2 owner/schema initialization tests and 172 contained tests
+with 2 expected skips. The contained PostgreSQL/Anvil stack was retired.
+
+Successful capture: 53b35dc53d2ab111af37df89, with the explicit 120-second,
+1000-ms cadence, 5000-ms maximum gap, 1000-ms clock tolerance, 64-MiB archive,
+4096-exchange and 900-second startup budgets. Actual window: 120.439096604 s.
+All 116 timed observations succeeded; head advanced from 61175303 to 61175387.
+The seed adds one observer exchange. Maximum observation gap: 2.351780134 s.
+Clock uncertainty was within budget (gateway 171.203 ms; observer 120.017 ms).
+Live Engine events established uninterrupted original-process identity.
+Both recorders exited zero. Both archives were complete, exported and verified;
+this successful run's containers, networks, database/input/archive volumes and
+generated deployment were retired.
+
+Private artifact directory:
+  out/rpc-recordings/53b35dc53d2ab111af37df89/
+It includes application.warc.gz, observer.warc.gz, manifest.json, the source/ABI
+and deployment snapshots, lifecycle receipt and local qualification logs.
+Application SHA-256:
+  80bdb3e7f54a7fb3f63774135a16292689a7c839d0468dbda1a82785ba725fd0
+Observer SHA-256:
+  443a4f73ba190d88c4d7d069e25ce4d978716ab7dc13a946190233de1c7eb616
+The maintained networkless WARC inspector passed. Additional standard-library
+inspection verified 3986 record digests and matched every observer body/header
+against all 117 manifest observations including the seed. The application
+archive has 381 exchanges, including 323 selected-log reads; both archives
+contain HTTP 200 responses without JSON-RPC errors. Encoded gzip responses
+remain unchanged in WARC; inspection decoded them only for comparison.
+
+Supplementary network observations:
+  out/network-health/20261116T122517Z/observations.jsonl
+A separate bounded host probe issued eth_chainId every five seconds, discarding
+response bodies and retaining DNS/TCP/TLS/response timings, route and interface
+counters. It observed the VPN route via tun0, with no Wi-Fi/VPN error or drop
+counter increases. Of 240 probes, one timed out before the successful capture;
+all 24 probes in its approximate UTC window succeeded. This host path is not
+the contained observer and does not establish packet-loss absence or provider
+capacity. The capture directory retains its summary.
+
+Earlier attempts remain evidence, not superseded successes:
+- a7cdb3c0b80ca2f888b702e5 exposed chmod after ownership handoff under the
+  CAP_CHOWN-only initializer grant. 1c9f978 corrected the ordering without
+  adding capabilities. Both empty volumes were verified empty and retired;
+  the failure and recovery-cleanup receipts remain.
+- b1586739283e2695239b9f77 completed observation but lost the indexer start
+  event from Docker's finite retrospective ring. 08c28f6 subscribes before
+  measurement and preserves live events. Application export also confused
+  stream name application with worker gateway; 0c2404c corrected that mapping
+  with a demonstrated failing/passing regression. Its retained application
+  archive was subsequently recovered through the corrected exporter, verified
+  and its volume retired. That capture remains unavailable for admission.
+- 4d1bb1e52cba49ba73ee0592 observed an actual early indexer exit after about
+  49 seconds. Its exact application cause was not retained. The application
+  archive is verified; its incomplete observer evidence volume remains
+  intentionally retained under that run's recovery record. No containers or
+  networks from these attempts remain. Do not reinterpret that failure as a
+  successful observation or infer its cause from host connectivity probes.
+
+This qualifies the named successful bounded Stage A run and its corrected
+harness. It does not establish unattended reliability, complete replay
+coverage, SQL throughput or keep-pace capacity. Stages B/C remain unimplemented.
+The qualification record is documentation only beyond the named executable.
