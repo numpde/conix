@@ -198,6 +198,39 @@ class CaptureAdmissionContracts(unittest.TestCase):
                 with self.assertRaises(OperationError):
                     fixture.history(identity, started, ended)
 
+    def test_nonzero_recorder_exit_is_retired_but_not_successful_capture(self):
+        fixture = StressCapture.__new__(StressCapture)
+        fixture.profile_created = False
+        fixture.fixture_attempted = True
+        fixture.consumer_retired = False
+        fixture.records = {}
+        fixture.retired = set()
+        fixture.container = Mock(side_effect=lambda service: (
+            ("a" if service == "gateway" else "b") * 64,
+            {"State": {"Running": False, "ExitCode": (0 if service == "gateway" else 17)}},
+        ))
+        with self.assertRaises(OperationError):
+            fixture.stop()
+        self.assertTrue(fixture.consumer_retired)
+        self.assertEqual(fixture.retired, {"gateway", "observer"})
+        self.assertEqual(fixture.records["worker_exits"]["observer"], 17)
+
+    def test_partial_recorder_receipt_reports_bounded_worker_cause(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = StressCapture.__new__(StressCapture)
+            fixture.folder = Path(directory)
+            fixture.archive_exported = set()
+            fixture.records = {"export": {"observer": {"status": "unconfirmed"}}}
+            (fixture.folder / "observer-receipt.json").write_text(json.dumps({
+                "status": "partial", "exchanges": 3, "transport_stopped": True,
+                "failure": "ReadTimeout",
+            }))
+            fixture.report_archive_outcomes()
+            observed = fixture.records["archive_evidence"]["observer"]
+            self.assertEqual(observed["archive"], "unconfirmed")
+            self.assertEqual(observed["recorder_receipt"], "partial")
+            self.assertEqual(observed["failure"], "ReadTimeout")
+
     def test_cleanup_retains_both_unexported_archive_volumes(self):
         fixture = StressCapture.__new__(StressCapture)
         fixture.fixture_attempted = True
@@ -225,7 +258,7 @@ class CaptureAdmissionContracts(unittest.TestCase):
 class CaptureFailureReportingContracts(unittest.TestCase):
     """Report admitted primary failure facts separately from resource cleanup."""
 
-    def run_failed_capture(self, *, primary=None, phase="Stress deployment/up", cleanup=()):
+    def run_failed_capture(self, *, primary=None, phase="Stress deployment/up", cleanup=(), archive_evidence=None):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             private = base / "private"
@@ -240,6 +273,9 @@ class CaptureFailureReportingContracts(unittest.TestCase):
             run.child.side_effect = [b"a" * 40 + b"\n", b""]
             run.observe.side_effect = primary
             run.cleanup.return_value = list(cleanup)
+            if archive_evidence is not None:
+                run.report_archive_outcomes.side_effect = lambda: run.records.update(
+                    archive_evidence=archive_evidence)
             if primary is None:
                 run.complete.side_effect = lambda: run.records.update(capture="complete")
             shown = []
@@ -293,6 +329,21 @@ class CaptureFailureReportingContracts(unittest.TestCase):
         self.assertIn("exit=7", message)
         self.assertNotIn("PRIVATE_DATABASE_DETAIL", message)
         self.assertIs(cause, first)
+
+    def test_recorder_timeout_category_is_visible_without_private_prose(self):
+        message, _, _, _ = self.run_failed_capture(
+            primary=OperationError("PRIVATE_UPSTREAM_REPLY"),
+            phase="observer done",
+            archive_evidence={
+                "observer": {
+                    "recorder_receipt": "partial", "archive": "unconfirmed",
+                    "failure": "ReadTimeout", "transport_stopped": True,
+                },
+            },
+        )
+        self.assertIn("phase=observer done", message)
+        self.assertIn("recorder_observer_failure=ReadTimeout", message)
+        self.assertNotIn("PRIVATE_UPSTREAM_REPLY", message)
 
     def test_cleanup_only_has_clear_phase_and_cause(self):
         message, terminal, manifest, cause = self.run_failed_capture(
