@@ -1,8 +1,8 @@
 Recorded-network stress campaign
 ================================
 
-Status: Stage A locally qualified at 08c28f6; Stage B implemented, qualification
-pending below; stages C-D remain proposed.
+Status: Stage A locally qualified at 08c28f6; Stage B implemented and locally
+qualified within the revision limits below; stages C-D remain proposed.
 Supersedes Note 012's Fuji-first B and exact-conversation C.
 Date: 2026-11-15
 
@@ -399,6 +399,58 @@ failed poll as an empty log result. A seed-to-first-timed-head decrease also
 has a demonstrated failing/passing regression; the predecessor anchor cannot
 conceal it. Rechecks compare complete block results independently of RPC IDs.
 
-Stage B qualification and the resulting artifact are still pending at this
-implementation checkpoint. Stage C replay, SQL throughput and keep-pace
-capacity remain unimplemented and unqualified.
+Stage B qualification and its resulting artifact were still pending at that
+implementation checkpoint. The following record supersedes that pending gate.
+
+Stage B selected-Engine qualification (2026-11-16)
+--------------------------------------------------
+The maintained lane passed on fw/rootless agentic at executable 6a3f2bc,
+preserved by tag qualification/stress-evidence-20261116. The command used
+CAPTURE_DIR=out/rpc-recordings/53b35dc53d2ab111af37df89, a 900-second acquisition
+grant, 4096 exchanges and 67108864 archive bytes. Acquisition took 418 seconds;
+the separate networkless verification completed successfully afterward.
+
+Retained admission:
+  out/rpc-evidence/ce496dc4bca1c8327da4f6e4/admission.json
+Raw completion archive:
+  out/rpc-evidence/ce496dc4bca1c8327da4f6e4/completion.warc.gz
+SHA-256:
+  3b69f3ca1ba975c50744bc03d4a7fb4ac10e156dc26092727c82bb25ed38e49f
+Physical archive size: 4367975 bytes.
+
+The admitted interval is 61175289..61175387 inclusive: 99 blocks, all 17
+selected address/topic queries per block, and 1683 exact selected-log cells.
+Its 101 numbered headers include genesis and the predecessor anchor; all
+101 were reread after collection. There were 345 captured-result reuses,
+1441 missing reads acquired, and 1544 new recorded exchanges including fresh
+source admission and canonical rechecks. The independent verifier rebuilt
+the same complete coverage from the closed WARC streams without egress.
+All three workers exited zero, no OOM was reported, and each attachment was
+complete. The attempt's containers and bridge were independently confirmed
+absent. Original A snapshots/catalog inputs still match all bound hashes.
+The earlier incomplete A observer volume was not a cleanup target.
+
+Local qualification:
+- 273 final repository checks and 6 input checks passed.
+- The selected rootless contained image passed 190 tests, 2 expected skips,
+  plus the separate 2 owner/schema-initialization tests.
+- Image:
+    sha256:3fe7ecc2954006c0a02204b53add76efbfb3577380e090e2d5b82a1a8d3181a9
+- Its copied-source inventory matches final implementation 648db5a exactly:
+    cf9274825e84cd7197541842a436dc3ba437fc95549a798c257727862a004d31
+- Private logs and revision distinctions are retained under
+    out/qualification/stress-evidence-648db5a/.
+
+Revision distinction: 648db5a folds in a final host-only reporting correction
+after the live run. Failed workers now expose admitted exit/OOM/attachment
+facts before the primary error; failed terminal reporting cannot erase it.
+Six focused host lifecycle contracts include the killed-worker regression.
+The live acquisition was not rerun for this failed-worker-only delta. The
+contained payload is unchanged, as verified by the exact inventory above;
+the earlier live result is not relabelled as a run of the amended SHA.
+
+This admits one source-consistent replay workload. It does not establish
+consensus finality, SQL throughput or keep-pace capacity. Stage C's maintained
+replay lane, timed baseline/slowdown runs and Stage D remain unimplemented.
+No scanner, publication, journal or Reader algorithm was changed. No maintained
+branch promotion, production activation or sibling-repository change occurred.
