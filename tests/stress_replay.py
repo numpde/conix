@@ -146,11 +146,14 @@ class ReplayEvidence:
                     for row in self.results[key]:
                         self.expected[selected_event(row)] += 1
         samples = self.manifest["observer"]["samples"]
-        first = samples[0]["elapsed_start_ns"]
+        # A head returned by an HTTP poll is observed when the reply has
+        # completed, not retroactively when its request started. This timing
+        # projection avoids giving replay earlier knowledge than the observer.
+        first = samples[0]["elapsed_end_ns"]
         self.timeline = []
         for sample in samples:
             if sample["status"] == "observed":
-                elapsed = sample["elapsed_start_ns"] - first
+                elapsed = sample["elapsed_end_ns"] - first
                 require(type(elapsed) is int and elapsed >= 0 and
                         self.start <= sample["header"]["height"] <= self.final,
                         "Admitted head schedule has invalid elapsed time or height.")
