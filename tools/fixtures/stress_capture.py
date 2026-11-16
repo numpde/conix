@@ -100,12 +100,26 @@ def json_record(path, record):
     os.replace(temporary, path)
 
 
-def check_file(path, maximum):
+def check_file(path, maximum, *, imported=False):
+    """Admit Docker-copied files without following links or exposing them.
+
+    Docker cp retains the container's ordinary mode by default. Tighten only
+    a verified, locally owned regular file, never an unexamined symlink.
+    """
     info = path.lstat()
     require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
-            and not info.st_mode & 0o077 and 0 < info.st_size <= maximum,
+            and 0 < info.st_size <= maximum,
             "Exported capture artifact lacks bounded private file ownership.")
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    if imported:
+        path.chmod(0o600)
+        info = path.lstat()
+    require(not info.st_mode & 0o077,
+            "Exported capture artifact is not private.")
+    digest = hashlib.sha256()
+    with path.open("rb") as input_stream:
+        for block in iter(lambda: input_stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 class StressCapture:
@@ -480,11 +494,11 @@ class StressCapture:
             self.docker.run("container", "start", helper, timeout=15)
             archive = self.folder / (name + ".warc.gz")
             self.docker.run("cp", helper + ":/capture/" + name + ".warc.gz", str(archive), timeout=30)
-            archive_hash = check_file(archive, self.selection["stress_archive_bytes"])
+            archive_hash = check_file(archive, self.selection["stress_archive_bytes"], imported=True)
             for control in ("receipt.json",) + (("observations.json",) if name == "observer" else ()):
                 path = self.folder / (name + "-" + control)
                 self.docker.run("cp", helper + ":/capture/" + control, str(path), timeout=15)
-                check_file(path, 1048576)
+                check_file(path, 1048576, imported=True)
             # A different process reads raw bytes using warcio without importing
             # the recorder, writer, scanner, database or a provider endpoint.
             raw = self.docker.run(
