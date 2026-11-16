@@ -70,4 +70,23 @@ jobs:
           fixture.images = {"postgres": sys.argv[3]}
           fixture.admit_graph(json.loads(Path(sys.argv[1]).read_text()))
           PY
+          export CONIX_REPLAY_OWNER=0123456789abcdef01234567
+          export CONIX_REPLAY_DELAY_MS=250
+          docker compose --env-file /dev/null --project-directory . -p conix-replay-ci \
+            -f compose/stress-replay.yml config --format json > "$RUNNER_TEMP/replay-config.json"
+          python3 - "$RUNNER_TEMP/replay-config.json" "$runner" "$CONIX_POSTGRES_IMAGE" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          from tools.fixtures.stress_replay import ReplayAttempt
+
+          fixture = ReplayAttempt.__new__(ReplayAttempt)
+          fixture.owner = "0123456789abcdef01234567"
+          fixture.project = "conix-replay-ci"
+          fixture.runner = sys.argv[2]
+          fixture.images = {"postgres": sys.argv[3]}
+          fixture.delay = 250
+          fixture.admit_graph(json.loads(Path(sys.argv[1]).read_text()))
+          PY
           make test/indexer/run DOCKER_CONTEXT=default RUNNER_IMAGE="$runner"
