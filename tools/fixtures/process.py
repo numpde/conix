@@ -93,8 +93,16 @@ def retirement_failure(records):
                           exit_code=record["exit_code"], diagnostic=diagnostic)
 
 
-def owned_command(argv, *, output, error_file, env, timeout, payload=None, label="fixture command"):
-    """Bound and reap an owned child while keeping private receipts off terminal."""
+def owned_command(argv, *, output, error_file, env, timeout, payload=None, label="fixture command",
+                  binary_output_limit=None):
+    """Bound and reap a child; an explicit binary grant retains its file only.
+
+    Ordinary callers still receive a bounded JSON/control receipt. A binary
+    producer must itself enforce its physical write limit while running;
+    this owner checks the completed file and never loads it into memory.
+    """
+    if binary_output_limit is not None and (type(binary_output_limit) is not int or binary_output_limit <= 0):
+        raise ValueError("Binary process output requires a positive byte grant.")
     started_at = time.monotonic()
     progress(f"{label}: started")
 
@@ -183,15 +191,20 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
         from tools.containers.diagnostics import PHASES, explanation, extract
 
         with error_file.open("rb") as errors, output.open("rb") as results:
-            diagnostic = extract(errors.read(65537), results.read(65537))
+            streams = [errors.read(65537)]
+            if binary_output_limit is None:
+                streams.append(results.read(65537))
+            diagnostic = extract(*streams)
         reason = explanation(diagnostic, owned_process.returncode, phases=PHASES)
         detail = reason or f"exit={owned_process.returncode}; no admitted producer diagnostic; effects unconfirmed"
         raise CampaignError(f"{label} failed: {detail}", exit_code=owned_process.returncode,
                             diagnostic=diagnostic)
 
-    if output.stat().st_size > 1048576:
-        raise CampaignError(f"{label} produced an oversized receipt; no JSON was admitted.")
+    output_limit = 1048576 if binary_output_limit is None else binary_output_limit
+    if output.stat().st_size > output_limit:
+        raise CampaignError(f"{label} exceeded its output byte grant; private output retained.")
 
     progress(f"{label}: completed ({int(time.monotonic() - started_at)}s)")
 
-    return output.read_bytes()
+    if binary_output_limit is None:
+        return output.read_bytes()

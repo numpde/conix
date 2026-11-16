@@ -105,6 +105,63 @@ def retain_exit(docker, record):
     return facts
 
 
+def _attached_file(path, maximum, *, read=False):
+    """Hash a closed private attachment without reading a large body at once."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "rb") as stream:
+        details = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(details.st_mode) or details.st_uid != os.geteuid()
+                or details.st_mode & 0o077 or details.st_size > maximum):
+            raise OperationError("Attached process output is not a bounded private regular file.")
+        digest = hashlib.sha256()
+        body = bytearray()
+        size = 0
+        while chunk := stream.read(65536):
+            size += len(chunk)
+            if size > maximum:
+                raise OperationError("Attached process output exceeded its byte grant.")
+            digest.update(chunk)
+            if read:
+                body.extend(chunk)
+        return digest.hexdigest(), size, bytes(body)
+
+
+def retain_attached_exit(docker, record, *, output, error_file, output_limit, attachment_complete):
+    """Retain a binary producer's exact stopped state and already captured files.
+
+    The owning caller must disable daemon logging and close/reap its attached
+    CLI first. A complete attachment and a successful producer exit are
+    distinct facts; interruption still leaves inspectable partial evidence.
+    """
+    facts = _state(record)
+    if facts["running"] or type(attachment_complete) is not bool:
+        raise OperationError("Attached producer must be stopped before retaining its outcome.")
+    if type(output_limit) is not int or output_limit <= 0:
+        raise ValueError("Attached binary output requires a positive byte grant.")
+    diagnostic = None
+    try:
+        # Admit the small diagnostic stream first so an unavailable binary
+        # attachment cannot erase the already observed producer failure.
+        error_hash, _, errors = _attached_file(error_file, 65536, read=True)
+        diagnostic = extract(errors)
+        output_hash, size, _ = _attached_file(output, output_limit)
+        facts.update({
+            "diagnostic": admitted(diagnostic), "attachment_complete": attachment_complete,
+            "stdout_sha256": output_hash, "stdout_bytes": size, "stderr_sha256": error_hash,
+            "stdout_receipt": str(Path(output).relative_to(docker.working_dir)),
+        })
+        folder = _private_directory(Path(docker.working_dir))
+        identity = facts["container_id"]
+        _publish(folder / (identity + ".stderr"), errors)
+        _publish(folder / (identity + ".json"), (json.dumps(facts, sort_keys=True) + "\n").encode())
+    except (OperationError, OSError, ValueError) as error:
+        raise OperationError(
+            f"Child exit={facts['exit_code']} observed; attached evidence retention is unconfirmed; container retained.",
+            exit_code=facts["exit_code"], diagnostic=diagnostic or error_record(error),
+        ) from error
+    return facts
+
+
 def failure(facts, operation):
     """Project retained facts to the established public failure protocol."""
     fields = facts["diagnostic"]
