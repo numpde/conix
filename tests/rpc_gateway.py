@@ -11,6 +11,7 @@ import ipaddress
 import socket
 from urllib.parse import urlsplit
 import re
+import signal
 import threading
 import time
 
@@ -140,7 +141,7 @@ def upstream_addresses(*, upstream_url):
         raise UpstreamFailure("dns_evidence") from error
 
 
-def serve(*, upstream_url, head_ceiling=None):
+def serve(*, upstream_url, head_ceiling=None, recording=None):
     """Serve internal peers using caller-owned source configuration.
 
     None exposes the live head. A number projects header discovery only;
@@ -148,8 +149,15 @@ def serve(*, upstream_url, head_ceiling=None):
     """
     admit_configuration(upstream_url, head_ceiling)
     mode = "live" if head_ceiling is None else "historical"
-    capacity = threading.BoundedSemaphore(4)
-    client = httpx.Client(trust_env=False, follow_redirects=False, timeout=10)
+    capacity = threading.BoundedSemaphore(1 if recording is not None else 4)
+    stopping = threading.Event()
+    client = httpx.Client(transport=recording, trust_env=False, follow_redirects=False, timeout=10)
+    server = None
+
+    def stop_admission():
+        if not stopping.is_set():
+            stopping.set()
+            threading.Thread(target=server.shutdown, daemon=True).start()
 
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
@@ -177,6 +185,9 @@ def serve(*, upstream_url, head_ceiling=None):
                 self.reply(200 if self.path == "/healthz" else 404, {"view": mode})
 
         def do_POST(self):
+            if stopping.is_set():
+                self.reply(503, {"error": "Capture is stopping."})
+                return
             if not capacity.acquire(blocking=False):
                 self.reply(503, {"error": "Gateway read capacity is occupied."})
                 return
@@ -196,6 +207,11 @@ def serve(*, upstream_url, head_ceiling=None):
                     document["status"] = error.status
                 self.reply(502, document)
             except Exception as error:
+                if recording is not None and recording.stopped:
+                    # A stopped recorder cannot be hidden behind another 502.
+                    self.reply(503, {"error": "Capture stopped."})
+                    stop_admission()
+                    return
                 # Type is bounded source-level evidence; never stringify values.
                 name = type(error).__name__
                 name = name if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", name) else "UnexpectedError"
@@ -204,9 +220,17 @@ def serve(*, upstream_url, head_ceiling=None):
                 capacity.release()
 
     server = ThreadingHTTPServer(("0.0.0.0", 8080), Handler)
-    server.daemon_threads = True
+    # A captured response must finish before its writer and receipt close.
+    server.daemon_threads = recording is None
+    previous = signal.getsignal(signal.SIGTERM) if recording is not None else None
     try:
+        if recording is not None:
+            signal.signal(signal.SIGTERM, lambda _signum, _frame: stop_admission())
         server.serve_forever()
     finally:
-        server.server_close()
-        client.close()
+        try:
+            server.server_close()
+        finally:
+            if recording is not None:
+                signal.signal(signal.SIGTERM, previous)
+            client.close()
