@@ -9,6 +9,7 @@ import asyncio
 from collections import Counter
 import json
 import os
+import sys
 from pathlib import Path
 import time
 from urllib.request import urlopen
@@ -209,7 +210,7 @@ def observe(*, cadence_ms, catchup_seconds, start_wait_seconds):
 def main():
     # A separate bounded docker-exec control observes the same retained
     # sampler process; readiness never depends on its log output.
-    if __import__("sys").argv[1:] == ["ready"]:
+    if sys.argv[1:] == ["ready"]:
         raw = (RESULTS / "ready.json").read_bytes()
         require(0 < len(raw) <= 4096, "Sampler readiness is unavailable.")
         record = json.loads(raw)
