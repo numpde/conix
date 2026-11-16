@@ -20,7 +20,7 @@ import tomllib
 from tools.containers import named
 from tools.containers.client import OperationError, select_endpoint
 from tools.containers.deployment import _candidate_ids
-from tools.containers.diagnostics import PHASES, admitted, error_record, explanation
+from tools.containers.diagnostics import PHASES, error_record, explanation
 from tools.fixtures.deployment import campaign_lock
 from tools.fixtures.process import cancellation, clean_environment, owned_command, progress
 from tools.wheelhouse.operations import SharedWheelhouse
@@ -29,7 +29,7 @@ ROOT = named.ROOT
 SOURCE_FILE = ROOT / "tests/fixtures/evm/fuji_pay_to_play.json"
 PROFILE = ROOT / "config/deployments/fuji-acceptance"
 OWNER_LABEL = "io.conix.stress-owner"
-HASH = re.compile(r"[0-9a-f]{64}\Z")
+HASH = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 ID = re.compile(r"[0-9a-f]{64}\Z")
 
 
@@ -820,19 +820,19 @@ def run_capture(options, *, client_cls, pinned_images):
                 if primary is None:
                     primary, failed_phase = error, "manifest publication"
 
-            # Report uncertain retirement first. The final diagnostic always
-            # describes the *first* primary failure, even if cleanup or
-            # manifest publication also failed.
-            for failure in failures:
-                try:
-                    progress("Cleanup unconfirmed: " + _safe_cleanup_outcome(failure))
-                except OSError:
-                    pass
+            # Report status and cleanup uncertainty separately. The final
+            # diagnostic describes the *first* primary failure, even if
+            # retirement or manifest publication also failed.
             try:
                 progress("Stress capture " + capture.records["capture"] +
                          "; private receipt: " + str(capture.folder / "manifest.json"))
             except OSError:
                 pass
+            for failure in failures:
+                try:
+                    progress("Cleanup unconfirmed: " + _safe_cleanup_outcome(failure))
+                except OSError:
+                    pass
             if primary is not None:
                 safe = _primary_summary(primary, failed_phase or capture.phase)
                 code = getattr(primary, "exit_code", None)
