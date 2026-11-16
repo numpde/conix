@@ -27,10 +27,10 @@ import tomllib
 from tools.containers import named
 from tools.containers.client import IMAGE_ID, OperationError, select_endpoint
 from tools.containers.deployment import _candidate_ids
-from tools.containers.process_evidence import require_running
+from tools.containers.process_evidence import require_running, retain_attached_exit, failure
 from tools.containers.diagnostics import PHASES, error_record, explanation
 from tools.fixtures.deployment import campaign_lock
-from tools.fixtures.process import cancellation, clean_environment, owned_command, progress, retire_deployment
+from tools.fixtures.process import CampaignError, cancellation, clean_environment, owned_command, progress, retire_deployment
 from tools.fixtures.stress_artifacts import PRIVATE_RUNS, allocate_run, publish_report, source_subject
 from tools.fixtures.stress_capture import SOURCE_FILE, check_file, json_record, put_private, require
 from tools.fixtures.stress_evidence import bundle_inputs
@@ -150,6 +150,8 @@ class ReplayAttempt:
         self.sampler_retired = False
         self.result_exported = False
         self.replay_id = None
+        self.stage_attempted = False
+        self.stage_retired = False
         self.records = {
             "label": label, "delay_ms": delay, "owner": self.owner,
             "engine": docker.endpoint, "project": self.project, "deployment": self.name,
@@ -304,28 +306,91 @@ class ReplayAttempt:
             put_private(self.profile / "secrets" / (role + ".dsn"), dsn.encode())
         self.records["profile_sha256"] = check_file(self.profile / "deployment.toml", 65536)
 
+    def stage_container(self):
+        """Inspect only the exact owner-labelled admission worker before removal."""
+        name = "conix-replay-admit-" + self.owner
+        ids = self.docker.run(
+            "ps", "--all", "--no-trunc", "--filter", "name=^/" + name + "$",
+            "--format", "{{.ID}}", capture=True,
+        ).splitlines()
+        require(len(ids) <= 1, "Replay admission worker identity is ambiguous.")
+        if not ids:
+            return None
+        identity = ids[0]
+        require(ENGINE_ID.fullmatch(identity),
+                "Replay admission worker has an incomplete immutable ID.")
+        record = json.loads(self.docker.run(
+            "container", "inspect", "--format", "{{json .}}", identity, capture=True))
+        require(record["Id"] == identity and record["Name"] == "/" + name
+                and record["Image"] == self.runner
+                and record["Config"]["Labels"].get(OWNER_LABEL) == self.owner
+                and record["HostConfig"]["NetworkMode"] == "none"
+                and record["HostConfig"]["LogConfig"]["Type"] == "none",
+                "Replay admission worker changed image or container authority.")
+        return record
+
     def stage(self):
+        """Retain real worker exit evidence before recycling its private volume."""
         self.phase = "networkless evidence admission"
         self.touched = True
         self.compose("run", "--rm", "--no-deps", "--pull", "never",
                      "--interactive=false", "-T", "volume-init", timeout=75)
+        name = "conix-replay-admit-" + self.owner
         arguments = self.docker.docker_command_prefix + [
-            "run", "--rm", "--interactive", "--pull", "never", "--network", "none",
-            "--log-driver", "none", "--read-only", "--user", "65532:65532",
+            "run", "--interactive", "--pull", "never", "--name", name,
+            "--label", OWNER_LABEL + "=" + self.owner,
+            "--network", "none", "--log-driver", "none",
+            "--read-only", "--user", "65532:65532",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
             "--pids-limit", "32", "--memory", "1g", "--memory-swap", "1g",
             "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=256m",
             "--mount", "type=volume,source=" + self.volume("evidence") + ",target=/evidence,volume-nocopy",
             "--entrypoint", "python", self.runner, "-E", "-s", "/tests/stress_replay.py", "stage",
         ]
-        raw = self.child(arguments, "Replay offline immutable admission", payload=self.payload,
-                         timeout=180)
-        selected = json.loads(raw)
-        require(selected["status"] == "admitted" and selected["source_id"] == self.admission["source_id"]
-                and selected["start"] == self.admission["coverage"]["start_block"]
-                and selected["final"] == self.admission["coverage"]["final_block"],
+        self.stage_attempted = True
+        primary = None
+        control = None
+        self.phase = "networkless evidence admission"
+        try:
+            control = json.loads(self.child(arguments, self.phase,
+                                           payload=self.payload, timeout=180))
+        except BaseException as error:
+            primary = error
+        stdout = self.folder / f"{self.sequence:03d}.out"
+        stderr = self.folder / f"{self.sequence:03d}.err"
+        try:
+            record = self.stage_container()
+            require(record is not None, "Replay admission worker disappeared before exact exit inspection.")
+            if record["State"]["Running"]:
+                self.docker.run("container", "stop", "--time", "20",
+                                record["Id"], timeout=30)
+                record = self.stage_container()
+                require(record is not None and not record["State"]["Running"],
+                        "Replay admission worker retirement is unconfirmed.")
+            facts = retain_attached_exit(
+                self.docker, record, output=stdout, error_file=stderr,
+                output_limit=1048576,
+                attachment_complete=primary is None or
+                    (isinstance(primary, CampaignError) and primary.exit_code is not None),
+            )
+            self.records["stage_process"] = facts
+            if primary is None and facts["exit_code"] != 0:
+                primary = failure(facts, "Replay evidence admission")
+            self.docker.run("container", "rm", record["Id"], timeout=20)
+            require(self.stage_container() is None,
+                    "Replay admission worker removal remains unconfirmed.")
+            self.stage_retired = True
+        except BaseException as error:
+            self.records["stage_cleanup_failure"] = type(error).__name__
+            primary = primary or error
+        if primary is not None:
+            raise primary
+        require(type(control) is dict and control.get("status") == "admitted"
+                and control.get("source_id") == self.admission["source_id"]
+                and control.get("start") == self.admission["coverage"]["start_block"]
+                and control.get("final") == self.admission["coverage"]["final_block"],
                 "Contained replay worker admitted another coverage interval.")
-        self.records["admission"] = selected
+        self.records["admission"] = control
 
     def boot(self):
         self.phase = "offline replay and database startup"
@@ -643,6 +708,8 @@ class ReplayAttempt:
                 self.docker.run("container", "rm", self.sampler_id, timeout=30)
                 self.sampler_retired = True
             if self.touched:
+                require(not self.stage_attempted or self.stage_retired,
+                        "Replay evidence admission worker retirement is unconfirmed; retain its volumes.")
                 self.verify_owned_graph()
                 self.compose("down", "--remove-orphans", "--timeout", "30", timeout=90)
                 for name in ("pgdata", "evidence", "results"):
