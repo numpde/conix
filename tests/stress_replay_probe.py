@@ -28,7 +28,10 @@ STATUS = "http://replay:8080/status"
 
 
 def service():
-    with urlopen(STATUS, timeout=3) as response:
+    # The single-threaded replay service serializes control reads with an
+    # explicitly delayed RPC. A legal 5-second slowdown must not be mistaken
+    # for a failed health observation while it is serving that read.
+    with urlopen(STATUS, timeout=15) as response:
         raw = response.read(16385)
     require(0 < len(raw) <= 16384, "Replay status response exceeded its bound.")
     result = json.loads(raw)
