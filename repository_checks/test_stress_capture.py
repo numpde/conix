@@ -103,6 +103,16 @@ class CaptureAdmissionContracts(unittest.TestCase):
             self.assertIn('"' + name + '"', operator)
         self.assertIn("from tools.fixtures.stress_capture import run_capture", operator)
 
+    def test_git_revision_uses_sha1_or_sha256_not_docker_identity(self):
+        from tools.fixtures.stress_capture import HASH, ID
+
+        self.assertTrue(HASH.fullmatch("a" * 40))
+        self.assertTrue(HASH.fullmatch("a" * 64))
+        self.assertFalse(ID.fullmatch("a" * 40))
+        for bad in ("a" * 39, "a" * 41, "z" * 40, "a" * 65):
+            with self.subTest(revision=bad[:8], length=len(bad)):
+                self.assertIsNone(HASH.fullmatch(bad))
+
     def test_selection_requires_complete_explicit_finite_budgets(self):
         chosen = supplied(parameters())
         self.assertEqual(chosen["stress_duration_seconds"], 120)
