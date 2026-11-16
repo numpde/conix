@@ -221,5 +221,80 @@ class ReplayOwnerContracts(unittest.TestCase):
 
 
 
+    def test_admission_worker_retains_exact_exit_before_docker_removal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run = ReplayAttempt.__new__(ReplayAttempt)
+            run.folder = Path(directory)
+            run.runner, run.owner = IMAGE, "owned"
+            run.project = "conix-replay-owned"
+            run.stage_attempted = False
+            run.stage_retired = False
+            run.records = {}
+            run.payload = b"private tar bytes"
+            run.sequence = 1
+            run.admission = {"source_id": "c" * 64,
+                             "coverage": {"start_block": 100, "final_block": 102}}
+            run.compose = Mock()
+            run.volume = Mock(return_value="conix-replay-owned_evidence")
+            record = {"Id": "a" * 64, "State": {"Running": False, "ExitCode": 0}}
+            run.stage_container = Mock(side_effect=[record, None])
+            run.child = Mock(return_value=json.dumps({
+                "status": "admitted", "source_id": "c" * 64,
+                "start": 100, "final": 102,
+            }).encode())
+            operations = []
+            def docker_run(*arguments, **_options):
+                if arguments[:2] == ("container", "rm"):
+                    self.assertEqual(operations, ["exit evidence retained"])
+                    operations.append("removed exact ID")
+                return ""
+            run.docker = SimpleNamespace(docker_command_prefix=["docker"], run=docker_run)
+            def retained(*_args, **_kwargs):
+                operations.append("exit evidence retained")
+                return {"exit_code": 0}
+            with patch("tools.fixtures.stress_replay.retain_attached_exit", side_effect=retained):
+                run.stage()
+            self.assertEqual(operations, ["exit evidence retained", "removed exact ID"])
+            self.assertTrue(run.stage_retired)
+            self.assertEqual(run.records["admission"]["status"], "admitted")
+            self.assertIn("--log-driver", run.child.call_args.args[0])
+            self.assertNotIn("--rm", run.child.call_args.args[0])
+
+    def test_uncertain_stage_retirement_preserves_evidence_volume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run = ReplayAttempt.__new__(ReplayAttempt)
+            run.folder = Path(directory)
+            run.runner, run.owner = IMAGE, "owned"
+            run.project = "conix-replay-owned"
+            run.stage_attempted = False
+            run.stage_retired = False
+            run.touched = False
+            run.profile_created = False
+            run.consumer_started = False
+            run.sampler_id = None
+            run.consumer_retired = False
+            run.records = {}
+            run.payload = b"private tar bytes"
+            run.sequence = 1
+            run.admission = {"source_id": "c" * 64,
+                             "coverage": {"start_block": 100, "final_block": 102}}
+            run.compose = Mock()
+            run.volume = Mock(return_value="conix-replay-owned_evidence")
+            run.stage_container = Mock(return_value=None)
+            run.child = Mock(return_value=json.dumps({
+                "status": "admitted", "source_id": "c" * 64,
+                "start": 100, "final": 102,
+            }).encode())
+            run.docker = SimpleNamespace(docker_command_prefix=["docker"],
+                                         run=Mock(side_effect=AssertionError("Unowned deletion")))
+            with self.assertRaises(OperationError):
+                run.stage()
+            failures = run.cleanup()
+            self.assertTrue(failures)
+            self.assertFalse(run.stage_retired)
+            run.volume.assert_called_once_with("evidence")
+            run.compose.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
