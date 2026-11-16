@@ -499,10 +499,18 @@ class StressCapture:
                     if record["State"]["Running"]:
                         self.docker.run("container", "stop", "--time", "25", identity, timeout=35)
                         identity, record = self.container(name)
+                    exit_code = record["State"]["ExitCode"]
                     require(record["State"]["Running"] is False
-                            and record["State"]["ExitCode"] == 0,
-                            "Capture worker retirement did not finalize cleanly.")
+                            and type(exit_code) is int and 0 <= exit_code <= 255,
+                            "Capture worker retirement is unconfirmed.")
+                    # A failed recorder can still be confirmed retired. Its
+                    # partial archive must remain available for owned export.
                     self.retired.add(name)
+                    self.records.setdefault("worker_exits", {})[name] = exit_code
+                    if exit_code:
+                        first_failure = first_failure or OperationError(
+                            "Capture recorder " + name + " exited unsuccessfully."
+                        )
                 except BaseException as error:
                     first_failure = first_failure or error
         if first_failure is not None:
@@ -519,7 +527,7 @@ class StressCapture:
 
     def export(self, name):
         """A networkless volume-only helper; Docker cp never prints WARC bytes."""
-        require(name in self.retired, "Archive cannot be exported before its recorder retires cleanly.")
+        require(name in self.retired, "Archive cannot be exported before confirmed recorder retirement.")
         volume = self.owned_volume(name)
         helper = "conix-export-" + name + "-" + self.owner
         self.phase = "export " + name
@@ -576,13 +584,30 @@ class StressCapture:
         for name in ("application", "observer"):
             exported = self.records["export"].get(name, {"status": "unconfirmed"})
             receipt = self.folder / (name + "-receipt.json")
-            if name in self.archive_exported and receipt.is_file():
-                record = json.loads(receipt.read_text())
+            if receipt.is_file():
+                info = receipt.lstat()
+                require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
+                        and not info.st_mode & 0o077 and 0 < info.st_size <= 4096,
+                        "Private capture receipt has unadmitted file ownership or length.")
+                record = json.loads(receipt.read_bytes())
+                failure = record.get("failure")
+                require(type(record) is dict and record.get("status") in ("complete", "partial")
+                        and type(record.get("exchanges")) is int
+                        and 0 <= record["exchanges"] <= self.selection["stress_exchanges"]
+                        and type(record.get("transport_stopped")) is bool
+                        and (failure is None or
+                             (type(failure) is str and re.fullmatch(
+                                 r"[A-Za-z][A-Za-z0-9_]{0,63}", failure))),
+                        "Capture recorder receipt contains unadmitted diagnostics.")
                 streams[name] = {
-                    "archive": record.get("status", "unconfirmed"),
+                    "recorder_receipt": record["status"],
+                    "archive": record["status"] if name in self.archive_exported else "unconfirmed",
                     "export": exported.get("status", "unconfirmed"),
-                    "exchanges": record.get("exchanges"),
+                    "exchanges": record["exchanges"],
+                    "transport_stopped": record["transport_stopped"],
                 }
+                if failure is not None:
+                    streams[name]["failure"] = failure
             else:
                 streams[name] = {"archive": "unconfirmed", "export": exported.get("status", "unconfirmed")}
         self.records["archive_evidence"] = streams
@@ -733,6 +758,24 @@ def _primary_summary(primary, failed_phase):
     return f"phase={_safe_phase(failed_phase)}; {remainder}"
 
 
+def _recorder_diagnostics(records):
+    """Report only admitted receipt categories and confirmed worker exit codes."""
+    messages = []
+    streams = records.get("archive_evidence", {})
+    exits = records.get("worker_exits", {})
+    for name in ("application", "observer"):
+        receipt = streams.get(name, {})
+        cause = receipt.get("failure")
+        if type(cause) is str and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", cause):
+            messages.append(f"recorder_{name}_failure={cause}")
+        elif receipt.get("transport_stopped") is True:
+            messages.append(f"recorder_{name}_transport_stopped=true")
+        exit_code = exits.get("gateway" if name == "application" else name)
+        if type(exit_code) is int and 0 < exit_code <= 255:
+            messages.append(f"recorder_{name}_exit={exit_code}")
+    return "; ".join(messages)
+
+
 def run_capture(options, *, client_cls, pinned_images):
     """Maintained operator: one bounded live capture and independently verified export."""
     require(os.geteuid() != 0, "Stress capture requires an ordinary non-root operator.")
@@ -835,6 +878,9 @@ def run_capture(options, *, client_cls, pinned_images):
                     pass
             if primary is not None:
                 safe = _primary_summary(primary, failed_phase or capture.phase)
+                recorder_facts = _recorder_diagnostics(capture.records)
+                if recorder_facts:
+                    safe += "; " + recorder_facts
                 code = getattr(primary, "exit_code", None)
                 code = code if type(code) is int else None
                 raise OperationError("Stress capture failed: " + safe,
