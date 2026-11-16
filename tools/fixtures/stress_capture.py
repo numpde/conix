@@ -547,6 +547,32 @@ class StressCapture:
                         "Export helper retirement ownership is unconfirmed.")
                 self.docker.run("container", "rm", "--force", identity, timeout=30)
 
+    def report_archive_outcomes(self):
+        """WARC completeness and observation eligibility are separate facts."""
+        streams = {}
+        for name in ("application", "observer"):
+            exported = self.records["export"].get(name, {"status": "unconfirmed"})
+            receipt = self.folder / (name + "-receipt.json")
+            if name in self.archive_exported and receipt.is_file():
+                record = json.loads(receipt.read_text())
+                streams[name] = {
+                    "archive": record.get("status", "unconfirmed"),
+                    "export": exported.get("status", "unconfirmed"),
+                    "exchanges": record.get("exchanges"),
+                }
+            else:
+                streams[name] = {"archive": "unconfirmed", "export": exported.get("status", "unconfirmed")}
+        self.records["archive_evidence"] = streams
+        observations = self.folder / "observer-observations.json"
+        if observations.is_file():
+            admitted = json.loads(observations.read_text()).get("admission", {})
+            self.records["observation_eligibility"] = {
+                "status": admitted.get("status", "unavailable"),
+                "reason": admitted.get("reason"),
+            }
+        else:
+            self.records["observation_eligibility"] = {"status": "unavailable", "reason": "missing_timeline"}
+
     def complete(self):
         observer = json.loads((self.folder / "observer-observations.json").read_text())
         gateway = json.loads((self.folder / "application-receipt.json").read_text())
@@ -677,6 +703,7 @@ def run_capture(options, *, client_cls, pinned_images):
             docker.require_rootless_engine()
             capture = StressCapture(docker, pinned_images(), options, root, selection)
             primary = None
+            failed_phase = None
             try:
                 revision = capture.child(["git", "rev-parse", "HEAD"],
                                          "Stress source revision").decode("ascii").strip()
@@ -692,10 +719,13 @@ def run_capture(options, *, client_cls, pinned_images):
                 capture.observe()
             except BaseException as error:
                 primary = error
+                failed_phase = capture.phase
             try:
                 capture.stop()
             except BaseException as error:
-                primary = primary or error
+                if primary is None:
+                    primary = error
+                    failed_phase = capture.phase
             # Retain partial archives even when the observer or Conix failed.
             if capture.fixture_attempted and capture.runner is not None:
                 for name in ("application", "observer"):
@@ -706,17 +736,26 @@ def run_capture(options, *, client_cls, pinned_images):
                         capture.export(name)
                     except BaseException as error:
                         capture.records["export"][name] = {"status": "unconfirmed", "failure": type(error).__name__}
-                        primary = primary or error
+                        if primary is None:
+                            primary = error
+                            failed_phase = capture.phase
+            try:
+                capture.report_archive_outcomes()
+            except BaseException as error:
+                if primary is None:
+                    primary = error
+                    failed_phase = capture.phase
             if primary is None:
                 try:
                     capture.complete()
                 except BaseException as error:
                     primary = error
+                    failed_phase = capture.phase
             failures = capture.cleanup()
             if primary is not None:
                 capture.records["capture"] = "partial"
                 capture.records["primary_failure"] = type(primary).__name__
-                capture.records["failed_phase"] = capture.phase
+                capture.records["failed_phase"] = failed_phase or capture.phase
             if failures:
                 capture.records["cleanup"] = failures
             try:
