@@ -458,10 +458,13 @@ branch promotion, production activation or sibling-repository change occurred.
 
 Reviewable artifact layout (2026-11-16)
 ----------------------------------------
-The current entry point is qualification/indexer/stress/README.md, with dated
-capture and evidence-completion reports linked below it. The report generator
-publishes only selected public source identities, bounded outcomes/counts and
-receipt/archive hashes. Raw WARC, complete receipts and logs remain private
+Review reports:
+
+- [Fuji PayToPlay capture](../qualification/indexer/stress/runs/20261116-124233/fuji-pay-to-play/capture/report.json)
+- [Fuji PayToPlay evidence completion](../qualification/indexer/stress/runs/20261116-155440/fuji-pay-to-play/evidence-completion/report.json)
+
+The report generator publishes only selected public source identities,
+bounded outcomes/counts and receipt/archive hashes. Raw WARC, complete receipts and logs remain private
 under the matching out/indexer/stress/runs/<UTC>/<subject>/<phase>/ path.
 Known reviewed source identities supply descriptive names; other sources use
 their declared numeric chain identity. Private directory names do not supply
@@ -477,6 +480,9 @@ capture files and nine completion files retained their bytes, modes and file
 identities. Original manifest/admission bytes and hashes remain unchanged;
 embedded old paths are execution-time provenance. The earlier command above
 accurately records the CAPTURE_DIR used during that run, not its new location.
+The imported capture timestamp is its recorded observation release time;
+the completion timestamp is the collector's recorded start time. New runs
+allocate their timestamp before effects.
 Other historical partial runs and their retained resources were not moved.
 The import is an organization change, not a new capture or qualification run.
 Migration proof is private under
