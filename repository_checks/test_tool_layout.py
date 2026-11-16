@@ -15,6 +15,7 @@ TOOL_FILES = {
     "tools/containers/__init__.py",
     "tools/containers/client.py",
     "tools/containers/diagnostics.py",
+    "tools/containers/process_evidence.py",
     "tools/containers/deployment.py",
     "tools/containers/history.py",
     "tools/containers/input_staging.py",

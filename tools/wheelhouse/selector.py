@@ -6,8 +6,10 @@ The released tool projects the successful pip report to exact stream inputs.
 """
 import argparse
 import json
+import re
 import subprocess
 import sys
+import traceback
 from hashlib import sha256
 from pathlib import Path
 
@@ -52,10 +54,7 @@ def run(pool, release, runtime, build, recording=None):
             print("Missing one or more target-compatible locked wheels.", file=sys.stderr)
             raise MissingSelection()
 
-        raise ValueError(
-            "The selected target interpreter rejected cached wheel integrity "
-            "or requirements; do not start network acquisition."
-        )
+        raise subprocess.CalledProcessError(pip_selection.returncode, "offline pip selection")
 
     manifest_conversion = subprocess.run(
         [
@@ -66,7 +65,7 @@ def run(pool, release, runtime, build, recording=None):
         stdin=subprocess.DEVNULL, capture_output=True, timeout=30,
     )
     if manifest_conversion.returncode:
-        raise ValueError("Pinned wheelhouse-tool refused the contained pip selection report.")
+        raise subprocess.CalledProcessError(manifest_conversion.returncode, "wheelhouse report conversion")
 
     artifacts = json.loads(manifest_conversion.stdout)
     if type(artifacts) is not list or not artifacts:
@@ -89,8 +88,19 @@ def main():
         run(args.pool, args.release, args.runtime, args.build, args.recording)
     except MissingSelection:
         return 10
-    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
-        print(f"Shared wheelhouse offline selection refused: {type(error).__name__}.", file=sys.stderr)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+        cause = type(error).__name__
+        cause = cause if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", cause) else "UnexpectedError"
+        frame = traceback.extract_tb(error.__traceback__)[-1]
+        location = f"{Path(frame.filename).name}:{frame.lineno}"
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}\.py:[1-9][0-9]{0,5}", location) is None:
+            location = "unavailable"
+        record = {"phase": "wheel_selection", "cause": cause,
+                  "effect": "not_started", "location": location}
+        if isinstance(error, subprocess.CalledProcessError) and type(error.returncode) is int:
+            if -255 <= error.returncode <= 255:
+                record["child_exit"] = error.returncode
+        print("CONIX-FAILURE-V1 " + json.dumps(record), file=sys.stderr)
         return 2
 
     return 0

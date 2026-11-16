@@ -119,13 +119,16 @@ elif "container" in args and "compose" not in args:
     if action == "inspect":
         print(json.dumps({
             "Id": "0123456789abcdef" * 4,
+            "Image": "sha256:" + "a" * 64, "RestartCount": 0,
+            "State": {"Running": False, "ExitCode": 0, "OOMKilled": False,
+                      "StartedAt": "2026-11-16T00:00:00Z", "FinishedAt": "2026-11-16T00:00:01Z"},
             "Name": "/conix-pilot-indexer-1",
             "Config": {"Labels": {
                 "com.docker.compose.project": "conix-pilot",
                 "com.docker.compose.service": "indexer",
             }},
         }))
-    elif action not in ("stop", "rm"):
+    elif action not in ("stop", "rm", "logs"):
         print("Unknown container mutation.", file=sys.stderr)
         sys.exit(97)
 elif "compose" in args:
@@ -591,7 +594,9 @@ class LocalDockerOperatorTests(unittest.TestCase):
                 "import sys",
                 "from tools.containers.operator import Docker, OperationError",
                 "try:",
-                "  Docker('unix:///tmp/science-docker.sock', Path('/tmp')).deployment("
+                "  docker = Docker('unix:///tmp/science-docker.sock', Path('/tmp'))",
+                "  docker.working_dir = Path(" + repr(str(directory)) + ")",
+                "  docker.deployment("
                 "operation=" + repr(operation) + ", name='pilot', "
                 "image='sha256:' + 'a'*64, volume='conix-inputs-' + 'b'*24, "
                 "database='db-conix', rpc='rpc-conix')",
@@ -741,7 +746,8 @@ class LocalDockerOperatorTests(unittest.TestCase):
             for action in ("status", "down"):
                 with self.subTest(action=action):
                     result = subprocess.run([
-                        sys.executable, "-m", "tools.containers.operator",
+                        sys.executable, "-c", "from pathlib import Path; from tools.containers import operator; "
+                        + "operator.ROOT = Path(" + repr(folder) + "); operator.main()",
                         "--context", "science", "--origin", "command line",
                         "deployment/" + action, "--deployment", "pilot",
                     ], cwd=ROOT, env=env, capture_output=True, text=True, timeout=15)

@@ -158,6 +158,10 @@ class Docker(InputStaging, DockerClient):
             return
 
         if operation == "remove":
+            from tools.containers.deployment import owned_record
+            from tools.containers.diagnostics import PHASES, error_record, explanation
+            from tools.containers.process_evidence import failure, retain_exit
+
             observed_ids = self.run(
                 "ps", "--all", "--no-trunc", *service_labels, "--format", "{{.ID}}",
                 capture=True, timeout=20,
@@ -169,29 +173,30 @@ class Docker(InputStaging, DockerClient):
                 if re.fullmatch(r"[0-9a-f]{64}", container_id) is None:
                     raise OperationError("Docker returned an incomplete Conix container identity.")
 
-                try:
-                    observed = json.loads(self.run(
-                        "container", "inspect", "--format", "{{json .}}", container_id,
-                        capture=True, timeout=15,
-                    ))
-                    configuration = observed["Config"]
-                    labels = configuration["Labels"]
-                except (ValueError, KeyError, TypeError) as error:
-                    raise OperationError("Cannot establish the selected container's ownership.") from error
+                owned_record(self, container_id, project)
 
-                if (
-                    type(observed) is not dict or observed.get("Id") != container_id
-                    or type(labels) is not dict
-                    or labels.get("com.docker.compose.project") != project
-                    or labels.get("com.docker.compose.service") != "indexer"
-                ):
-                    raise OperationError(
-                        "Selected container ownership changed; no containers were retired."
-                    )
-
+            primary = None
             for container_id in observed_ids:
-                self.run("container", "stop", "--time", "330", container_id, timeout=345)
-                self.run("container", "rm", container_id, timeout=30)
+                try:
+                    self.run("container", "stop", "--time", "330", container_id, timeout=345)
+                    observed = owned_record(self, container_id, project)
+                    facts = retain_exit(self, observed)
+                    if facts["exit_code"] or facts["diagnostic"] is not None:
+                        primary = primary or failure(facts, "Retained Conix")
+                    self.run("container", "rm", container_id, timeout=30)
+                except BaseException as error:
+                    if primary is None:
+                        raise
+                    detail = explanation(error_record(error), getattr(error, "exit_code", None), phases=PHASES)
+                    try:
+                        print("Owned container cleanup unconfirmed: " + detail, file=sys.stderr)
+                    except OSError:
+                        pass
+                    primary.add_note("Owned container cleanup is unconfirmed.")
+                    raise primary from None
+
+            if primary is not None:
+                raise primary
 
             print(f"Retired {len(observed_ids)} Conix indexer container(s) from {project}; "
                   "external networks, database and input volumes were retained.")
@@ -607,11 +612,18 @@ def main():
                 image_role = options.action.split("/")[1]
                 wheel_pool = SharedWheelhouse(docker, image_manifest, options.wheelhouse)
                 print(wheel_pool.build(image_role))
-    except (OperationError, PoolError, OSError) as error:
+    except (OperationError, PoolError) as error:
         from tools.containers.diagnostics import error_record
 
         print(error_record(error).decode("ascii"), file=sys.stderr)
         raise SystemExit(f"Conix container operation failed ({type(error).__name__}): {error}") from None
+    except OSError as error:
+        from tools.containers.diagnostics import PHASES, error_record, explanation
+
+        diagnostic = error_record(error)
+        print(diagnostic.decode("ascii"), file=sys.stderr)
+        detail = explanation(diagnostic, None, phases=PHASES)
+        raise SystemExit("Conix container operation failed: " + detail) from None
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ from pathlib import Path
 import traceback
 
 PREFIX = b"CONIX-FAILURE-V1 "
-PHASES = frozenset({"staging", "verification", "staged_inputs", "advance", "reader_check", "operator", "schema_init", "network_measure"})
+PHASES = frozenset({"staging", "verification", "staged_inputs", "advance", "reader_check", "operator", "schema_init", "network_measure", "run", "history_inspect", "history_repair", "wheel_selection"})
 CAUSES = frozenset({
     "InputError", "OSError", "CommitOutcomeUnknown",
     "BranchConflict", "HistoryConflict", "StorageUnavailable", "WriterBusy",
@@ -42,12 +42,14 @@ def admitted(stderr):
         fields = json.loads(payload, object_pairs_hook=_unique_pairs)
     except (UnicodeError, ValueError):
         return None
-    if type(fields) is not dict or set(fields) not in (
-        {"phase", "cause", "effect"},
-        {"phase", "cause", "effect", "location"},
-    ):
+    required = {"phase", "cause", "effect"}
+    if (type(fields) is not dict or not required <= fields.keys()
+            or fields.keys() - required - {"location", "child_exit"}):
         return None
-    if any(type(value) is not str for value in fields.values()):
+    if any(type(value) is not str for key, value in fields.items() if key != "child_exit"):
+        return None
+    if "child_exit" in fields and (type(fields["child_exit"]) is not int
+                                    or not -255 <= fields["child_exit"] <= 255):
         return None
 
     location = fields.get("location")
@@ -77,7 +79,18 @@ def explanation(stderr, exit_code, *, phases):
         "commit_unknown": "PostgreSQL COMMIT outcome unknown",
     }[fields["effect"]]
     location = f"; location={fields['location']}" if "location" in fields else ""
-    return f"phase={phase}; cause={fields['cause']}; effect={effect}{location}; exit={exit_code}"
+    child = f"; child_exit={fields['child_exit']}" if "child_exit" in fields else ""
+    return f"phase={phase}; cause={fields['cause']}; effect={effect}{location}; exit={exit_code}{child}"
+
+
+def extract(*outputs):
+    """Select one admitted producer record without forwarding surrounding prose."""
+    if any(type(output) is not bytes for output in outputs) or sum(map(len, outputs)) > 65536:
+        return None
+    records = [line for output in outputs for line in output.splitlines() if line.startswith(PREFIX)]
+    if len(records) != 1 or admitted(records[0]) is None:
+        return None
+    return records[0]
 
 
 def error_record(error):
@@ -91,6 +104,11 @@ def error_record(error):
         if SOURCE_LOCATION.fullmatch(location) is None:
             location = "unavailable"
         fields = {"phase": "operator", "cause": category, "effect": "unconfirmed", "location": location}
+    exit_code = getattr(error, "exit_code", None)
+    if type(exit_code) is int and -255 <= exit_code <= 255:
+        # A new process boundary has its own exit status. Keep the innermost
+        # observed child status when Make or Docker adds another outer status.
+        fields.setdefault("child_exit", exit_code)
     # Re-emit checked fields: accepted JSON encodings need not themselves be
     # ASCII, while the operator terminal boundary deliberately is.
     return PREFIX + json.dumps(fields, separators=(",", ":")).encode("ascii")

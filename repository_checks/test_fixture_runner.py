@@ -475,9 +475,45 @@ class FixtureRunnerTests(unittest.TestCase):
                         env=os.environ.copy(), timeout=5, label="scenario/checked",
                     )
             self.assertIn("scenario/checked", str(raised.exception))
-            self.assertIn("status 7", str(raised.exception))
+            self.assertEqual(raised.exception.exit_code, 7)
             self.assertNotIn(secret, terminal.getvalue() + str(raised.exception))
             self.assertIn(secret.encode(), stderr.read_bytes())
+
+    def test_owned_child_diagnostic_survives_the_shared_process_boundary(self):
+        from tools.containers.diagnostics import admitted
+        record = b'CONIX-FAILURE-V1 {"phase":"run","cause":"RpcUnavailable","effect":"unconfirmed"}\n'
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            with redirect_stderr(io.StringIO()), self.assertRaises(runner.CampaignError) as caught:
+                runner.owned_command(
+                    [sys.executable, "-c", "import sys; sys.stderr.buffer.write(sys.stdin.buffer.read()); sys.exit(7)"],
+                    output=folder / "stdout", error_file=folder / "stderr", env=os.environ.copy(),
+                    timeout=5, payload=record, label="owned producer",
+                )
+            self.assertEqual(admitted(caught.exception.diagnostic)["cause"], "RpcUnavailable")
+            self.assertIn("RpcUnavailable", str(caught.exception))
+            self.assertEqual(caught.exception.exit_code, 7)
+
+    def test_confirmed_retirement_keeps_consumer_failure_separate_from_cleanup(self):
+        from tools.containers.client import OperationError
+        from tools.containers.diagnostics import admitted
+        from tools.fixtures.process import retire_deployment, retirement_failure
+        record = b'CONIX-FAILURE-V1 {"phase":"run","cause":"StorageUnavailable","effect":"unconfirmed"}'
+        records = {}
+        called = []
+
+        def make(action):
+            called.append(action)
+            raise OperationError("PRIVATE failure prose", diagnostic=record, exit_code=17)
+
+        docker = SimpleNamespace(run=lambda *_args, **_kwargs: "")
+        with redirect_stderr(io.StringIO()) as terminal:
+            retire_deployment(make, docker, "owned", records)
+        failure = retirement_failure(records)
+        self.assertEqual(called, ["deployment/down"])
+        self.assertEqual(admitted(failure.diagnostic)["cause"], "StorageUnavailable")
+        self.assertIn("StorageUnavailable", terminal.getvalue())
+        self.assertNotIn("PRIVATE", str(failure) + terminal.getvalue())
 
     def test_cleanup_exception_does_not_erase_the_first_failure(self):
         with tempfile.TemporaryDirectory() as directory:

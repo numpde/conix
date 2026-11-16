@@ -63,7 +63,7 @@ else:
 
 
 class FailureEvidenceLifecycleContracts(unittest.TestCase):
-    def run_lane(self, root, **changed):
+    def run_lane(self, root, *, producer=DIAGNOSTIC, **changed):
         """Execute the public recovery command with a stateful external Engine."""
         state=dict(present=True, foreign=False, log_failure=False, remove_failure=False)
         state.update(changed)
@@ -73,7 +73,7 @@ class FailureEvidenceLifecycleContracts(unittest.TestCase):
         fake.chmod(0o755)
         child=subprocess.run(
             [sys.executable,'-c','import sys; sys.stderr.buffer.write(sys.stdin.buffer.read()); sys.exit(17)'],
-            input=PRIVATE+b'\n'+DIAGNOSTIC,capture_output=True,timeout=5,
+            input=PRIVATE+b'\n'+producer,capture_output=True,timeout=5,
         )
         self.assertEqual(child.returncode,17)
         (root/'child.stdout').write_bytes(child.stdout)
@@ -134,6 +134,31 @@ class FailureEvidenceLifecycleContracts(unittest.TestCase):
             self.assertIn('17', lines[-1])
             self.assertTrue(state['present'])
             self.assertNotIn(PRIVATE.decode(),result.stdout+result.stderr)
+
+    def test_receipt_publication_failure_keeps_the_known_child_cause_and_container(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            folder = root / "out/process-evidence"
+            folder.mkdir(parents=True, mode=0o700)
+            receipt = folder / (IDENTITY + ".json")
+            receipt.write_text('{"older_evidence":true}')
+            receipt.chmod(0o600)
+            result, effects, state = self.run_lane(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("StorageUnavailable", result.stderr)
+            self.assertIn("retention", result.stderr)
+            self.assertTrue(state["present"])
+            self.assertNotIn("rm", effects)
+            self.assertEqual(receipt.read_text(), '{"older_evidence":true}')
+
+    def test_oversized_log_collection_is_bounded_and_never_authorizes_removal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, effects, state = self.run_lane(Path(temporary), producer=b"A" * 131072 + DIAGNOSTIC)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("17", result.stderr)
+            self.assertTrue(state["present"])
+            self.assertNotIn("rm", effects)
+            self.assertNotIn(PRIVATE.decode(), result.stderr)
 
     def test_foreign_ownership_prevents_both_log_access_and_removal(self):
         with tempfile.TemporaryDirectory() as temporary:

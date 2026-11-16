@@ -7,7 +7,10 @@ application lifecycles. The caller supplies its own working directory.
 import json
 import os
 import re
+import selectors
+import signal
 import subprocess
+import time
 import sys
 from urllib.parse import urlsplit
 
@@ -149,6 +152,16 @@ def command(argv, *, env, working_dir, timeout=60, capture=False, public_diagnos
         ) from error
 
     if completed_process.returncode:
+        from tools.containers.diagnostics import PHASES, explanation, extract
+
+        stderr = completed_process.stderr
+        diagnostic = extract(stderr.encode("utf-8") if type(stderr) is str else stderr)
+        detail = explanation(diagnostic, completed_process.returncode, phases=PHASES)
+        if detail is not None:
+            raise OperationError(
+                f"{_docker_operation(argv)} failed: {detail}",
+                exit_code=completed_process.returncode, diagnostic=diagnostic,
+            )
         # Ordinary Docker output can contain private fixture data. Only a
         # deliberately public worker diagnostic is eligible for display.
         if public_diagnostic:
@@ -261,6 +274,52 @@ class DockerClient:
             capture=capture,
             public_diagnostic=public_diagnostic,
         )
+
+    def container_logs(self, identity):
+        """Capture both bounded log streams privately from an admitted exact ID."""
+        if type(identity) is not str or re.fullmatch(r"[0-9a-f]{64}", identity) is None:
+            raise OperationError("Select an exact container identity for diagnostic retention.")
+        argv = self.docker_command_prefix + ["container", "logs", "--tail", "64", identity]
+        child = subprocess.Popen(
+            argv, cwd=self.working_dir, env=self.docker_environment,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        stdout, stderr = bytearray(), bytearray()
+        deadline = time.monotonic() + 20
+        try:
+            with selectors.DefaultSelector() as selector:
+                selector.register(child.stdout, selectors.EVENT_READ, stdout)
+                selector.register(child.stderr, selectors.EVENT_READ, stderr)
+                while selector.get_map():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise OperationError("Container log capture exceeded its deadline.")
+                    for key, _ in selector.select(remaining):
+                        chunk = os.read(key.fd, min(8192, 65537 - len(stdout) - len(stderr)))
+                        if not chunk:
+                            selector.unregister(key.fileobj)
+                            continue
+                        key.data.extend(chunk)
+                        if len(stdout) + len(stderr) > 65536:
+                            raise OperationError("Container log capture exceeded its byte limit.")
+            status = child.wait(timeout=max(0.001, deadline - time.monotonic()))
+            if status:
+                raise OperationError("Container log client failed.", exit_code=status)
+            return bytes(stdout), bytes(stderr)
+        finally:
+            primary = sys.exception()
+            try:
+                if child.poll() is None:
+                    os.killpg(child.pid, signal.SIGKILL)
+                    child.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired) as error:
+                if primary is None:
+                    raise OperationError("Container log client retirement is unconfirmed.") from error
+                primary.add_note("Container log client retirement is unconfirmed.")
+            finally:
+                child.stdout.close()
+                child.stderr.close()
 
     def require_image(self, reference):
         """Check the exact local image ID without publishing the image metadata."""

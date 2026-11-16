@@ -18,6 +18,17 @@ from tools.containers.resources import (
 COMMAND = ["-I", "-m", "conix", "run"]
 
 
+def owned_record(docker, identity, project):
+    """Admit an immutable retained-service identity before reading or retiring it."""
+    record = _record(docker, "container", identity)
+    labels = record.get("Config", {}).get("Labels", {})
+    if (record.get("Id") != identity or type(labels) is not dict
+            or labels.get("com.docker.compose.project") != project
+            or labels.get("com.docker.compose.service") != "indexer"):
+        raise OperationError("Cannot establish retained process ownership.")
+    return record
+
+
 def _candidate_ids(docker, project):
     text = docker.run(
         "ps", "--all", "--no-trunc",

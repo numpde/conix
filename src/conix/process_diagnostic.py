@@ -29,7 +29,7 @@ TYPE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}\Z")
 SOURCE_LOCATION = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\.py:[1-9][0-9]{0,5}\Z")
 
 
-def emit_unexpected(*, phase: str, error: Exception, effect: str) -> None:
+def emit_unexpected(*, phase: str, error: BaseException, effect: str) -> None:
     """Report the actual safe exception type and last traceback source point."""
     cause = type(error).__name__
     if TYPE_NAME.fullmatch(cause) is None:

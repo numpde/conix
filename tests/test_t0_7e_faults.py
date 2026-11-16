@@ -510,7 +510,11 @@ class InstalledTier07FaultAcceptance(unittest.IsolatedAsyncioTestCase):
                 active = await self.start()
                 stdout, stderr = await asyncio.wait_for(active.communicate(), timeout=12)
                 self.assertNotEqual(active.returncode, 0)
-                self.assertIn(b"COMMIT", stderr)
+                from host_diagnostics import admitted
+
+                diagnostic = admitted(stderr)
+                self.assertEqual(diagnostic["cause"], "CommitOutcomeUnknown")
+                self.assertEqual(diagnostic["effect"], "commit_unknown")
                 self.assertNotIn(self.dsn.encode(), stdout + stderr)
                 self.assertNotIn(b'"block_number": ' + str(height).encode(), stdout)
                 await dropped

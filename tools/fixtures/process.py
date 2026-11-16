@@ -5,6 +5,7 @@ progress, private stdin and process-group retirement. Docker resource ownership
 and cleanup remain with the calling campaign.
 """
 
+import json
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -19,9 +20,10 @@ ROOT = Path(__file__).resolve().parents[2]
 class CampaignError(Exception):
     """A fixture operation or its completion could not be established."""
 
-    def __init__(self, detail, *, exit_code=None):
+    def __init__(self, detail, *, exit_code=None, diagnostic=None):
         super().__init__(detail)
         self.exit_code = exit_code
+        self.diagnostic = diagnostic
 
 
 @contextmanager
@@ -54,6 +56,41 @@ def clean_environment():
 def progress(message):
     """Emit only source-controlled progress labels, never child output."""
     print(f"[conix] {message}", file=sys.stderr, flush=True)
+
+
+def retire_deployment(make, docker, name, records):
+    """A reported child failure and confirmed container removal are separate facts."""
+    from tools.containers.client import OperationError
+    from tools.containers.deployment import _candidate_ids
+    from tools.containers.diagnostics import admitted, error_record
+
+    try:
+        make("deployment/down")
+    except (CampaignError, OperationError) as error:
+        records.setdefault("consumer_failure", {
+            "diagnostic": admitted(error_record(error)), "exit_code": error.exit_code,
+        })
+        observed = retirement_failure(records)
+        try:
+            progress(str(observed))
+        except OSError:
+            pass
+    if _candidate_ids(docker, "conix-" + name):
+        raise OperationError("Owned consumer retirement is unconfirmed; retain its dependencies.")
+
+
+def retirement_failure(records):
+    """Recover a producer failure reported during otherwise successful teardown."""
+    from tools.containers.client import OperationError
+    from tools.containers.diagnostics import PHASES, PREFIX, explanation
+
+    record = records.get("consumer_failure")
+    if record is None:
+        return None
+    diagnostic = PREFIX + json.dumps(record["diagnostic"]).encode("ascii")
+    detail = explanation(diagnostic, record["exit_code"], phases=PHASES)
+    return OperationError("Consumer failed before retirement: " + detail,
+                          exit_code=record["exit_code"], diagnostic=diagnostic)
 
 
 def owned_command(argv, *, output, error_file, env, timeout, payload=None, label="fixture command"):
@@ -143,8 +180,14 @@ def owned_command(argv, *, output, error_file, env, timeout, payload=None, label
             raise
 
     if owned_process.returncode != 0:
-        raise CampaignError(f"{label} exited with status {owned_process.returncode}; see private {error_file.name}.",
-                            exit_code=owned_process.returncode)
+        from tools.containers.diagnostics import PHASES, explanation, extract
+
+        with error_file.open("rb") as errors, output.open("rb") as results:
+            diagnostic = extract(errors.read(65537), results.read(65537))
+        reason = explanation(diagnostic, owned_process.returncode, phases=PHASES)
+        detail = reason or f"exit={owned_process.returncode}; no admitted producer diagnostic; effects unconfirmed"
+        raise CampaignError(f"{label} failed: {detail}", exit_code=owned_process.returncode,
+                            diagnostic=diagnostic)
 
     if output.stat().st_size > 1048576:
         raise CampaignError(f"{label} produced an oversized receipt; no JSON was admitted.")

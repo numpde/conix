@@ -32,7 +32,7 @@ def _opaque_oserror_translations(source: str) -> list[int]:
         replacement = handler.body[0].exc
         if not isinstance(replacement, ast.Call):
             continue
-        if not isinstance(replacement.func, ast.Name) or replacement.func.id not in {"CommandError", "OperationError", "CampaignError"}:
+        if not isinstance(replacement.func, ast.Name) or replacement.func.id not in {"CommandError", "OperationError", "CampaignError", "SystemExit"}:
             continue
         if (
             len(replacement.args) == 1
@@ -70,7 +70,7 @@ def _raw_cli_exception_text(source: str) -> list[int]:
             if not isinstance(statement.exc, ast.Call):
                 continue
             call = statement.exc
-            if not isinstance(call.func, ast.Name) or call.func.id not in {"CommandError", "OperationError", "CampaignError"} or not call.args:
+            if not isinstance(call.func, ast.Name) or call.func.id not in {"CommandError", "OperationError", "CampaignError", "SystemExit"} or not call.args:
                 continue
             for node in (node for arg in call.args for node in ast.walk(arg)):
                 if isinstance(node, ast.FormattedValue):
@@ -92,7 +92,7 @@ def _raw_cli_exception_text(source: str) -> list[int]:
 
 class ErrorTransparencyPostureTests(unittest.TestCase):
     def test_adapted_host_error_names_keep_both_donor_obligations(self):
-        for name in ("OperationError", "CampaignError"):
+        for name in ("OperationError", "CampaignError", "SystemExit"):
             with self.subTest(name=name):
                 fixed = f'try:\n    work()\nexcept OSError as exc:\n    raise {name}("failed") from exc\n'
                 raw = f'try:\n    work()\nexcept Exception as exc:\n    raise {name}(str(exc))\n'

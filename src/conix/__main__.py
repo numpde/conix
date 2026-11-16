@@ -3,17 +3,13 @@
 import argparse
 import asyncio
 import json
-from pathlib import Path
 import signal
-import traceback
 
-from conix.abi import MalformedABIData, ResourceExceeded
 from conix.app import run
-from conix.core import BranchConflict
 from conix.history_cli import inspect_history, repair_history
-from conix.input_staging import InputError, load_runtime_inputs
-from conix.journal import CommitOutcomeUnknown, HistoryConflict, StorageUnavailable, WriterBusy
-from conix.rpc import RpcProtocolError, RpcUnavailable
+from conix.input_staging import load_runtime_inputs
+from conix.journal import CommitOutcomeUnknown
+from conix.process_diagnostic import emit, emit_unexpected
 
 
 async def _run(catalog, dsn):
@@ -29,8 +25,7 @@ async def _run(catalog, dsn):
     print(json.dumps({"outcome": "stopped", "source_id": catalog.source_id.hex()}), flush=True)
 
 
-async def _execute(args):
-    (catalog, dsn) = load_runtime_inputs()
+async def _execute(args, catalog, dsn):
     if args.operation == "run":
         await _run(catalog, dsn)
     elif args.history_operation == "inspect":
@@ -53,24 +48,18 @@ def main():
     repair.add_argument("--ancestor", type=int, required=True)
 
     args = parser.parse_args()
+    phase = "staged_inputs"
     try:
-        asyncio.run(_execute(args))
-    except InputError as error:
-        raise SystemExit(f"Conix refused staged inputs ({type(error).__name__}). {error}") from None
-    except CommitOutcomeUnknown as error:
-        raise SystemExit(f"Conix cannot confirm PostgreSQL COMMIT. {error}") from None
-    except (BranchConflict, HistoryConflict, StorageUnavailable, WriterBusy,
-            RpcProtocolError, RpcUnavailable, MalformedABIData, ResourceExceeded,
-            TimeoutError, ValueError) as error:
-        raise SystemExit(f"Conix {args.operation} failed ({type(error).__name__}). {error}") from None
-    except (KeyboardInterrupt, asyncio.CancelledError):
-        raise SystemExit("Conix operation was interrupted; inspect durable progress before restarting.") from None
-    except Exception as error:
-        location = traceback.extract_tb(error.__traceback__)[-1]
-        raise SystemExit(
-            f"Conix {args.operation} failed ({type(error).__name__}) "
-            f"at {Path(location.filename).name}:{location.lineno}."
-        ) from None
+        catalog, dsn = load_runtime_inputs()
+        phase = "run" if args.operation == "run" else "history_" + args.history_operation
+        asyncio.run(_execute(args, catalog, dsn))
+    except CommitOutcomeUnknown:
+        emit(phase=phase, cause="CommitOutcomeUnknown", effect="commit_unknown")
+        raise SystemExit(2) from None
+    except (Exception, KeyboardInterrupt, asyncio.CancelledError) as error:
+        emit_unexpected(phase=phase, error=error,
+                        effect="not_started" if phase == "staged_inputs" else "unconfirmed")
+        raise SystemExit(2) from None
 
 
 if __name__ == "__main__":
