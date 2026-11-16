@@ -44,4 +44,29 @@ jobs:
           mkdir -m 700 "$pool"
           make wheelhouse/acquire DOCKER_CONTEXT=default WHEELHOUSE="$pool"
           runner="$(make -s image/test-runner/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
+          export CONIX_TEST_RUNNER_IMAGE="$runner"
+          export CONIX_POSTGRES_IMAGE="$(python3 -c 'from tools.containers.operator import pinned_images; print(pinned_images()["postgres"])')"
+          export CONIX_STRESS_OWNER=0123456789abcdef01234567
+          export CONIX_STRESS_DURATION_SECONDS=120
+          export CONIX_STRESS_CADENCE_MS=1000
+          export CONIX_STRESS_MAX_GAP_MS=5000
+          export CONIX_STRESS_START_WAIT_SECONDS=900
+          export CONIX_STRESS_ARCHIVE_BYTES=67108864
+          export CONIX_STRESS_EXCHANGES=4096
+          docker compose --env-file /dev/null --project-directory . -p conix-stress-ci \
+            -f compose/stress-capture.yml config --format json > "$RUNNER_TEMP/stress-config.json"
+          python3 - "$RUNNER_TEMP/stress-config.json" "$runner" "$CONIX_POSTGRES_IMAGE" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          from tools.fixtures.stress_capture import StressCapture
+
+          fixture = StressCapture.__new__(StressCapture)
+          fixture.owner = "0123456789abcdef01234567"
+          fixture.project = "conix-stress-ci"
+          fixture.runner = sys.argv[2]
+          fixture.images = {"postgres": sys.argv[3]}
+          fixture.admit_graph(json.loads(Path(sys.argv[1]).read_text()))
+          PY
           make test/indexer/run DOCKER_CONTEXT=default RUNNER_IMAGE="$runner"
