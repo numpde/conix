@@ -1,0 +1,86 @@
+{
+  "abi_sha256": "88fac0e8f8376dbf66d991bddbb9c36cc976d5894203192f5da4653c1c2ee20e",
+  "admitted_completion_sha256": "3b69f3ca1ba975c50744bc03d4a7fb4ac10e156dc26092727c82bb25ed38e49f",
+  "archives": {},
+  "capture_revision": "08c28f60abd3298c29d68f8a3c3c02dc60a82ae2",
+  "cleanup_failure_count": 0,
+  "comparison": {
+    "baseline": {
+      "actual_wait_ns": 0,
+      "catchup_status": "complete",
+      "checkpoint_stall_intervals": 71,
+      "checkpoint_stalled_ns": 70993132873,
+      "first_checkpoint_ns": 2075350375,
+      "first_rpc_ns": 1613209206,
+      "launch_request_offset_host_ns": 47880,
+      "longest_checkpoint_stall_ns": 1009147864,
+      "max_sampled_lag": 5,
+      "reader_verified": true,
+      "release_control_roundtrip_host_ns": 1106369895,
+      "request_count": 2266,
+      "window_ns": 119530487991,
+      "window_samples": 120
+    },
+    "slowdown": {
+      "actual_wait_ns": 496991493143,
+      "catchup_status": "complete",
+      "checkpoint_stall_intervals": 90,
+      "checkpoint_stalled_ns": 90045688698,
+      "first_checkpoint_ns": 8341579785,
+      "first_rpc_ns": 2761973991,
+      "launch_request_offset_host_ns": 44203,
+      "longest_checkpoint_stall_ns": 1025034706,
+      "max_sampled_lag": 75,
+      "reader_verified": true,
+      "release_control_roundtrip_host_ns": 1511580753,
+      "request_count": 1987,
+      "window_ns": 119530487991,
+      "window_samples": 120
+    }
+  },
+  "controls": {
+    "artificial_delay_ms": 250,
+    "catchup_timeout_seconds": 900,
+    "checkpoint_cadence_ms": 1000
+  },
+  "input_sha256": {
+    "abi.json": "88fac0e8f8376dbf66d991bddbb9c36cc976d5894203192f5da4653c1c2ee20e",
+    "application.warc.gz": "80bdb3e7f54a7fb3f63774135a16292689a7c839d0468dbda1a82785ba725fd0",
+    "catalog.toml": "0fe0bc9ae34059645be6c6f4c42c3b8bec5d43ec6a19f4eab98f354a6144b09d",
+    "deployment.toml": "e6c350df7fd58909a04ef56c6d48a80f4b7b7dfe6e9e376213dee2bae70d66dd",
+    "manifest.json": "d5ad080b02b3e17e7ba168108865132a0b21b93b02a059c943d2d3479fb80153",
+    "observer.warc.gz": "443a4f73ba190d88c4d7d069e25ce4d978716ab7dc13a946190233de1c7eb616",
+    "source.json": "21d431f5f5e88eac0c8b9ace89e01b5d3044afdf69e0e9914cdd27ad2e3b0459"
+  },
+  "phase": "replay",
+  "private_directory": "out/indexer/stress/runs/20261116-202023/fuji-pay-to-play/replay",
+  "receipt": {
+    "file": "result.json",
+    "sha256": "0ff4be32c6fd454c0f81f2869c4e0916b72a8987c6f930db69ec9547b4b6a492"
+  },
+  "run": "20261116-202023",
+  "runs": {
+    "baseline": {
+      "added_latency_ms": 0,
+      "indexer_image": "sha256:9018ef7c47c4d2703ab7b98592ea9235098d49831484d68c32e08bcf6a1f3144",
+      "report_sha256": "280a88735555bed65764c5adab1fad12c8e463330022577575a93537184a9dcc",
+      "status": "complete"
+    },
+    "slowdown": {
+      "added_latency_ms": 250,
+      "indexer_image": "sha256:00923f64a60cfda002b28ae3f0945b95667520aed98af586f666566f7ff8367d",
+      "report_sha256": "4095309b7b94b9e207ef80221d591347affedc72f3f81f91c4a1f553da40ebc4",
+      "status": "complete"
+    }
+  },
+  "source": {
+    "chain_id": 43113,
+    "contracts": [
+      "0xfd4daafcae28b7037ccb87d54b89c657e79be19f"
+    ]
+  },
+  "source_id": "821e0b7da6a66967697d6d2e8f66ec4ebb7636be27350a43a91103ed440c995a",
+  "source_sha256": "21d431f5f5e88eac0c8b9ace89e01b5d3044afdf69e0e9914cdd27ad2e3b0459",
+  "status": "complete",
+  "subject": "fuji-pay-to-play"
+}

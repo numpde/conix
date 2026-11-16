@@ -2,7 +2,8 @@ Recorded-network stress campaign
 ================================
 
 Status: Stage A locally qualified at 08c28f6; Stage B implemented and locally
-qualified within the revision limits below; stages C-D remain proposed.
+qualified within the revision limits below; Stage C is implemented and locally
+qualified at 15b378f for the retained workload below; Stage D remains proposed.
 Supersedes Note 012's Fuji-first B and exact-conversation C.
 Date: 2026-11-15
 
@@ -452,7 +453,9 @@ the earlier live result is not relabelled as a run of the amended SHA.
 
 This admits one source-consistent replay workload. It does not establish
 consensus finality, SQL throughput or keep-pace capacity. Stage C's maintained
-replay lane, timed baseline/slowdown runs and Stage D remain unimplemented.
+replay lane and timed baseline/slowdown runs were not implemented at that
+revision. The later Stage C work is recorded separately below. Stage D remains
+unimplemented.
 No scanner, publication, journal or Reader algorithm was changed. No maintained
 branch promotion, production activation or sibling-repository change occurred.
 
@@ -493,3 +496,72 @@ including collision refusal, private-field exclusion, empty failed streams,
 portable legacy inputs and first-failure preservation through report failure.
 The previous contained image, live qualification revisions and their limits
 are unchanged; no additional RPC acquisition or replay was performed here.
+
+Stage C implementation and local qualification (2026-11-16)
+-----------------------------------------------------------
+The maintained test/indexer/stress/replay lane is implemented on
+work/network-rate-fixtures-20261115. It admits retained A/B evidence and runs
+the original installed Conix CLI and Reader against two separate disposable
+PostgreSQL deployments. The zero-added-delay baseline and explicit fixed-delay
+run share the recorded observation timeline, not a client-driven head.
+Runtime replay has no upstream network fallback. Missing evidence fails closed.
+
+Corrections at 1d9e5c1 and 15b378f keep catch-up and Reader verification within
+the declared deadline, preserve safe producer diagnostics and cleanup outcomes,
+and launch indexing without waiting for the head-release acknowledgement.
+The host reuses the admitted input snapshot across both runs. Failed result
+publication cannot replace the original failure; an unverified saved measurement
+does not prevent publication of the bounded failure report. Hash spelling is
+normalized for lookup/comparison while original provider envelopes are retained.
+
+Focused regressions reproduced the late-checkpoint, release-gate, reporting,
+catalog-binding and hash-spelling defects before correction. Sixteen focused
+host contracts and eleven contained replay tests pass. Local repository checks
+passed 297 tests; six input checks passed. The full selected-rootless contained
+lane passed 201 tests with two expected skips, plus the two separate schema
+initialization tests. Its disposable stack was retired.
+
+Selected Engine: agentic on fw. Corrected executable revision: 15b378f.
+Test-runner image:
+  sha256:5f831bf430be30e345c693ef8e05e0af5f8114569adbba8810513bc89c02c7e1
+
+Both retained-evidence runs completed and their owned resources were retired.
+The original Reader verified the final block hash and exact selected event
+history in both independent databases. Each indexed all 99 admitted blocks and
+17 selectors. This recorded interval contains zero selected events: it measures
+the cost of following a quiescent contract, not event-volume capacity.
+
+Measured window: 119.530 seconds, 120 samples per run.
+
+                          Baseline       250 ms added per request
+First RPC                 1.613 s        2.762 s
+First durable checkpoint  2.075 s        8.342 s
+Maximum sampled lag       5 blocks       75 blocks
+Final window sampled lag  0 blocks       75 blocks
+Final checkpoint observed 121.080 s      507.431 s after release
+Reader verification       Passed         Passed
+Replay requests           2266           1987
+Replay errors             0              0
+
+The baseline kept pace over this observed workload. The delayed run fell behind
+while the head advanced, then caught up about 388 seconds after head freeze,
+within the declared 900-second catch-up allowance. Maximum lag above is sampled
+during the measured window; it is not an exact continuous maximum. The two
+indexer images have identical source-input and wheel-selection labels and
+identical filesystem layers despite different image IDs.
+
+[Stage C public report](../qualification/indexer/stress/runs/20261116-202023/fuji-pay-to-play/replay/report.json)
+
+Private measurements, full samples, lifecycle and recovery receipts:
+  out/indexer/stress/runs/20261116-202023/fuji-pay-to-play/replay/
+Local build, repository, input, contained-suite and replay logs:
+  out/qualification/stress-replay-15b378f/
+
+The contained suite ran concurrently with the baseline and early slowdown;
+this is a shared-host measurement, not an isolated hardware benchmark. It uses
+recorded real Fuji evidence, a replay timing projection and artificial fixed
+delay. It does not measure present provider latency, unattended reliability,
+event-heavy throughput, other networks or the general capacity limit. This
+documentation/report commit does not change the qualified executable revision.
+Stage D, maintained-branch promotion and production activation remain outside
+this work. No scanner, journal, publication or Reader algorithm was changed.

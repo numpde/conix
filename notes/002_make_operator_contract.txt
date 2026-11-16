@@ -379,3 +379,33 @@ the derived catalog and the completion archive. Original A files stay intact;
 partial or conflicting evidence remains unavailable, without narrowing the
 window. Failed publication and uncertain cleanup remain separate from the
 primary failure. This operation admits evidence; it makes no keep-pace claim.
+
+Recorded stress replay
+-----------------------
+test/indexer/stress/replay consumes explicit CAPTURE_DIR and EVIDENCE_DIR
+selections from completed, admitted A/B evidence. It requires DOCKER_CONTEXT,
+an immutable test-runner RUNNER_IMAGE, STRESS_REPLAY_DELAY_MS (1..5000),
+STRESS_CHECKPOINT_CADENCE_MS (100..60000), and
+STRESS_CATCHUP_TIMEOUT_SECONDS (1..3600). These controls have no defaults.
+
+  make test/indexer/stress/replay \
+    DOCKER_CONTEXT=agentic RUNNER_IMAGE=sha256:<selected-test-runner-id> \
+    CAPTURE_DIR=out/indexer/stress/runs/20261116-124233/fuji-pay-to-play/capture \
+    EVIDENCE_DIR=out/indexer/stress/runs/20261116-155440/fuji-pay-to-play/evidence-completion \
+    STRESS_REPLAY_DELAY_MS=250 STRESS_CHECKPOINT_CADENCE_MS=1000 \
+    STRESS_CATCHUP_TIMEOUT_SECONDS=900
+
+The operation runs a zero-added-delay baseline and a separate delayed replay.
+Each owns disposable PostgreSQL, internal networks, replay evidence and result
+volumes. The installed Conix process and original Reader use the ordinary
+named deployment operations. Runtime containers receive no upstream egress,
+host mounts, Engine socket or wallet. Missing recorded evidence fails closed.
+The recorded head advances independently of indexing requests after release.
+
+Private measurements, samples and recovery records remain under
+out/indexer/stress/runs/<UTC timestamp>/<subject>/replay/, with baseline/ and
+slowdown/ subdirectories. The matching qualification/ path contains a bounded
+public report binding verified measurement hashes and selected comparison
+facts. Resource retirement, measurement completeness and Reader verification
+have separate outcomes. A completed replay is a measurement of this workload
+and delay, not a general throughput guarantee or live-provider qualification.
