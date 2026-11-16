@@ -190,9 +190,18 @@ class StressCapture:
         )
 
     def compose_run(self, *arguments, timeout=90, capture=False):
-        self.phase = "fixture " + arguments[0]
-        return self.docker.run(*self.compose, *arguments, env=self.environment,
-                               timeout=timeout, capture=capture)
+        """Keep Compose output private; only bounded rendered config is returned."""
+        label = "Stress fixture " + arguments[0]
+        self.phase = label
+        if capture:
+            return self.docker.run(
+                *self.compose, *arguments, env=self.environment,
+                timeout=timeout, capture=True,
+            )
+        return self.child(
+            self.docker.docker_command_prefix + self.compose + list(arguments),
+            label, timeout=timeout,
+        )
 
     def container(self, service, *, running=False):
         ids = self.docker.run(
