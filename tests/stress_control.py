@@ -15,7 +15,7 @@ CAPTURE = Path("/capture")
 def write_record(name, document):
     """Atomically publish a bounded, owner-private control record."""
     raw = (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
-    if len(raw) > 1048576:
+    if len(raw) > 2 * 1048576:
         raise ValueError("Capture control record exceeds its limit.")
     target = CAPTURE / name
     temporary = CAPTURE / (name + ".new")
