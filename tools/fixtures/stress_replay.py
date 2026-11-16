@@ -312,6 +312,7 @@ class ReplayAttempt:
             "--log-driver", "none", "--read-only", "--user", "65532:65532",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
             "--pids-limit", "32", "--memory", "1g", "--memory-swap", "1g",
+            "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=256m",
             "--mount", "type=volume,source=" + self.volume("evidence") + ",target=/evidence,volume-nocopy",
             "--entrypoint", "python", self.runner, "-E", "-s", "/tests/stress_replay.py", "stage",
         ]
