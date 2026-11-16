@@ -22,3 +22,26 @@ jobs:
         run: python -m compileall -q src tests tools repository_checks
       - name: Run offline repository contracts
         run: make test/repository/run
+
+  contained-capture-contracts:
+    needs: host-contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Acquire pinned images and build exact offline test runner
+        run: |
+          make image/python-base/acquire DOCKER_CONTEXT=default
+          make image/postgres/acquire DOCKER_CONTEXT=default
+          make image/foundry/acquire DOCKER_CONTEXT=default
+          make image/dockerfile-frontend/acquire DOCKER_CONTEXT=default
+          pool="$RUNNER_TEMP/conix-stress-wheelhouse"
+          mkdir -m 700 "$pool"
+          make wheelhouse/acquire DOCKER_CONTEXT=default WHEELHOUSE="$pool"
+          runner="$(make -s image/test-runner/build DOCKER_CONTEXT=default WHEELHOUSE="$pool")"
+          make test/indexer/run DOCKER_CONTEXT=default RUNNER_IMAGE="$runner"
