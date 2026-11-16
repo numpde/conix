@@ -190,6 +190,13 @@ def run():
             })
     if reason is not None:
         raise SystemExit("Head observation could not complete.")
+    # Keep the same worker/clock namespace alive through the coordinator's
+    # second bracket. No polling, recording or window extension occurs here.
+    retire_deadline = time.monotonic() + 90
+    while not (CAPTURE / "retire").exists():
+        if time.monotonic() >= retire_deadline:
+            raise SystemExit("Head observer retirement is unconfirmed.")
+        time.sleep(0.05)
 
 
 if __name__ == "__main__":
