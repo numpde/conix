@@ -477,10 +477,8 @@ class ReplayAttempt:
         self.phase = "bounded baseline or delayed measurement"
         self.sampler()
         first = self.status()
-        require(first["head"] == self.admission["coverage"]["start_block"] or
-                first["head"] == self.admission["coverage"]["final_block"] or
-                first["elapsed_ns"] == 0,
-                "Replay advanced before explicit release.")
+        require(first["head"] == self.source["initial_head"],
+                "Replay head differs from the admitted first timed observation.")
         require(first["released"] is False and first["elapsed_ns"] == 0,
                 "Replay pacing started during fixture preparation.")
         time.sleep(1)
@@ -509,12 +507,10 @@ class ReplayAttempt:
         identity = self.original()
         self.records["indexer_id"] = identity
         with self.lifecycle(identity, release_utc):
-            budget = (self.admission["coverage"]["final_block"] -
-                      self.admission["coverage"]["start_block"] + 3600)
-            # The actual observed schedule is bounded by the admission window,
-            # not by the number of blocks or an invented chain arrival rate.
-            budget = max(budget, self.admission["coverage"]["final_block"] -
-                         self.admission["coverage"]["start_block"] + 300)
+            # The wall budget follows the *recorded observation interval*
+            # plus the explicit catch-up grant, not an assumed block rate.
+            budget = (self.records["admission"]["window_ns"] // 1000000000 +
+                      self.controls["stress_catchup_timeout_seconds"] + 180)
             self.phase = "original Reader and checkpoint measurement"
             raw = self.docker.run("container", "wait", self.sampler_id,
                                   timeout=budget, capture=True).strip()
@@ -533,6 +529,7 @@ class ReplayAttempt:
                         str(self.folder / "result.json"), timeout=30)
         self.records["result_sha256"] = check_file(
             self.folder / "result.json", 2 * 1048576, imported=True)
+        self.result_exported = True
         result = json.loads((self.folder / "result.json").read_bytes())
         require(result["source_id"] == self.admission["source_id"]
                 and result["start"] == self.admission["coverage"]["start_block"]
@@ -655,7 +652,7 @@ def run_replay(options, *, client_cls, pinned_images):
         images = pinned_images()
         docker.require_image(images["postgres"])
         parent = allocate_run(ROOT, subject, "replay")
-        put_private(parent / "catalog.toml", tomllib.dumps(declaration).encode() if False else
+        put_private(parent / "catalog.toml",
                     (private_folder(options.evidence_dir) / "catalog.toml").read_bytes())
         result = {"status": "unavailable", "source_id": admission["source_id"],
                   "source_sha256": input_hashes["source.json"],
@@ -668,8 +665,11 @@ def run_replay(options, *, client_cls, pinned_images):
         measurements = {}
         primary = None
         for label, delay in (("baseline", 0), ("slowdown", controls["stress_replay_delay_ms"])):
+            source_inputs = private_folder(options.capture_dir)
+            capture = json.loads((source_inputs / "manifest.json").read_bytes())
             run = ReplayAttempt(docker, images, options.runner_image, parent / label,
-                                dict(source, abi=(private_folder(options.capture_dir) / "abi.json").read_bytes()),
+                                dict(source, abi=(source_inputs / "abi.json").read_bytes(),
+                                     initial_head=capture["observer"]["samples"][0]["header"]["height"]),
                                 declaration, payload, admission, controls, label, delay)
             try:
                 run.preflight()
