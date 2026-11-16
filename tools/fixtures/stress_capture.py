@@ -507,7 +507,7 @@ class StressCapture:
             for control in ("receipt.json",) + (("observations.json",) if name == "observer" else ()):
                 path = self.folder / (name + "-" + control)
                 self.docker.run("cp", helper + ":/capture/" + control, str(path), timeout=15)
-                check_file(path, 1048576, imported=True)
+                check_file(path, 2 * 1048576, imported=True)
             # A different process reads raw bytes using warcio without importing
             # the recorder, writer, scanner, database or a provider endpoint.
             raw = self.docker.run(
