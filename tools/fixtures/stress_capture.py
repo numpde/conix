@@ -141,6 +141,8 @@ class StressCapture:
         self.prepared = False
         self.launched = False
         self.archive_exported = set()
+        self.retired = set()
+        self.consumer_retired = False
         self.phase = "preflight"
         self.steps = 0
         self.records = {
@@ -422,19 +424,29 @@ class StressCapture:
                 "Independent observer exited without a clean archive/receipt.")
 
     def stop(self):
+        """Retire the original process before closing either independent recorder."""
         self.phase = "retirement before export"
         if self.profile_created:
             self.make("deployment/down")
             require(not _candidate_ids(self.docker, "conix-" + self.name),
                     "Original Conix retirement is unconfirmed.")
+        self.consumer_retired = True
+        first_failure = None
         if self.fixture_attempted:
-            identity, record = self.container("gateway")
-            if record["State"]["Running"]:
-                self.docker.run("container", "stop", "--time", "25", identity, timeout=35)
-                identity, record = self.container("gateway")
-            require(record["State"]["Running"] is False
-                    and record["State"]["ExitCode"] == 0,
-                    "Recorded gateway did not retire cleanly.")
+            for name in ("gateway", "observer"):
+                try:
+                    identity, record = self.container(name)
+                    if record["State"]["Running"]:
+                        self.docker.run("container", "stop", "--time", "25", identity, timeout=35)
+                        identity, record = self.container(name)
+                    require(record["State"]["Running"] is False
+                            and record["State"]["ExitCode"] == 0,
+                            "Capture worker retirement did not finalize cleanly.")
+                    self.retired.add(name)
+                except BaseException as error:
+                    first_failure = first_failure or error
+        if first_failure is not None:
+            raise first_failure
 
     def owned_volume(self, name):
         volume = self.project + "_" + name
@@ -447,6 +459,7 @@ class StressCapture:
 
     def export(self, name):
         """A networkless volume-only helper; Docker cp never prints WARC bytes."""
+        require(name in self.retired, "Archive cannot be exported before its recorder retires cleanly.")
         volume = self.owned_volume(name)
         helper = "conix-export-" + name + "-" + self.owner
         self.phase = "export " + name
@@ -528,34 +541,69 @@ class StressCapture:
             "initial_pending_without_checkpoint": first["header"]["height"] - seed["header"]["height"] + 1,
         })
 
+    def verify_fixture_ownership(self):
+        """Every existing resource must belong to this run before Compose down."""
+        identities = self.docker.run(
+            "ps", "--all", "--no-trunc",
+            "--filter", "label=com.docker.compose.project=" + self.project,
+            "--format", "{{.ID}}", capture=True,
+        ).splitlines()
+        for identity in identities:
+            require(ID.fullmatch(identity), "Fixture returned an incomplete container ID.")
+            record = json.loads(self.docker.run(
+                "container", "inspect", "--format", "{{json .}}", identity, capture=True,
+            ))
+            labels = record["Config"]["Labels"]
+            service = labels.get("com.docker.compose.service")
+            require(record["Id"] == identity and labels.get(OWNER_LABEL) == self.owner
+                    and service in ("postgres", "bootstrap", "archive-init", "gateway", "observer"),
+                    "Fixture container ownership changed; preserve its dependencies.")
+        for kind, names in (("network", ("tests", "rpc", "egress")),
+                            ("volume", ("pgdata", "application", "observer"))):
+            for name in names:
+                actual = self.project + "_" + name
+                existing = self.docker.run(kind, "ls", "--filter", "name=" + actual,
+                                           "--format", "{{.Name}}", capture=True).splitlines()
+                if actual not in existing:
+                    continue
+                record = json.loads(self.docker.run(kind, "inspect", actual, capture=True))[0]
+                require(record["Name"] == actual and record["Labels"].get(OWNER_LABEL) == self.owner,
+                        "Fixture network/volume owner changed; preserve it.")
+
     def cleanup(self):
-        """Preserve archive volumes unless their sole evidence is exported."""
+        """Do not retire dependencies under an unconfirmed original process."""
         failures = []
         if self.fixture_attempted:
             try:
-                if self.profile_created:
-                    self.make("deployment/down")
-                    require(not _candidate_ids(self.docker, "conix-" + self.name),
-                            "Original retained indexer still owns fixture dependencies.")
-                # Recorders must retire before their archive volumes are inspected.
+                if not self.consumer_retired:
+                    if self.profile_created:
+                        self.make("deployment/down")
+                        require(not _candidate_ids(self.docker, "conix-" + self.name),
+                                "Original Conix still owns fixture dependencies.")
+                    self.consumer_retired = True
                 for service in ("gateway", "observer"):
-                    try:
-                        identity, record = self.container(service)
-                    except OperationError:
+                    ids = self.docker.run(
+                        "ps", "--all", "--no-trunc",
+                        "--filter", "label=com.docker.compose.project=" + self.project,
+                        "--filter", "label=com.docker.compose.service=" + service,
+                        "--format", "{{.ID}}", capture=True,
+                    ).splitlines()
+                    if not ids:
                         continue
+                    identity, record = self.container(service)
                     if record["State"]["Running"]:
                         self.docker.run("container", "stop", "--time", "25", identity, timeout=35)
-                for service in ("postgres", "gateway", "observer"):
-                    self.container(service)  # prove owner before Compose retirement
+                self.verify_fixture_ownership()
                 self.compose_run("down", "--remove-orphans", "--timeout", "30", timeout=90)
                 for name in ("pgdata", "application", "observer"):
                     if name in ("application", "observer") and name not in self.archive_exported:
+                        # No confirmed independent export: keep the only volume evidence.
                         continue
                     volume = self.owned_volume(name)
                     self.docker.run("volume", "rm", volume, timeout=30)
             except BaseException as error:
                 failures.append("fixture: " + type(error).__name__)
-        if self.profile_created and not failures:
+        if self.profile_created and not failures and self.consumer_retired:
             try:
                 prepared = named.inspect_prepared(self.name)
                 if prepared is not None:
@@ -603,6 +651,9 @@ def run_capture(options, *, client_cls, pinned_images):
             # Retain partial archives even when the observer or Conix failed.
             if capture.fixture_attempted and capture.runner is not None:
                 for name in ("application", "observer"):
+                    if name not in capture.retired:
+                        capture.records["export"][name] = {"status": "unconfirmed", "failure": "retirement"}
+                        continue
                     try:
                         capture.export(name)
                     except BaseException as error:
