@@ -22,6 +22,7 @@ def inspect(name):
     source = json.loads((Path(__file__).parent / "fixtures/evm/fuji_pay_to_play.json").read_text())
     requests = {}
     responses = set()
+    response_ids = set()
     metadata = set()
     first_header = None
     with path.open("rb") as archive:
@@ -39,6 +40,8 @@ def inspect(name):
             record_id = record.rec_headers.get_header("WARC-Record-ID")
             if not record_id:
                 raise ValueError("WARC record lacks identity.")
+            if record.rec_headers.get_header("WARC-Truncated"):
+                raise ValueError("Truncated WARC exchange is not a complete archive.")
             raw = record.raw_stream.read(LIMIT + 1)
             if len(raw) > LIMIT:
                 raise ValueError("WARC exchange exceeds admitted response budget.")
@@ -57,6 +60,7 @@ def inspect(name):
                 if linked not in requests or target != requests[linked] or linked in responses:
                     raise ValueError("WARC response does not match one recorded request.")
                 responses.add(linked)
+                response_ids.add(record_id)
                 if name == "observer" and first_header is None and record.http_headers.get_statuscode() == "200":
                     try:
                         decoded = json.loads(raw)
@@ -68,7 +72,7 @@ def inspect(name):
                         }
                     except (ValueError, KeyError, TypeError):
                         pass
-    if not requests or set(requests) != responses or not requests.issubset(metadata):
+    if not requests or set(requests) != responses or metadata != set(requests) | response_ids:
         raise ValueError("WARC contains incomplete request/response/metadata pairs.")
     if name == "observer" and (len(requests) < 3 or first_header is None):
         raise ValueError("Observer archive lacks seed and boundary observations.")
