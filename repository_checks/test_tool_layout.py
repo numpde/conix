@@ -32,6 +32,7 @@ TOOL_FILES = {
     "tools/fixtures/network_rates.py",
     "tools/fixtures/stress_capture.py",
     "tools/fixtures/stress_evidence.py",
+    "tools/fixtures/stress_replay.py",
     "tools/fixtures/stress_artifacts.py",
     "tools/fixtures/stress_protocol.py",
     "tools/wheelhouse/__init__.py",
