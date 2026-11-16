@@ -116,6 +116,13 @@ class ReplayEvidence:
             except ValueError:
                 # A failed, non-matrix capture is not an immutable RPC answer.
                 continue
+            if exchange.request["method"] == "eth_getBlockByNumber" and value is None:
+                # A numbered header above the live provider's head was
+                # genuinely absent at the time of capture. It is not timeless
+                # negative evidence: the later admitted header is immutable
+                # once it exists. Replay derives future null from its own
+                # visible-head schedule instead of caching the old absence.
+                continue
             envelope = document(_decoded(exchange.body, exchange.headers).decode("utf-8"))
             require(type(envelope) is dict and type(envelope.get("id")) is int
                     and envelope["id"] == exchange.request["id"],
