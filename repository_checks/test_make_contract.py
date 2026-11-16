@@ -16,6 +16,7 @@ TARGETS = {
     "image/indexer/build", "image/test-runner/build", "image/evm-test-runner/build",
     "image/indexer/check", "image/evm-test-runner/check",
     "test/http/recording/run", "test/indexer/stress/capture", "test/indexer/run", "test/deployment/acceptance/run", "test/input-staging/run",
+    "test/indexer/stress/evidence/complete",
     "test/indexer/acceptance/fuji/run",
     "test/indexer/acceptance/borrowed/run", "test/indexer/acceptance/owned/run",
     "history/block/advance",
@@ -65,6 +66,7 @@ class MakeContractTests(unittest.TestCase):
             "INDEXER_IMAGE", "FIXTURE_DESCRIPTOR", "DAPP32_DIR",
             "DEPLOYMENT", "INPUT_VOLUME", "CONFIG_FILE", "DSN_FILE",
             "DATABASE_NETWORK", "RPC_NETWORK",
+            "CAPTURE_DIR", "STRESS_COMPLETION_SECONDS",
         ):
             with self.subTest(name=name):
                 self.assertIn("CONIX_MAKE_" + name + " := $(value " + name + ")", source)
