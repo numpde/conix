@@ -13,6 +13,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from conix import input_staging, worker
+from conix import __main__ as application_cli
+from conix.rpc import RpcUnavailable
 from host_diagnostics import admitted, explanation
 
 
@@ -31,6 +33,34 @@ def failure_from(action):
 
 
 class InstalledFailurePipeline(unittest.TestCase):
+    def test_standalone_input_failure_is_admitted_before_any_application_effect(self):
+        with (
+            patch.object(sys, "argv", ["conix", "run"]),
+            patch.object(application_cli, "load_runtime_inputs", side_effect=ValueError(PRIVATE)),
+        ):
+            output = failure_from(application_cli.main)
+        record = admitted(output)
+        self.assertEqual(record["phase"], "staged_inputs")
+        self.assertEqual(record["cause"], "ValueError")
+        self.assertEqual(record["effect"], "not_started")
+        self.assertNotIn(PRIVATE.encode(), output)
+
+    def test_standalone_failure_preserves_known_or_unexpected_cause_without_prose(self):
+        for error in (RpcUnavailable(PRIVATE), RuntimeError(TOKEN)):
+            with self.subTest(cause=type(error).__name__):
+                with (
+                    patch.object(sys, "argv", ["conix", "run"]),
+                    patch.object(application_cli, "load_runtime_inputs", return_value=(SimpleNamespace(), PRIVATE)),
+                    patch.object(application_cli, "_run", side_effect=error),
+                ):
+                    output = failure_from(application_cli.main)
+                record = admitted(output)
+                self.assertEqual(record["phase"], "run")
+                self.assertEqual(record["cause"], type(error).__name__)
+                self.assertEqual(record["effect"], "unconfirmed")
+                self.assertNotIn(PRIVATE.encode(), output)
+                self.assertNotIn(TOKEN.encode(), output)
+
     def test_worker_unexpected_input_error_preserves_phase_type_source_and_secrecy(self):
         def explode():
             raise ValueError(PRIVATE)
