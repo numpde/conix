@@ -367,13 +367,16 @@ class StressCapture:
             capture=True, timeout=30,
         )
         events = [json.loads(line) for line in raw.splitlines()]
-        relevant = [event["Action"] for event in events
+        relevant = [{"action": event["Action"], "time_ns": event.get("timeNano")}
+                    for event in events
                     if event.get("Type") == "container" and event.get("Actor", {}).get("ID") == identity
                     and event.get("Action") in ("start", "die", "restart")]
-        require(relevant and relevant[0] == "start" and relevant.count("start") == 1
-                and "die" not in relevant and "restart" not in relevant,
+        actions = [item["action"] for item in relevant]
+        require(actions and actions[0] == "start" and actions.count("start") == 1
+                and "die" not in actions and "restart" not in actions
+                and all(type(item["time_ns"]) is int and item["time_ns"] > 0 for item in relevant),
                 "Engine events do not confirm uninterrupted original Conix execution.")
-        return relevant
+        return {"since_utc": since.isoformat(), "until_utc": until.isoformat(), "events": relevant}
 
     def observe(self):
         started_events = datetime.now(timezone.utc) - timedelta(seconds=2)
