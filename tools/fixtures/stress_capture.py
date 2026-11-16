@@ -20,6 +20,7 @@ import tomllib
 from tools.containers import named
 from tools.containers.client import OperationError, select_endpoint
 from tools.containers.deployment import _candidate_ids
+from tools.containers.diagnostics import PHASES, admitted, error_record, explanation
 from tools.fixtures.deployment import campaign_lock
 from tools.fixtures.process import cancellation, clean_environment, owned_command, progress
 from tools.wheelhouse.operations import SharedWheelhouse
@@ -331,6 +332,7 @@ class StressCapture:
         self.container("observer", running=True)
 
     def control(self, service, command):
+        self.phase = service + " " + command
         identity, _ = self.container(service, running=True)
         return self.docker.run(
             "exec", "--user", "65532:65532", identity,
@@ -414,6 +416,7 @@ class StressCapture:
         return ids[0]
 
     def history(self, identity, since, until):
+        self.phase = "retained process lifecycle"
         raw = self.docker.run(
             "events", "--since", since.isoformat(), "--until", until.isoformat(),
             "--filter", "container=" + identity, "--format", "{{json .}}",
@@ -594,6 +597,7 @@ class StressCapture:
             self.records["observation_eligibility"] = {"status": "unavailable", "reason": "missing_timeline"}
 
     def complete(self):
+        self.phase = "capture admission"
         observer = json.loads((self.folder / "observer-observations.json").read_text())
         gateway = json.loads((self.folder / "application-receipt.json").read_text())
         observed_receipt = json.loads((self.folder / "observer-receipt.json").read_text())
@@ -703,6 +707,32 @@ class StressCapture:
         return failures
 
 
+def _safe_phase(phase):
+    """The phase is selected by this operator, not by provider response text."""
+    return phase if type(phase) is str and re.fullmatch(r"[A-Za-z][A-Za-z0-9_ /-]{0,95}", phase) else "unavailable"
+
+
+def _safe_cleanup_outcome(failure):
+    """Restrict cleanup reports to known owner-phase and exception-type labels."""
+    if type(failure) is str and re.fullmatch(
+        r"(?:fixture|generated deployment): [A-Za-z][A-Za-z0-9_]{0,63}", failure,
+    ):
+        return failure
+    return "unclassified ownership or retirement failure"
+
+
+def _primary_summary(primary, failed_phase):
+    """Retain admitted cause, exit and safe location; never forward exception prose."""
+    code = getattr(primary, "exit_code", None)
+    code = code if type(code) is int and -65535 <= code <= 65535 else None
+    details = explanation(error_record(primary), code, phases=PHASES)
+    require(details is not None, "Cannot admit the primary failure category.")
+    record_phase, _, remainder = details.partition("; ")
+    if record_phase != "phase=operator":
+        remainder = record_phase.replace("phase=", "producer_phase=", 1) + "; " + remainder
+    return f"phase={_safe_phase(failed_phase)}; {remainder}"
+
+
 def run_capture(options, *, client_cls, pinned_images):
     """Maintained operator: one bounded live capture and independently verified export."""
     require(os.geteuid() != 0, "Stress capture requires an ordinary non-root operator.")
@@ -772,7 +802,12 @@ def run_capture(options, *, client_cls, pinned_images):
                 except BaseException as error:
                     primary = error
                     failed_phase = capture.phase
-            failures = capture.cleanup()
+            try:
+                failures = capture.cleanup()
+            except BaseException as error:
+                failures = ["fixture: " + type(error).__name__]
+                if primary is None:
+                    primary, failed_phase = error, "cleanup"
             if primary is not None:
                 capture.records["capture"] = "partial"
                 capture.records["primary_failure"] = type(primary).__name__
@@ -782,8 +817,29 @@ def run_capture(options, *, client_cls, pinned_images):
             try:
                 json_record(capture.folder / "manifest.json", capture.records)
             except BaseException as error:
-                primary = primary or error
-            progress("Stress capture " + capture.records["capture"] + "; private receipt: " +
-                     str(capture.folder / "manifest.json"))
-            if primary is not None or failures:
-                raise OperationError("Stress capture or its owned cleanup is incomplete; retained evidence and recovery record identify the selected resources.")
+                if primary is None:
+                    primary, failed_phase = error, "manifest publication"
+
+            # Report uncertain retirement first. The final diagnostic always
+            # describes the *first* primary failure, even if cleanup or
+            # manifest publication also failed.
+            for failure in failures:
+                try:
+                    progress("Cleanup unconfirmed: " + _safe_cleanup_outcome(failure))
+                except OSError:
+                    pass
+            try:
+                progress("Stress capture " + capture.records["capture"] +
+                         "; private receipt: " + str(capture.folder / "manifest.json"))
+            except OSError:
+                pass
+            if primary is not None:
+                safe = _primary_summary(primary, failed_phase or capture.phase)
+                code = getattr(primary, "exit_code", None)
+                code = code if type(code) is int else None
+                raise OperationError("Stress capture failed: " + safe,
+                                     exit_code=code, diagnostic=error_record(primary)) from primary
+            if failures:
+                first = _safe_cleanup_outcome(failures[0]).rsplit(" ", 1)[-1]
+                raise OperationError(f"Stress capture failed: phase=cleanup; cause={first}; "
+                                     "effect=retirement unconfirmed.")
