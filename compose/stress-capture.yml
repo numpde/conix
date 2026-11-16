@@ -1,0 +1,96 @@
+# Dedicated read-only Fuji stress capture; never alters normal acceptance.
+services:
+  postgres:
+    extends: {file: compose/tests.yml, service: postgres}
+    labels: {io.conix.stress-owner: "${CONIX_STRESS_OWNER:?capture owner required}"}
+  bootstrap:
+    extends: {file: compose/tests.yml, service: bootstrap}
+    labels: {io.conix.stress-owner: "${CONIX_STRESS_OWNER:?capture owner required}"}
+  archive-init:
+    image: ${CONIX_TEST_RUNNER_IMAGE:?immutable test runner required}
+    pull_policy: never
+    entrypoint: [python, -E, -s, /tests/stress_volume.py]
+    command: [init]
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: [no-new-privileges:true]
+    network_mode: none
+    pids_limit: 32
+    mem_limit: 128m
+    memswap_limit: 128m
+    volumes:
+      - application:/init/application
+      - observer:/init/observer
+    labels: {io.conix.stress-owner: "${CONIX_STRESS_OWNER:?capture owner required}"}
+  gateway:
+    image: ${CONIX_TEST_RUNNER_IMAGE:?immutable test runner required}
+    pull_policy: never
+    entrypoint: [python, -E, -s, /tests/stress_gateway.py]
+    environment:
+      CONIX_STRESS_EXCHANGES: "${CONIX_STRESS_EXCHANGES:?explicit exchange budget required}"
+      CONIX_STRESS_ARCHIVE_BYTES: "${CONIX_STRESS_ARCHIVE_BYTES:?explicit archive budget required}"
+    init: true
+    restart: "no"
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    cpus: 1
+    mem_limit: 256m
+    memswap_limit: 256m
+    stop_grace_period: 25s
+    tmpfs: ["/tmp:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=8m"]
+    volumes: [application:/capture]
+    labels: {io.conix.stress-owner: "${CONIX_STRESS_OWNER:?capture owner required}"}
+    networks: [rpc, egress]
+    logging: {driver: local, options: {max-size: 64k, max-file: "1", compress: "false"}}
+    healthcheck:
+      test: [CMD, python, -I, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).close()"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+  observer:
+    image: ${CONIX_TEST_RUNNER_IMAGE:?immutable test runner required}
+    pull_policy: never
+    entrypoint: [python, -E, -s, /tests/stress_observer.py]
+    environment:
+      CONIX_STRESS_DURATION_SECONDS: "${CONIX_STRESS_DURATION_SECONDS:?duration required}"
+      CONIX_STRESS_CADENCE_MS: "${CONIX_STRESS_CADENCE_MS:?cadence required}"
+      CONIX_STRESS_MAX_GAP_MS: "${CONIX_STRESS_MAX_GAP_MS:?maximum gap required}"
+      CONIX_STRESS_START_WAIT_SECONDS: "${CONIX_STRESS_START_WAIT_SECONDS:?start budget required}"
+      CONIX_STRESS_EXCHANGES: "${CONIX_STRESS_EXCHANGES:?exchange budget required}"
+      CONIX_STRESS_ARCHIVE_BYTES: "${CONIX_STRESS_ARCHIVE_BYTES:?archive budget required}"
+    init: true
+    restart: "no"
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    cpus: 1
+    mem_limit: 256m
+    memswap_limit: 256m
+    volumes: [observer:/capture]
+    labels: {io.conix.stress-owner: "${CONIX_STRESS_OWNER:?capture owner required}"}
+    networks: [egress]
+    logging: {driver: local, options: {max-size: 64k, max-file: "1", compress: "false"}}
+networks:
+  tests:
+    internal: true
+    labels: {io.conix.stress-owner: "${CONIX_STRESS_OWNER:?capture owner required}"}
+  rpc:
+    internal: true
+    labels: {io.conix.stress-owner: "${CONIX_STRESS_OWNER:?capture owner required}"}
+  egress:
+    internal: false
+    labels: {io.conix.stress-owner: "${CONIX_STRESS_OWNER:?capture owner required}"}
+volumes:
+  pgdata:
+    labels: {io.conix.stress-owner: "${CONIX_STRESS_OWNER:?capture owner required}"}
+  application:
+    labels: {io.conix.stress-owner: "${CONIX_STRESS_OWNER:?capture owner required}"}
+  observer:
+    labels: {io.conix.stress-owner: "${CONIX_STRESS_OWNER:?capture owner required}"}
