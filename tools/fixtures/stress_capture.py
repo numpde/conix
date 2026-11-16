@@ -382,6 +382,7 @@ class StressCapture:
         record = json.loads(self.docker.run("container", "inspect", "--format", "{{json .}}",
                                            ids[0], capture=True))
         prepared = named.inspect_prepared(self.name)
+        require(prepared is not None, "The original prepared Conix identity is unavailable.")
         require(record["Id"] == ids[0] and record["State"]["Running"] is True
                 and record["Image"] == prepared.image
                 and record["Config"]["Cmd"] == ["-I", "-m", "conix", "run"]
@@ -420,6 +421,7 @@ class StressCapture:
         self.launched = True
         identity = self.deployed()
         self.records["indexer_id"] = identity
+        self.records["indexer_image"] = named.inspect_prepared(self.name).image
         before = {service: self.calibrate(service) for service in ("gateway", "observer")}
         release_send = time.monotonic_ns()
         self.control("observer", "release")
@@ -676,6 +678,13 @@ def run_capture(options, *, client_cls, pinned_images):
             capture = StressCapture(docker, pinned_images(), options, root, selection)
             primary = None
             try:
+                revision = capture.child(["git", "rev-parse", "HEAD"],
+                                         "Stress source revision").decode("ascii").strip()
+                require(HASH.fullmatch(revision), "Capture source revision is unavailable.")
+                capture.records["revision"] = revision
+                capture.records["source_dirty"] = bool(capture.child(
+                    ["git", "status", "--porcelain"], "Stress source status",
+                ).strip())
                 capture.preflight()
                 capture.start()
                 seed = capture.seed()
@@ -707,6 +716,7 @@ def run_capture(options, *, client_cls, pinned_images):
             if primary is not None:
                 capture.records["capture"] = "partial"
                 capture.records["primary_failure"] = type(primary).__name__
+                capture.records["failed_phase"] = capture.phase
             if failures:
                 capture.records["cleanup"] = failures
             try:
