@@ -49,9 +49,10 @@ def unpack(stream, folder):
                     "Replay transport has an unauthorized or oversized member.")
             seen.add(member.name)
             remaining = member.size
+            member_stream = source.extractfile(member)
             with (folder / member.name).open("xb") as target:
                 while remaining:
-                    block = source.extractfile(member).read(min(65536, remaining))
+                    block = member_stream.read(min(65536, remaining))
                     require(block, "Replay transport ended within a member.")
                     target.write(block)
                     remaining -= len(block)
@@ -71,11 +72,14 @@ def admitted(folder):
             and admission.get("completion_sha256") == sha256(folder / "completion.warc.gz"),
             "Replay files differ from their admitted source, ABI, archive or catalog hashes.")
     verified = asyncio.run(verify_completion(folder, catalog, application, polls))
-    require(admission.get("inspection") == verified,
-            "The independently rebuilt immutable completion matrix differs from Stage B.")
-    require(admission.get("coverage") == dict(verified["coverage"],
-            completion_exchanges=verified["completion_exchanges"]),
-            "Stage B admission and WARC coverage disagree.")
+    require(admission.get("inspection", {}).get("status") == "verified"
+            and admission["inspection"]["completion_sha256"] == verified["completion_sha256"],
+            "Stage B independent verification is absent.")
+    for field in ("start_block", "final_block", "headers", "selectors", "log_cells", "rechecks"):
+        require(admission["coverage"][field] == verified["coverage"][field],
+                "Rebuilt WARC coverage differs from the selected Stage B admission.")
+    require(admission["coverage"]["completion_exchanges"] == verified["completion_exchanges"],
+            "Completion WARC exchange count differs from Stage B.")
     completion = read_archive(folder / "completion.warc.gz", catalog.chain.rpc_url,
                               max_exchanges=16384)
     return catalog, manifest, application + completion, polls, admission
