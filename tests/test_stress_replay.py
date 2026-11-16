@@ -40,6 +40,16 @@ def specimen():
     for number in range(start, 103):
         put("eth_getLogs", [{"blockHash": hashes[number], "address": address,
                              "topics": [topic]}], [])
+    # The live original process can legitimately request a numbered header
+    # before that block exists. That historical null must not conflict with
+    # Stage B's later admitted concrete header for the same immutable height.
+    early_params = ["0x66", False]
+    observed.append(SimpleNamespace(
+        key=rpc_key("eth_getBlockByNumber", early_params),
+        request={"id": 122},
+        body=b'{"jsonrpc":"2.0","id":122,"result":null}',
+        headers=(), result=lambda: None,
+    ))
     for (method, params), value in results.items():
         reply = json.dumps({"jsonrpc": "2.0", "id": 123, "result": value,
                             "providerExtension": "unchanged"}, separators=(",", ":")).encode()
@@ -94,6 +104,7 @@ class HeadScheduleContracts(unittest.TestCase):
         self.assertEqual(envelope["id"], 54)
         self.assertEqual(envelope["providerExtension"], "unchanged")
         self.assertIsNone(evidence.response("eth_getBlockByNumber", ["0x66", False], 100))
+        self.assertEqual(evidence.response("eth_getBlockByNumber", ["0x66", False], 102)["hash"], hashes[102])
         self.assertEqual(evidence.response("eth_getBlockByNumber", ["latest", False], 100)["hash"], hashes[100])
         self.assertEqual(evidence.response("eth_getBlockByNumber", ["0x63", False], 100)["hash"], hashes[99])
         self.assertEqual(evidence.response("eth_getLogs", [{"blockHash": hashes[100], "address": address,
