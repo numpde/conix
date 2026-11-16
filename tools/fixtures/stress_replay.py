@@ -669,8 +669,20 @@ def comparison(observations):
     for key in ("baseline", "slowdown"):
         measured = observations[key]
         window = measured["window"]
+        stalls = [
+            later["elapsed_ns"] - earlier["elapsed_ns"]
+            for earlier, later in zip(window, window[1:])
+            if earlier.get("checkpoint") is not None
+            and later.get("checkpoint") == earlier["checkpoint"]
+            and type(later.get("elapsed_ns")) is int
+            and type(earlier.get("elapsed_ns")) is int
+            and later["elapsed_ns"] >= earlier["elapsed_ns"]
+        ]
         result[key] = {
             "window_samples": len(window), "window_ns": measured["window_ns"],
+            "checkpoint_stall_intervals": len(stalls),
+            "checkpoint_stalled_ns": sum(stalls),
+            "longest_checkpoint_stall_ns": max(stalls, default=0),
             "first_checkpoint_ns": measured["first_checkpoint_ns"],
             "first_rpc_ns": measured["service"]["first_rpc_elapsed_ns"],
             "launch_request_offset_host_ns": measured.get("process_launch", {}).get(
