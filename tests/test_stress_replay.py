@@ -49,8 +49,10 @@ def specimen():
                                                       rpc_url="https://source.example/rpc"),
                               contracts=[contract])
     polls = [
-        {"header": {"height": 100}, "elapsed_start_ns": 5000, "status": "observed"},
-        {"header": {"height": 102}, "elapsed_start_ns": 13000, "status": "observed"},
+        {"header": {"height": 100}, "elapsed_start_ns": 5000,
+         "elapsed_end_ns": 9000, "status": "observed"},
+        {"header": {"height": 102}, "elapsed_start_ns": 13000,
+         "elapsed_end_ns": 17000, "status": "observed"},
     ]
     manifest = {"observer": {"samples": polls}, "clocks": {"observer": {"uncertainty_ns": 20}}}
     with patch.object(replay, "admitted", return_value=(catalog, manifest, observed, polls, {})), \
@@ -63,6 +65,7 @@ def specimen():
 class HeadScheduleContracts(unittest.TestCase):
     def test_pre_release_is_frozen_and_head_advances_without_client_requests(self):
         evidence, _, _, _ = specimen()
+        self.assertEqual(evidence.timeline, [(0, 100), (8000, 102)])
         now = [100]
         schedule = replay.HeadSchedule(evidence, monotonic=lambda: now[0])
         self.assertEqual(schedule.view()["head"], 100)
