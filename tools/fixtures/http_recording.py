@@ -119,7 +119,7 @@ class RecordingTransport(httpx.BaseTransport):
                 failure.add_note("Inner HTTP transport retirement is unconfirmed.")
             raise failure from error
 
-    def _metadata(self, url, record_id, *, headers=None, failure=None, observed_reason=None):
+    def _metadata(self, url, record_id, *, headers=None, failure=None, observed_reason=None, monotonic_ns=None):
         """Use standard WARC fields; original header bytes remain reversible."""
         fields = []
         if headers is not None:
@@ -130,6 +130,8 @@ class RecordingTransport(httpx.BaseTransport):
             fields.append("observed-reason: " + base64.b64encode(observed_reason).decode("ascii"))
         if failure is not None:
             fields.append("failure: " + failure)
+        if monotonic_ns is not None:
+            fields.append("observed-monotonic-ns: " + str(monotonic_ns))
         payload = ("\r\n".join(fields) + "\r\n").encode("ascii")
         record = self._writer.create_warc_record(
             url, "metadata", payload=io.BytesIO(payload), length=len(payload),
@@ -140,6 +142,7 @@ class RecordingTransport(httpx.BaseTransport):
 
     def _message(self, request, body, *, response=None, request_id=None, date, failure=None):
         """Reconstruct a readable HTTP envelope around unchanged encoded bytes."""
+        recorded_ns = time.monotonic_ns()
         original = list(request.headers.raw if response is None else response.headers.raw)
         headers = [(name.decode("latin-1"), value.decode("latin-1")) for (name, value) in original
                    if name.lower() not in (b"content-length", b"transfer-encoding")]
@@ -175,7 +178,8 @@ class RecordingTransport(httpx.BaseTransport):
         self._writer.write_record(record)
         record_id = record.rec_headers.get_header("WARC-Record-ID")
         # warcio may normalize header encoding too; retain observed bytes always.
-        self._metadata(str(request.url), record_id, headers=original, failure=failure, observed_reason=observed_reason)
+        self._metadata(str(request.url), record_id, headers=original, failure=failure,
+                       observed_reason=observed_reason, monotonic_ns=recorded_ns)
         return record_id
 
     def handle_request(self, request):
@@ -233,7 +237,8 @@ class RecordingTransport(httpx.BaseTransport):
 
         try:
             if response is None:
-                self._metadata(str(request.url), request_id, failure=_failure(primary))
+                self._metadata(str(request.url), request_id, failure=_failure(primary),
+                               monotonic_ns=time.monotonic_ns())
             else:
                 self._message(request, bytes(body), response=response, request_id=request_id,
                               date=arrived, failure=_failure(primary) if primary is not None else None)
