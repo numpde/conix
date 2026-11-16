@@ -178,7 +178,6 @@ def run():
     finally:
         if recorder is not None:
             complete = (reason is None and observation is not None
-                        and observation["admission"]["status"] == "complete"
                         and recorder.closed and not recorder.stopped
                         and not recorder.recording_failures and not recorder.cleanup_failures)
             write_record("receipt.json", {
