@@ -247,8 +247,8 @@ class StressCapture:
             service = services[name]
             require(service.get("user") == "65532:65532"
                     and service.get("security_opt") == ["no-new-privileges:true"]
-                    and service.get("mem_limit") == 268435456
-                    and service.get("memswap_limit") == 268435456
+                    and str(service.get("mem_limit")) in ("256m", "268435456")
+                    and str(service.get("memswap_limit")) in ("256m", "268435456")
                     and service.get("pids_limit") == 64
                     and service.get("entrypoint") == ["python", "-E", "-s", "/tests/stress_" + name + ".py"],
                     "Capture worker confinement changed.")
