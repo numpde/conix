@@ -208,9 +208,9 @@ def serve(*, upstream_url, head_ceiling=None, recording=None):
                 self.reply(502, document)
             except Exception as error:
                 if recording is not None and recording.stopped:
-                    # A stopped recorder cannot be hidden behind another 502.
-                    self.reply(503, {"error": "Capture stopped."})
+                    # Stop admission even if the caller already disconnected.
                     stop_admission()
+                    self.reply(503, {"error": "Capture stopped."})
                     return
                 # Type is bounded source-level evidence; never stringify values.
                 name = type(error).__name__
