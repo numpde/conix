@@ -27,10 +27,10 @@ import tomllib
 from tools.containers import named
 from tools.containers.client import IMAGE_ID, OperationError, select_endpoint
 from tools.containers.deployment import _candidate_ids
-from tools.containers.process_evidence import require_running, retain_attached_exit, failure
+from tools.containers.process_evidence import require_running, retain_attached_exit, retain_exit, failure
 from tools.containers.diagnostics import PHASES, error_record, explanation
 from tools.fixtures.deployment import campaign_lock
-from tools.fixtures.process import CampaignError, cancellation, clean_environment, owned_command, progress, retire_deployment
+from tools.fixtures.process import CampaignError, cancellation, clean_environment, owned_command, progress, retire_deployment, retirement_failure
 from tools.fixtures.stress_artifacts import PRIVATE_RUNS, allocate_run, publish_report, source_subject
 from tools.fixtures.stress_capture import SOURCE_FILE, check_file, json_record, put_private, require
 from tools.fixtures.stress_evidence import bundle_inputs
@@ -414,7 +414,8 @@ class ReplayAttempt:
         return self.docker.docker_command_prefix + [
             "run", "--detach", "--pull", "never", "--name", "conix-replay-sampler-" + self.owner,
             "--label", OWNER_LABEL + "=" + self.owner, "--network", self.project + "_rpc",
-            "--network", self.project + "_tests", "--log-driver", "none",
+            "--network", self.project + "_tests", "--log-driver", "local",
+            "--log-opt", "max-size=64k", "--log-opt", "max-file=1", "--log-opt", "compress=false",
             "--read-only", "--user", "65532:65532", "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges:true", "--pids-limit", "64",
             "--memory", "1g", "--memory-swap", "1g", "--cpus", "1",
@@ -466,22 +467,18 @@ class ReplayAttempt:
                                            "{{json .}}", self.sampler_id, capture=True))
         require(record["Id"] == self.sampler_id and record["Image"] == self.runner
                 and record["Config"]["Labels"].get(OWNER_LABEL) == self.owner
-                and record["HostConfig"]["LogConfig"]["Type"] == "none",
+                and record["HostConfig"]["LogConfig"]["Type"] == "local"
+                and record["HostConfig"]["LogConfig"]["Config"] == {
+                    "max-size": "64k", "max-file": "1", "compress": "false"},
                 "Reader sampler identity or confinement changed.")
         if running and not record["State"]["Running"]:
-            # Logging is deliberately disabled. Retain daemon exit/OOM facts
-            # and the exact owned identity rather than a generic liveness loss.
-            self.records["sampler_terminal"] = {
-                "id": record["Id"], "exit": record["State"]["ExitCode"],
-                "oom": record["State"]["OOMKilled"],
-            }
-            raise OperationError("Reader sampler stopped before release; "
-                                 "daemon exit=" + str(record["State"]["ExitCode"]) +
-                                 "; OOM=" + str(record["State"]["OOMKilled"]),
-                                 exit_code=record["State"]["ExitCode"])
+            self.records["sampler_terminal"] = retain_exit(self.docker, record)
+            raise failure(self.records["sampler_terminal"], "Reader sampler before release")
         return record
 
     def status(self):
+        _, replay = self.owned("replay")
+        require_running(self.docker, replay, "Offline replay service")
         raw = self.docker.run(
             "exec", "--user", "65532:65532", self.replay_id, "python", "-E", "-s",
             "/tests/stress_replay.py", "status", capture=True, timeout=15)
@@ -602,13 +599,17 @@ class ReplayAttempt:
             try:
                 self.phase = "common replay release"
                 sent = time.monotonic_ns()
+                self.records["launch_trigger_host_ns"] = sent
+                # One host trigger dispatches both actions. Do not hold CLI
+                # launch until the Engine's head-release roundtrip completes.
+                gate.set()
                 release = json.loads(self.docker.run(
                     "exec", "--user", "65532:65532", self.replay_id,
                     "python", "-E", "-s", "/tests/stress_replay.py", "release",
                     capture=True, timeout=15,
                 ))
                 self.records["release_ns"] = release["released_ns"]
-                self.records["launch_trigger_host_ns"] = sent
+                self.records["release_acknowledged_host_ns"] = time.monotonic_ns()
             finally:
                 gate.set()
             task.result(timeout=690)
@@ -634,8 +635,12 @@ class ReplayAttempt:
             require(not state["State"]["Running"] and state["State"]["ExitCode"] == int(raw)
                     and not state["State"]["OOMKilled"], "Reader sampler exit or OOM is unconfirmed.")
             self.records["sampler_exit"] = int(raw)
+            self.records["sampler_terminal"] = retain_exit(self.docker, state)
+            if int(raw) != 0:
+                raise failure(self.records["sampler_terminal"], "Original Reader sampler")
             self.records["service"] = self.status()
             require(self.records["service"]["errors"] == 0
+                    and self.records["service"]["pre_release_requests"] == 0
                     and self.records["service"]["first_rpc_elapsed_ns"] is not None,
                     "Original process did not produce valid replay RPC requests.")
             self.original()
@@ -649,7 +654,8 @@ class ReplayAttempt:
                 and result["start"] == self.admission["coverage"]["start_block"]
                 and result["final"] == self.admission["coverage"]["final_block"]
                 and result["status"] in ("complete", "incomplete_catchup")
-                and result["window"] and result["first_checkpoint_ns"] is not None,
+                and result["window"]
+                and (result["status"] != "complete" or result["first_checkpoint_ns"] is not None),
                 "Measured original Reader report is missing or unadmitted.")
         require(int(raw) == 0, "Original Reader verification worker exited unsuccessfully.")
         result["service"] = self.records["service"]
@@ -659,6 +665,8 @@ class ReplayAttempt:
             "requested_host_monotonic_ns": self.records["launch_request_host_ns"],
             "completed_host_monotonic_ns": self.records["launch_completion_host_ns"],
             "trigger_offset_host_ns": self.records["launch_request_offset_host_ns"],
+            "release_control_roundtrip_host_ns": (self.records["release_acknowledged_host_ns"]
+                                                   - self.records["launch_trigger_host_ns"]),
             "started_utc": self.records["indexer_started_utc"],
             "release_server_monotonic_ns": self.records["release_ns"],
         }
@@ -704,13 +712,26 @@ class ReplayAttempt:
                 if state["State"]["Running"]:
                     self.docker.run("container", "stop", "--time", "20",
                                     self.sampler_id, timeout=35)
-                self.sampler_state()
+                self.records["sampler_terminal"] = retain_exit(self.docker, self.sampler_state())
                 self.docker.run("container", "rm", self.sampler_id, timeout=30)
                 self.sampler_retired = True
             if self.touched:
                 require(not self.stage_attempted or self.stage_retired,
                         "Replay evidence admission worker retirement is unconfirmed; retain its volumes.")
                 self.verify_owned_graph()
+                if self.replay_id is not None:
+                    identity, state = self.owned("replay")
+                    if state["State"]["Running"]:
+                        self.docker.run("container", "stop", "--time", "25", identity, timeout=35)
+                    _, state = self.owned("replay")
+                    self.records["replay_terminal"] = retain_exit(self.docker, state)
+                    if state["State"]["ExitCode"] != 0:
+                        try:
+                            progress("Offline replay service failed before retirement: " +
+                                     explanation(error_record(failure(self.records["replay_terminal"], "Offline replay service")),
+                                                 state["State"]["ExitCode"], phases=PHASES))
+                        except OSError:
+                            pass
                 self.compose("down", "--remove-orphans", "--timeout", "30", timeout=90)
                 for name in ("pgdata", "evidence", "results"):
                     if name == "results" and not self.result_exported:
@@ -754,6 +775,8 @@ def comparison(observations):
             "first_rpc_ns": measured["service"]["first_rpc_elapsed_ns"],
             "launch_request_offset_host_ns": measured.get("process_launch", {}).get(
                 "trigger_offset_host_ns"),
+            "release_control_roundtrip_host_ns": measured.get("process_launch", {}).get(
+                "release_control_roundtrip_host_ns"),
             "initial_lag": window[0]["checkpoint_lag"],
             "final_sampled_lag": window[-1]["checkpoint_lag"],
             "max_sampled_lag": max((r["checkpoint_lag"] for r in window
@@ -776,6 +799,17 @@ def run_replay(options, *, client_cls, pinned_images):
     controls = supplied(options)
     payload, input_hashes, admission, source, declaration = admitted_bundle(
         options.capture_dir, options.evidence_dir)
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r") as bundle:
+        retained = {}
+        for name in ("catalog.toml", "manifest.json", "abi.json", "source.json", "deployment.toml"):
+            data = bundle.extractfile(name).read(BUNDLE_INPUTS[name] + 1)
+            require(0 < len(data) <= BUNDLE_INPUTS[name]
+                    and hashlib.sha256(data).hexdigest() == input_hashes[name],
+                    "Replay input differs from the admitted transport.")
+            retained[name] = data
+    source = json.loads(retained["source.json"])
+    declaration = tomllib.loads(retained["deployment.toml"].decode("utf-8"))
+    capture = json.loads(retained["manifest.json"])
     require(options.context == declaration["docker_context"],
             "Replay Engine must match the retained deployment's selected Engine.")
     subject = source_subject(source, SOURCE_FILE)
@@ -789,8 +823,7 @@ def run_replay(options, *, client_cls, pinned_images):
         images = pinned_images()
         docker.require_image(images["postgres"])
         parent = allocate_run(ROOT, subject, "replay")
-        put_private(parent / "catalog.toml",
-                    (private_folder(options.evidence_dir) / "catalog.toml").read_bytes())
+        put_private(parent / "catalog.toml", retained["catalog.toml"])
         result = {"status": "unavailable", "source_id": admission["source_id"],
                   "source_sha256": input_hashes["source.json"],
                   "abi_sha256": input_hashes["abi.json"],
@@ -802,13 +835,12 @@ def run_replay(options, *, client_cls, pinned_images):
         measurements = {}
         primary = None
         for label, delay in (("baseline", 0), ("slowdown", controls["stress_replay_delay_ms"])):
-            source_inputs = private_folder(options.capture_dir)
-            capture = json.loads((source_inputs / "manifest.json").read_bytes())
-            run = ReplayAttempt(docker, images, options.runner_image, parent / label,
-                                dict(source, abi=(source_inputs / "abi.json").read_bytes(),
-                                     initial_head=capture["observer"]["samples"][0]["header"]["height"]),
-                                declaration, payload, admission, controls, label, delay)
+            run = None
             try:
+                run = ReplayAttempt(docker, images, options.runner_image, parent / label,
+                                    dict(source, abi=retained["abi.json"],
+                                         initial_head=capture["observer"]["samples"][0]["header"]["height"]),
+                                    declaration, payload, admission, controls, label, delay)
                 run.preflight()
                 run.stage()
                 run.boot()
@@ -816,14 +848,23 @@ def run_replay(options, *, client_cls, pinned_images):
                 measurements[label] = measured
             except BaseException as error:
                 primary = primary or error
-                run.records["failure"] = error_record(error).decode("ascii")
+                if run is not None:
+                    run.records["failure"] = error_record(error).decode("ascii")
+                else:
+                    result["runs"][label] = {"status": "unavailable", "delay_ms": delay,
+                                              "failure": error_record(error).decode("ascii"), "cleanup": []}
             finally:
-                run.records["cleanup"] = run.cleanup()
-                result["runs"][label] = run.records
-                if run.records["cleanup"]:
-                    result["cleanup"].extend(run.records["cleanup"])
-                    if primary is None:
-                        primary = OperationError("Replay owned resource cleanup is unconfirmed.")
+                if run is not None:
+                    run.records["cleanup"] = run.cleanup()
+                    result["runs"][label] = run.records
+                    primary = primary or retirement_failure(run.records)
+                    terminal = run.records.get("replay_terminal")
+                    if primary is None and terminal is not None and terminal["exit_code"] != 0:
+                        primary = failure(terminal, "Offline replay service")
+                    if run.records["cleanup"]:
+                        result["cleanup"].extend(run.records["cleanup"])
+                        if primary is None:
+                            primary = OperationError("Replay owned resource cleanup is unconfirmed.")
             if primary is not None:
                 break
         if set(measurements) == {"baseline", "slowdown"}:
@@ -833,17 +874,37 @@ def run_replay(options, *, client_cls, pinned_images):
         if primary is not None:
             result["diagnostic"] = error_record(primary).decode("ascii")
             result["status"] = "unavailable"
-        json_record(parent / "result.json", result)
+        publication_failures = []
+        published = False
         try:
-            report = publish_report(ROOT, parent, result)
-            progress("Stress replay review report: " + str(report.relative_to(ROOT)))
+            json_record(parent / "result.json", result)
+            published = True
         except BaseException as error:
+            publication_failures.append(("result", error))
             if primary is None:
                 primary = error
-        for failed in result["cleanup"]:
-            progress("Replay cleanup unconfirmed: " + str(failed.get("phase", "unknown")) +
-                     " (" + str(failed.get("type", "unavailable")) + ")")
-        progress("Stress replay " + result["status"] + "; private reports: " + str(parent))
+        report = None
+        if published:
+            try:
+                report = publish_report(ROOT, parent, result)
+            except BaseException as error:
+                publication_failures.append(("review", error))
+                if primary is None:
+                    primary = error
+        try:
+            for (phase, error) in publication_failures:
+                detail = explanation(error_record(error), getattr(error, "exit_code", None), phases=PHASES)
+                progress("Replay " + phase + " publication failed: " + detail)
+            if report is not None:
+                progress("Stress replay review report: " + str(report.relative_to(ROOT)))
+            for failed in result["cleanup"]:
+                progress("Replay cleanup unconfirmed: " + str(failed.get("phase", "unknown")) +
+                         " (" + str(failed.get("type", "unavailable")) + ")")
+            outcome = result["status"] if primary is None else "unavailable"
+            progress("Stress replay " + outcome + "; private reports: " + str(parent))
+        except OSError as error:
+            if primary is None:
+                primary = error
         if primary is not None:
             diagnostic = error_record(primary)
             detail = explanation(diagnostic, getattr(primary, "exit_code", None), phases=PHASES)

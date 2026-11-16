@@ -217,6 +217,10 @@ def report_facts(repository, folder, records, *, original_directory=None):
                 continue
             facts = records["runs"][name]
             measured = folder / name / "measurement.json"
+            if "measurement_sha256" not in facts:
+                if status == "complete":
+                    raise OperationError("Completed replay lacks a verified measured report.")
+                continue
             if not measured.exists():
                 if status == "complete":
                     raise OperationError("Completed replay lacks a measured report.")
@@ -245,6 +249,9 @@ def report_facts(repository, folder, records, *, original_directory=None):
                     "launch_request_offset_host_ns": (
                         None if row.get("launch_request_offset_host_ns") is None
                         else _count(row["launch_request_offset_host_ns"])),
+                    "release_control_roundtrip_host_ns": (
+                        None if row.get("release_control_roundtrip_host_ns") is None
+                        else _count(row["release_control_roundtrip_host_ns"])),
                     "max_sampled_lag": (
                         None if row["max_sampled_lag"] is None else _count(row["max_sampled_lag"])),
                     "checkpoint_stall_intervals": _count(row.get("checkpoint_stall_intervals", 0)),
