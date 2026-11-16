@@ -28,6 +28,7 @@ PARAMETERS = {
     "image/indexer/check": "IMAGE",
     "image/evm-test-runner/check": "IMAGE",
     "test/http/recording/run": "RUNNER_IMAGE",
+    "test/indexer/stress/capture": "STRESS_DURATION_SECONDS",
     "test/indexer/run": "RUNNER_IMAGE",
     "test/deployment/acceptance/run": "DEPLOYMENT",
     "test/indexer/acceptance/fuji/run": "DEPLOYMENT",
