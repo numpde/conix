@@ -41,7 +41,12 @@ def specimen():
         put("eth_getLogs", [{"blockHash": hashes[number], "address": address,
                              "topics": [topic]}], [])
     for (method, params), value in results.items():
-        observed.append(SimpleNamespace(key=(method, params), result=lambda value=value: value))
+        reply = json.dumps({"jsonrpc": "2.0", "id": 123, "result": value,
+                            "providerExtension": "unchanged"}, separators=(",", ":")).encode()
+        observed.append(SimpleNamespace(
+            key=(method, params), request={"id": 123}, body=reply,
+            headers=(), result=lambda value=value: value,
+        ))
     contract = SimpleNamespace(address=bytes.fromhex("a" * 40),
                                descriptor=SimpleNamespace(events=[
                                    SimpleNamespace(topic0=bytes.fromhex("b" * 64))]))
@@ -85,6 +90,9 @@ class HeadScheduleContracts(unittest.TestCase):
     def test_id_adaptation_exact_selector_and_missing_data_are_fail_closed(self):
         evidence, hashes, address, topic = specimen()
         self.assertEqual(evidence.response("eth_chainId", [], 100), "0xa869")
+        envelope = evidence.served_envelope("eth_chainId", [], 100, 54)
+        self.assertEqual(envelope["id"], 54)
+        self.assertEqual(envelope["providerExtension"], "unchanged")
         self.assertIsNone(evidence.response("eth_getBlockByNumber", ["0x66", False], 100))
         self.assertEqual(evidence.response("eth_getBlockByNumber", ["latest", False], 100)["hash"], hashes[100])
         self.assertEqual(evidence.response("eth_getBlockByNumber", ["0x63", False], 100)["hash"], hashes[99])
@@ -138,6 +146,8 @@ class ReplayProtocolContracts(unittest.TestCase):
         self.assertEqual(first.json()["id"], 17)
         self.assertEqual(second.json()["id"], 99)
         self.assertEqual(first.json()["result"], second.json()["result"])
+        self.assertEqual(first.json()["providerExtension"], "unchanged")
+        self.assertEqual(second.json()["providerExtension"], "unchanged")
 
     def test_invalid_requests_never_fall_back_or_become_empty_logs(self):
         for payload in (
