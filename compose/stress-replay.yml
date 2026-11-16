@@ -1,0 +1,70 @@
+# Stage C only: disposable real PostgreSQL and a strictly offline replay source.
+# No service receives an outbound network, Docker socket or host bind.
+services:
+  postgres:
+    extends: {file: compose/tests.yml, service: postgres}
+    pull_policy: never
+    labels: {io.conix.stress-replay-owner: "${CONIX_REPLAY_OWNER:?owner required}"}
+  bootstrap:
+    extends: {file: compose/tests.yml, service: bootstrap}
+    pull_policy: never
+    labels: {io.conix.stress-replay-owner: "${CONIX_REPLAY_OWNER:?owner required}"}
+  volume-init:
+    image: ${CONIX_TEST_RUNNER_IMAGE:?exact runner image required}
+    pull_policy: never
+    entrypoint: [python, -E, -s, /tests/stress_replay_volume.py]
+    command: [init]
+    user: "0:0"
+    read_only: true
+    network_mode: none
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 32
+    mem_limit: 128m
+    memswap_limit: 128m
+    volumes:
+      - evidence:/init/evidence
+      - results:/init/results
+    labels: {io.conix.stress-replay-owner: "${CONIX_REPLAY_OWNER:?owner required}"}
+  replay:
+    image: ${CONIX_TEST_RUNNER_IMAGE:?exact runner image required}
+    pull_policy: never
+    entrypoint: [python, -E, -s, /tests/stress_replay.py, serve]
+    command: ["--delay-ms", "${CONIX_REPLAY_DELAY_MS:?explicit fixed delay required}"]
+    init: true
+    restart: "no"
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    cpus: 1
+    mem_limit: 1024m
+    memswap_limit: 1024m
+    stop_grace_period: 25s
+    tmpfs: ["/tmp:rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=16m"]
+    volumes:
+      - evidence:/evidence:ro
+    labels: {io.conix.stress-replay-owner: "${CONIX_REPLAY_OWNER:?owner required}"}
+    networks: [rpc]
+    logging: {driver: local, options: {max-size: 64k, max-file: "1", compress: "false"}}
+    healthcheck:
+      test: [CMD, python, -I, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).close()"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+networks:
+  tests:
+    internal: true
+    labels: {io.conix.stress-replay-owner: "${CONIX_REPLAY_OWNER:?owner required}"}
+  rpc:
+    internal: true
+    labels: {io.conix.stress-replay-owner: "${CONIX_REPLAY_OWNER:?owner required}"}
+volumes:
+  pgdata:
+    labels: {io.conix.stress-replay-owner: "${CONIX_REPLAY_OWNER:?owner required}"}
+  evidence:
+    labels: {io.conix.stress-replay-owner: "${CONIX_REPLAY_OWNER:?owner required}"}
+  results:
+    labels: {io.conix.stress-replay-owner: "${CONIX_REPLAY_OWNER:?owner required}"}
