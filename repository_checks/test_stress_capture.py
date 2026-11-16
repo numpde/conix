@@ -161,6 +161,51 @@ class CaptureAdmissionContracts(unittest.TestCase):
             fixture.export("application")
         fixture.docker.assert_not_called()
 
+    def test_engine_lifecycle_events_must_cover_one_uninterrupted_process(self):
+        from datetime import datetime, timedelta, timezone
+
+        fixture = StressCapture.__new__(StressCapture)
+        fixture.docker = Mock()
+        identity = "a" * 64
+        started = datetime.now(timezone.utc)
+        ended = started + timedelta(seconds=5)
+
+        def feed(actions):
+            fixture.docker.run.return_value = "\n".join(json.dumps({
+                "Action": action, "Type": "container",
+                "Actor": {"ID": identity}, "timeNano": (i + 1) * 1_000_000_000,
+            }) for i, action in enumerate(actions))
+        feed(["start"])
+        result = fixture.history(identity, started, ended)
+        self.assertEqual(result["events"][0]["action"], "start")
+        for actions in ([], ["die"], ["start", "die"], ["start", "restart"], ["start", "start"]):
+            with self.subTest(actions=actions):
+                feed(actions)
+                with self.assertRaises(OperationError):
+                    fixture.history(identity, started, ended)
+
+    def test_cleanup_retains_both_unexported_archive_volumes(self):
+        fixture = StressCapture.__new__(StressCapture)
+        fixture.fixture_attempted = True
+        fixture.profile_created = False
+        fixture.consumer_retired = True
+        fixture.archive_exported = set()
+        fixture.records = {}
+        fixture.owner = "001122334455"
+        fixture.project = "conix-stress-001122334455"
+        fixture.docker = Mock()
+        fixture.docker.run.return_value = ""
+        fixture.verify_fixture_ownership = Mock()
+        fixture.compose_run = Mock()
+        fixture.owned_volume = Mock(side_effect=lambda name: fixture.project + "_" + name)
+
+        self.assertEqual(fixture.cleanup(), [])
+        fixture.docker.run.assert_any_call(
+            "volume", "rm", fixture.project + "_pgdata", timeout=30,
+        )
+        fixture.owned_volume.assert_called_once_with("pgdata")
+        fixture.compose_run.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
