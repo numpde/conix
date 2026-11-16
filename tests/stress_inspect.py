@@ -19,6 +19,7 @@ def inspect(name):
     if name not in ("application", "observer"):
         raise ValueError("Unknown capture stream.")
     path = CAPTURE / (name + ".warc.gz")
+    source = json.loads((Path(__file__).parent / "fixtures/evm/fuji_pay_to_play.json").read_text())
     requests = {}
     responses = set()
     metadata = set()
@@ -32,6 +33,9 @@ def inspect(name):
                 continue
             if kind not in ("request", "response", "metadata"):
                 raise ValueError("Unexpected WARC record type.")
+            target = record.rec_headers.get_header("WARC-Target-URI")
+            if target != source["rpc_url"]:
+                raise ValueError("WARC targets another source.")
             record_id = record.rec_headers.get_header("WARC-Record-ID")
             if not record_id:
                 raise ValueError("WARC record lacks identity.")
