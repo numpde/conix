@@ -171,5 +171,55 @@ class ReplayOwnerContracts(unittest.TestCase):
         self.assertNotIn("capacity", compared["baseline"])
 
 
+    def test_public_review_receipt_binds_both_reports_without_private_samples(self):
+        from tools.fixtures.stress_artifacts import report_facts
+
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            folder = repository / "out/indexer/stress/runs/20261116-170000/fuji-pay-to-play/replay"
+            folder.mkdir(parents=True)
+            controls = supplied(options())
+            reports = {}
+            for name, latency in (("baseline", 0), ("slowdown", controls["stress_replay_delay_ms"])):
+                target = folder / name
+                target.mkdir()
+                private = target / "measurement.json"
+                private.write_text(json.dumps({"secret": "PRIVATE_DSN_EXAMPLE",
+                                               "window": [{"head": 104, "checkpoint": 100}],
+                                               "reader": {"events": 2}}))
+                private.chmod(0o600)
+                reports[name] = {
+                    "status": "complete", "delay_ms": latency,
+                    "indexer_image": IMAGE,
+                    "measurement_sha256": hashlib.sha256(private.read_bytes()).hexdigest(),
+                }
+            (folder / "result.json").write_text('{"status":"complete"}')
+            (folder / "result.json").chmod(0o600)
+            def series(delay):
+                return {
+                    "window_samples": 4, "window_ns": 120000000000,
+                    "first_checkpoint_ns": 1200000000, "first_rpc_ns": 300000000,
+                    "max_sampled_lag": 14, "catchup_status": "complete",
+                    "reader_verified": True, "request_count": 888,
+                    "actual_wait_ns": 4000000000, "delay_ms": delay,
+                }
+            receipt = {
+                "status": "complete", "cleanup": [],
+                "controls": controls, "runs": reports,
+                "completion_sha256": "c" * 64,
+                "source_sha256": "a" * 64, "abi_sha256": "b" * 64,
+                "comparison": {"baseline": series(0), "slowdown": series(250)},
+            }
+            public = report_facts(repository, folder, receipt)
+            self.assertEqual(public["status"], "complete")
+            self.assertEqual(set(public["runs"]), {"baseline", "slowdown"})
+            self.assertEqual(public["runs"]["slowdown"]["report_sha256"],
+                             reports["slowdown"]["measurement_sha256"])
+            self.assertEqual(public["comparison"]["baseline"]["max_sampled_lag"], 14)
+            self.assertNotIn("PRIVATE_DSN_EXAMPLE", json.dumps(public))
+            self.assertNotIn("window", public["runs"]["baseline"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
