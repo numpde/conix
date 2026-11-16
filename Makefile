@@ -6,6 +6,8 @@ override SHELL := /bin/sh
 # Never export GNU Make's recursively expanded command-line variables.
 unexport DOCKER_CONTEXT WHEELHOUSE IMAGE RUNNER_IMAGE INDEXER_IMAGE DAPP32_DIR FIXTURE_DESCRIPTOR
 unexport CONFIG_FILE DSN_FILE INPUT_VOLUME DEPLOYMENT DATABASE_NETWORK RPC_NETWORK
+unexport STRESS_DURATION_SECONDS STRESS_POLL_CADENCE_MS STRESS_MAX_GAP_MS STRESS_CLOCK_TOLERANCE_MS
+unexport STRESS_ARCHIVE_BYTES STRESS_EXCHANGES STRESS_START_WAIT_SECONDS
 override export CONIX_MAKE_DOCKER_CONTEXT := $(value DOCKER_CONTEXT)
 override export CONIX_MAKE_WHEELHOUSE := $(value WHEELHOUSE)
 override export CONIX_MAKE_IMAGE := $(value IMAGE)
@@ -19,8 +21,15 @@ override export CONIX_MAKE_INPUT_VOLUME := $(value INPUT_VOLUME)
 override export CONIX_MAKE_DEPLOYMENT := $(value DEPLOYMENT)
 override export CONIX_MAKE_DATABASE_NETWORK := $(value DATABASE_NETWORK)
 override export CONIX_MAKE_RPC_NETWORK := $(value RPC_NETWORK)
+override export CONIX_MAKE_STRESS_DURATION_SECONDS := $(value STRESS_DURATION_SECONDS)
+override export CONIX_MAKE_STRESS_POLL_CADENCE_MS := $(value STRESS_POLL_CADENCE_MS)
+override export CONIX_MAKE_STRESS_MAX_GAP_MS := $(value STRESS_MAX_GAP_MS)
+override export CONIX_MAKE_STRESS_CLOCK_TOLERANCE_MS := $(value STRESS_CLOCK_TOLERANCE_MS)
+override export CONIX_MAKE_STRESS_ARCHIVE_BYTES := $(value STRESS_ARCHIVE_BYTES)
+override export CONIX_MAKE_STRESS_EXCHANGES := $(value STRESS_EXCHANGES)
+override export CONIX_MAKE_STRESS_START_WAIT_SECONDS := $(value STRESS_START_WAIT_SECONDS)
 
-.PHONY: network/rates/measure test/http/recording/run test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/indexer/run test/deployment/acceptance/run test/indexer/acceptance/fuji/run test/input-staging/run test/indexer/acceptance/borrowed/run test/indexer/acceptance/owned/run history/block/advance deployment/inputs/stage deployment/inputs/remove deployment/config/init deployment/prepare deployment/database/schema/init deployment/config/check deployment/up deployment/status deployment/logs deployment/down deployment/reader/prepare deployment/reader/check deployment/reader/status deployment/reader/remove help
+.PHONY: network/rates/measure test/http/recording/run test/indexer/stress/capture test/repository/run repository/inputs/check image/python-base/acquire image/postgres/acquire image/dockerfile-frontend/acquire image/foundry/acquire wheelhouse/check wheelhouse/acquire image/indexer/build image/test-runner/build image/evm-test-runner/build image/indexer/check image/evm-test-runner/check test/indexer/run test/deployment/acceptance/run test/indexer/acceptance/fuji/run test/input-staging/run test/indexer/acceptance/borrowed/run test/indexer/acceptance/owned/run history/block/advance deployment/inputs/stage deployment/inputs/remove deployment/config/init deployment/prepare deployment/database/schema/init deployment/config/check deployment/up deployment/status deployment/logs deployment/down deployment/reader/prepare deployment/reader/check deployment/reader/status deployment/reader/remove help
 
 # Each action's declaration is also the help authority. Recipes share the
 # literal-value dispatchers; no Make target aliases or duplicate help list.
@@ -78,6 +87,9 @@ network/rates/measure: ## Sample reviewed public mainnet/testnet rates into priv
 	$(RUN_OPERATOR)
 
 test/http/recording/run: ## Test real loopback HTTP/WARC capture offline; no SQL/RPC services; DOCKER_CONTEXT=<name> RUNNER_IMAGE=<test-runner sha256:id>
+	$(RUN_OPERATOR)
+
+test/indexer/stress/capture: ## Record original Conix on live Fuji with independent head timing; require STRESS_DURATION_SECONDS, STRESS_POLL_CADENCE_MS, STRESS_MAX_GAP_MS, STRESS_CLOCK_TOLERANCE_MS, STRESS_ARCHIVE_BYTES, STRESS_EXCHANGES and STRESS_START_WAIT_SECONDS
 	$(RUN_OPERATOR)
 
 test/indexer/run: ## Run installed indexer/CLI suite in disposable PostgreSQL/Anvil, then retire stack; DOCKER_CONTEXT=<name> required RUNNER_IMAGE=<test-runner sha256:id>
