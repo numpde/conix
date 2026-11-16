@@ -370,7 +370,28 @@ class ReplayAttempt:
         self.sampler_id = self.docker.run(*self.sample_arguments()[len(self.docker.docker_command_prefix):],
                                           capture=True, timeout=30).strip()
         require(ENGINE_ID.fullmatch(self.sampler_id), "Owned sampler identity was not returned.")
-        self.sampler_state(running=True)
+        deadline = time.monotonic() + 120
+        while True:
+            self.sampler_state(running=True)
+            try:
+                raw = self.docker.run(
+                    "exec", "--user", "65532:65532", self.sampler_id,
+                    "python", "-E", "-s", "/tests/stress_replay_probe.py", "ready",
+                    capture=True, timeout=15,
+                )
+            except OperationError:
+                require(time.monotonic() < deadline,
+                        "Original Reader sampler did not establish pre-release readiness.")
+                time.sleep(0.2)
+                continue
+            ready = json.loads(raw)
+            require(ready.get("status") == "ready"
+                    and ready.get("source_id") == self.admission["source_id"]
+                    and ready.get("initial_head") == self.source["initial_head"]
+                    and ready.get("cadence_ms") == self.controls["stress_checkpoint_cadence_ms"],
+                    "Original Reader sampler readiness selects different replay evidence.")
+            self.records["sampler_ready"] = ready
+            break
 
     def sampler_state(self, *, running=False):
         require(self.sampler_id is not None, "Owned sampler was not created.")
