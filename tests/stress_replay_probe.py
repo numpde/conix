@@ -145,6 +145,14 @@ def observe(*, cadence_ms, catchup_seconds, start_wait_seconds):
     }
     report = RESULTS / "result.json"
     try:
+        ready = service()
+        require(not ready["released"] and ready["elapsed_ns"] == 0
+                and ready["head"] == evidence.timeline[0][1],
+                "Replay head advanced before the original Reader sampler was ready.")
+        emit(RESULTS / "ready.json", {
+            "status": "ready", "source_id": evidence.catalog.source_id.hex(),
+            "initial_head": ready["head"], "cadence_ms": cadence_ms,
+        })
         deadline = time.monotonic() + start_wait_seconds
         while True:
             state = service()
@@ -199,6 +207,18 @@ def observe(*, cadence_ms, catchup_seconds, start_wait_seconds):
 
 
 def main():
+    # A separate bounded docker-exec control observes the same retained
+    # sampler process; readiness never depends on its log output.
+    if __import__("sys").argv[1:] == ["ready"]:
+        raw = (RESULTS / "ready.json").read_bytes()
+        require(0 < len(raw) <= 4096, "Sampler readiness is unavailable.")
+        record = json.loads(raw)
+        require(record.get("status") == "ready"
+                and type(record.get("initial_head")) is int
+                and type(record.get("source_id")) is str,
+                "Sampler readiness has malformed identity.")
+        print(json.dumps(record, separators=(",", ":")))
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sample-ms", type=int, required=True)
     parser.add_argument("--catchup-seconds", type=int, required=True)
