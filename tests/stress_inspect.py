@@ -27,7 +27,12 @@ def inspect(name):
     first_header = None
     with path.open("rb") as archive:
         for record in ArchiveIterator(archive, check_digests=True):
-            if record.digest_checker.problems:
+            raw = record.raw_stream.read(LIMIT + 1)
+            if len(raw) > LIMIT:
+                raise ValueError("WARC exchange exceeds admitted response budget.")
+            # warcio finishes digest verification only when the payload is
+            # consumed. Checking before this read admits altered evidence.
+            if record.digest_checker.passed is not True or record.digest_checker.problems:
                 raise ValueError("WARC digest verification failed.")
             kind = record.rec_type
             if kind == "warcinfo":
@@ -42,9 +47,6 @@ def inspect(name):
                 raise ValueError("WARC record lacks identity.")
             if record.rec_headers.get_header("WARC-Truncated"):
                 raise ValueError("Truncated WARC exchange is not a complete archive.")
-            raw = record.raw_stream.read(LIMIT + 1)
-            if len(raw) > LIMIT:
-                raise ValueError("WARC exchange exceeds admitted response budget.")
             if kind == "metadata":
                 linked = record.rec_headers.get_header("WARC-Refers-To")
                 if not linked or linked in metadata:

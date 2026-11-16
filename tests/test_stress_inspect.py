@@ -1,6 +1,7 @@
 """Independent raw WARC inspection, with no provider or Docker access."""
 
 import hashlib
+import gzip
 import json
 from pathlib import Path
 import tempfile
@@ -70,6 +71,22 @@ class RawStressInspection(unittest.TestCase):
             self.capture(folder, "application", "https://example.com/other", 1)
             with patch.object(stress_inspect, "CAPTURE", folder):
                 with self.assertRaisesRegex(ValueError, "another source"):
+                    stress_inspect.inspect("application")
+
+    def test_changed_payload_fails_digest_admission_after_complete_read(self):
+        """Readable HTTP and intact linkage cannot authorize altered evidence."""
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            self.capture(folder, "application", SOURCE["rpc_url"], 1)
+            path = folder / "application.warc.gz"
+            original = gzip.decompress(path.read_bytes())
+            changed = original.replace(b'"number":"0x100"', b'"number":"0x101"')
+            self.assertNotEqual(changed, original)
+            # WARC also permits uncompressed records; leave their declared
+            # digests intact while changing only the recorded HTTP payload.
+            path.write_bytes(changed)
+            with patch.object(stress_inspect, "CAPTURE", folder):
+                with self.assertRaisesRegex(ValueError, "digest"):
                     stress_inspect.inspect("application")
 
 
