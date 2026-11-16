@@ -23,9 +23,10 @@ from tools.containers import named
 from tools.containers.client import OperationError, select_endpoint
 from tools.containers.deployment import _candidate_ids
 from tools.containers.diagnostics import PREFIX, PHASES, error_record, explanation
+from tools.containers.process_evidence import require_running
 from tools.containers.resources import _admit_volume, _admit_network
 from tools.fixtures.deployment import campaign_lock
-from tools.fixtures.process import CampaignError, cancellation, clean_environment, owned_command, progress
+from tools.fixtures.process import CampaignError, cancellation, clean_environment, owned_command, progress, retire_deployment, retirement_failure
 from tools.wheelhouse.operations import SharedWheelhouse
 
 NAME = "fuji-acceptance"
@@ -247,9 +248,10 @@ class FujiAcceptance:
         require(set(record["NetworkSettings"]["Networks"]) == {self.definition["database_network"], self.definition["rpc_network"]}
                 and record["HostConfig"]["ReadonlyRootfs"] and not record["HostConfig"]["Privileged"]
                 and record["Config"]["User"] == "65532:65532", "Fuji retained runtime grants changed.")
-        require(record["Id"] == identity and record["State"]["Running"]
+        require(record["Id"] == identity
                 and record["Image"] == named.inspect_prepared(name).image
                 and record["Config"]["Cmd"] == ["-I", "-m", "conix", "run"], "Fuji retained process exited or changed identity.")
+        require_running(self.docker, record, "Fuji retained Conix")
         return identity
 
     def reach(self, name, target, maximum_blocks=64):
@@ -379,8 +381,7 @@ class FujiAcceptance:
             return failures
         for name in reversed(self.touched):
             try:
-                self.make("deployment/down", name)
-                require(not _candidate_ids(self.docker, "conix-" + name), "Fuji consumer retirement is unconfirmed.")
+                retire_deployment(lambda action: self.make(action, name), self.docker, name, self.records)
                 if named.inspect_reader_prepared(name) is not None:
                     self.make("deployment/reader/remove", name)
                 self.records["phase"] = "deployment input retirement"
@@ -449,6 +450,10 @@ def finish_acceptance(campaign, primary, failed_phase):
         failures = [safe_failure(error, "Fuji cleanup")]
         if primary is None:
             primary, failed_phase = error, "cleanup"
+    if primary is None:
+        primary = retirement_failure(campaign.records)
+        if primary is not None:
+            failed_phase = "consumer retirement"
     record = None
     if primary is not None:
         category = type(primary).__name__
@@ -486,7 +491,8 @@ def finish_acceptance(campaign, primary, failed_phase):
     try:
         progress("PASS: read-only Fuji historical and recent deployment acceptance; evidence: " + str(campaign.evidence / "result.json"))
     except OSError as error:
-        raise OperationError("Fuji checks, cleanup and evidence publication completed, but terminal reporting failed.") from error
+        raise OperationError("Fuji checks, cleanup and evidence publication completed, but terminal reporting failed.",
+                             diagnostic=error_record(error)) from error
 
 
 def run_acceptance(options, *, client_cls, pinned_images):

@@ -250,9 +250,18 @@ class CaptureAdmissionContracts(unittest.TestCase):
         fixture.consumer_retired = False
         fixture.records = {}
         fixture.retired = set()
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        fixture.docker = Mock()
+        fixture.docker.working_dir = Path(temporary.name)
+        fixture.docker.container_logs.return_value = (b"", b"")
         fixture.container = Mock(side_effect=lambda service: (
             ("a" if service == "gateway" else "b") * 64,
-            {"State": {"Running": False, "ExitCode": (0 if service == "gateway" else 17)}},
+            {"Id": ("a" if service == "gateway" else "b") * 64,
+             "Image": "sha256:" + "c" * 64, "RestartCount": 0,
+             "State": {"Running": False, "ExitCode": (0 if service == "gateway" else 17),
+                       "OOMKilled": False, "StartedAt": "2026-11-16T00:00:00Z",
+                       "FinishedAt": "2026-11-16T00:00:01Z"}},
         ))
         with self.assertRaises(OperationError):
             fixture.stop()

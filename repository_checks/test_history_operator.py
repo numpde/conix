@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import signal
 import sys
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -50,6 +51,55 @@ class HistoryOperatorContracts(unittest.TestCase):
             history._retire(docker, token, name, image, None)
         self.assertEqual([call.args[:2] for call in docker.run.call_args_list],
                          [("container", "ls"), ("container", "inspect")])
+
+    def _failed_retirement_keeps_recovered_worker_diagnostic_public(self, verification=False):
+        """A later rm failure cannot strand the only useful cause in private files."""
+        identity, token = "a" * 64, "b" * 24
+        image, name = "sha256:" + "c" * 64, "conix-advance-" + token
+        record = {"Id": identity, "Image": image, "Name": "/" + name, "RestartCount": 0,
+                  "Config": {"Labels": {history.RUN_LABEL: token}},
+                  "State": {"Running": False, "ExitCode": 17, "OOMKilled": False,
+                            "StartedAt": "2026-11-16T00:00:00Z", "FinishedAt": "2026-11-16T00:00:01Z"}}
+        diagnostic = b'CONIX-FAILURE-V1 {"phase":"advance","cause":"StorageUnavailable","effect":"unconfirmed"}'
+        with tempfile.TemporaryDirectory() as temporary:
+            docker = Mock()
+            docker.working_dir = Path(temporary)
+            docker.container_logs.return_value = (b"", diagnostic)
+
+            removed = False
+
+            def engine(*args, **_kwargs):
+                nonlocal removed
+                if args[:2] == ("container", "ls"):
+                    if removed:
+                        raise OperationError("Retirement verification failed.", exit_code=13)
+                    return identity + "\n"
+                if args[:2] == ("container", "inspect"):
+                    return json.dumps(record)
+                if args[:2] == ("container", "rm"):
+                    if verification:
+                        removed = True
+                        return ""
+                    raise OperationError("Removal failed.", exit_code=13)
+                raise AssertionError("Unmodeled history Engine operation")
+
+            docker.run.side_effect = engine
+            with patch("sys.stderr", new_callable=io.StringIO) as terminal:
+                with self.assertRaises(OperationError) as caught:
+                    history._retire(docker, token, name, image, identity)
+            from tools.containers.diagnostics import admitted, error_record
+            fields = admitted(error_record(caught.exception))
+            self.assertEqual(fields["cause"], "StorageUnavailable")
+            self.assertEqual(fields["child_exit"], 17)
+            self.assertEqual(caught.exception.exit_code, 13)
+            self.assertIn("StorageUnavailable", terminal.getvalue())
+            self.assertTrue((Path(temporary) / "out/process-evidence" / (identity + ".json")).exists())
+
+    def test_removal_failure_keeps_recovered_worker_diagnostic_public(self):
+        self._failed_retirement_keeps_recovered_worker_diagnostic_public()
+
+    def test_verification_failure_keeps_recovered_worker_diagnostic_public(self):
+        self._failed_retirement_keeps_recovered_worker_diagnostic_public(verification=True)
 
     def test_receipt_requires_exact_fields_and_canonical_types(self):
         result = {"outcome": "advanced", "source_id": "a" * 64, "block_number": 1,
@@ -130,7 +180,7 @@ class HistoryOperatorContracts(unittest.TestCase):
                     history, _admit_volume=Mock(), _admit_network=Mock(side_effect=("d" * 64, "e" * 64)),
                     _create=Mock(return_value="c" * 64), _record=Mock(), _owned=Mock(return_value=True),
                     _admit_container=Mock(), _attached=Mock(return_value=(0, json.dumps(result).encode(), b"")),
-                    _retire=Mock(side_effect=cleanup),
+                    _retire=Mock(side_effect=cleanup, return_value=None),
                 ),
                 patch("sys.stdout", stdout),
                 patch("sys.stderr", new_callable=io.StringIO) as stderr,
@@ -192,7 +242,7 @@ class HistoryOperatorContracts(unittest.TestCase):
                     _admit_container=Mock(),
                 ),
                 patch.object(history, "_attached") as attached,
-                patch.object(history, "_retire") as retire,
+                patch.object(history, "_retire", return_value=None) as retire,
                 patch("sys.stderr", new_callable=io.StringIO),
                 self.assertRaises(OperationError),
             ):

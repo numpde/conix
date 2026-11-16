@@ -94,6 +94,7 @@ class FujiAuthorityContracts(unittest.TestCase):
         campaign.fixture_attempted = True
         campaign.records = {"phase": "consumer retirement"}
         campaign.touched = ["fuji-acceptance"]
+        campaign.docker = SimpleNamespace()
         called = []
 
         def fail(action, name):
@@ -279,5 +280,5 @@ class FujiAuthorityContracts(unittest.TestCase):
             campaign = SimpleNamespace(evidence=Path(directory), records={}, cleanup=lambda: [])
             with self.assertRaises(OperationError) as caught:
                 finish_acceptance(campaign, primary, "reader check")
-        self.assertEqual(admitted(error_record(caught.exception)), admitted(record))
+        self.assertEqual(admitted(error_record(caught.exception)), dict(admitted(record), child_exit=2))
         self.assertEqual(caught.exception.exit_code, 2)

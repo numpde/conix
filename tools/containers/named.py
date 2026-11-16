@@ -20,6 +20,7 @@ import tempfile
 import tomllib
 
 from tools.containers.client import CONTEXT_NAME, IMAGE_ID, OperationError, select_endpoint
+from tools.containers.diagnostics import error_record
 from tools.containers.resources import VOLUME_NAME, _admit_network, _admit_volume
 
 
@@ -149,7 +150,7 @@ def _owned_directory(path):
     try:
         details = path.lstat()
     except OSError as error:
-        raise OperationError(f"Deployment directory {path.name!r} is unavailable.") from error
+        raise OperationError(f"Deployment directory {path.name!r} is unavailable.", diagnostic=error_record(error)) from error
     if (not stat.S_ISDIR(details.st_mode) or details.st_uid != os.geteuid()
             or stat.S_IMODE(details.st_mode) != 0o700):
         raise OperationError(f"Deployment directory {path.name!r} must be owner-only (0700).")
@@ -159,7 +160,7 @@ def _private_file(path):
     try:
         info = path.lstat()
     except OSError as error:
-        raise OperationError(f"Required deployment file {path.name!r} is unavailable.") from error
+        raise OperationError(f"Required deployment file {path.name!r} is unavailable.", diagnostic=error_record(error)) from error
     if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
             or stat.S_IMODE(info.st_mode) != 0o600):
         raise OperationError(f"Deployment file {path.name!r} must be an owner-only regular file (0600).")
@@ -177,7 +178,7 @@ def _read_toml(path, max_bytes):
                 raise OperationError("Selected deployment file changed during inspection.")
             data = stream.read(max_bytes + 1)
     except OSError as error:
-        raise OperationError(f"Cannot read deployment file {path.name!r}.") from error
+        raise OperationError(f"Cannot read deployment file {path.name!r}.", diagnostic=error_record(error)) from error
     if not 0 < len(data) <= max_bytes:
         raise OperationError(f"Deployment file {path.name!r} is empty or exceeds its size limit.")
     try:
@@ -311,7 +312,7 @@ def _read(name, *, complete=True):
         try:
             info = path.lstat()
         except OSError as error:
-            raise OperationError(f"Selected ABI file {filename!r} is missing.") from error
+            raise OperationError(f"Selected ABI file {filename!r} is missing.", diagnostic=error_record(error)) from error
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
                 or info.st_mode & 0o022):
             raise OperationError(f"Selected ABI file {filename!r} must be an owned regular file.")
@@ -598,7 +599,7 @@ def database_init(decl, docker, receipt):
     except subprocess.TimeoutExpired as error:
         raise OperationError("Schema initializer timed out; inspect database before retrying.") from error
     except OSError as error:
-        raise OperationError("Could not launch the contained owner-only initializer.") from error
+        raise OperationError("Could not launch the contained owner-only initializer.", diagnostic=error_record(error)) from error
     if result.returncode:
         from tools.containers.diagnostics import PREFIX, explanation
 

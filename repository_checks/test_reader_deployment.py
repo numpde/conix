@@ -245,6 +245,62 @@ class NamedReaderCheckContracts(unittest.TestCase):
         docker.verify_inputs.assert_called_once_with(IMAGE, VOLUME)
         self.assertFalse(any("rm" in call.args for call in docker.run.call_args_list))
 
+    def test_owned_reader_cleanup_preserves_only_the_admitted_public_result(self):
+        """Retiring a real candidate must not replace Reader output with inspect data."""
+        result = {"outcome": "reader_ready", "source_id": "1" * 64,
+                  "checkpoint": 7, "generation": "checked-generation"}
+        container = {"Id": CONTAINER, "Image": IMAGE, "RestartCount": 0,
+                     "Config": {"Image": IMAGE, "Env": ["PRIVATE_INSPECT_METADATA"],
+                                "Labels": {"com.docker.compose.project": PROJECT,
+                                           "com.docker.compose.service": "reader",
+                                           "io.conix.reader-check": TOKEN}},
+                     "State": {"Running": False, "ExitCode": 0, "OOMKilled": False,
+                               "StartedAt": "2026-11-16T00:00:00Z", "FinishedAt": "2026-11-16T00:00:01Z"}}
+        present = False
+        effects = []
+
+        def engine(*args, **_kwargs):
+            nonlocal present
+            if "config" in args:
+                return json.dumps(graph())
+            if args[0] == "ps":
+                return CONTAINER + "\n" if present else ""
+            if args[:2] == ("container", "inspect"):
+                return json.dumps(container)
+            if args[:2] == ("container", "rm"):
+                effects.append("rm")
+                present = False
+                return ""
+            raise AssertionError("Unmodeled reader Engine operation")
+
+        def run_reader(*_args):
+            nonlocal present
+            present = True
+            return json.dumps(result)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            docker = Mock()
+            docker.working_dir = Path(temporary)
+            docker.docker_environment = {}
+            docker.run.side_effect = engine
+            docker.container_logs.side_effect = lambda _identity: (
+                effects.append("logs") or (json.dumps(result).encode(), b"")
+            )
+            with (
+                patch.object(reader_deployment.secrets, "token_hex", return_value=TOKEN),
+                patch.object(reader_deployment, "_admit_volume"),
+                patch.object(reader_deployment, "_admit_network"),
+                patch.object(reader_deployment, "_run_reader", side_effect=run_reader),
+                redirect_stdout(StringIO()) as terminal,
+            ):
+                observed = reader_deployment.check(docker, name="pilot", image=IMAGE, volume=VOLUME,
+                                                    database="db-conix", rpc="rpc-conix")
+            self.assertEqual(observed, result)
+            self.assertEqual(json.loads(terminal.getvalue()), result)
+            self.assertNotIn("PRIVATE_INSPECT_METADATA", terminal.getvalue())
+            self.assertEqual(effects, ["logs", "rm"])
+            self.assertFalse(present)
+
     def test_primary_reader_failure_survives_uncertain_owned_check_cleanup(self):
         docker = Mock()
         docker.docker_environment = {}

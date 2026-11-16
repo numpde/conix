@@ -74,7 +74,10 @@ def _candidates(docker, filter_):
 
 
 def _retire(docker, token, name, image, known_id):
+    from tools.containers.process_evidence import preserve_primary, retain_exit
+
     label_filter = "label=" + RUN_LABEL + "=" + token
+    facts = None
     candidates = _candidates(docker, label_filter)
     if known_id:
         exact = _candidates(docker, "id=" + known_id)
@@ -93,10 +96,20 @@ def _retire(docker, token, name, image, known_id):
                 docker.run("container", "stop", "--time", "5", container_id, capture=True, timeout=15)
             except OperationError:
                 pass  # The exact container still needs retirement.
-        docker.run("container", "rm", "--force", container_id, capture=True, timeout=20)
+        record = _record(docker, "container", container_id)
+        if not _owned(record, container_id, name, image, token):
+            raise OperationError("History worker ownership changed before evidence retention.")
+        facts = retain_exit(docker, record)
         known_id = container_id
-    if _candidates(docker, label_filter) or (known_id and _candidates(docker, "id=" + known_id)):
-        raise OperationError("The owned history worker is still present.")
+    try:
+        if candidates:
+            docker.run("container", "rm", known_id, capture=True, timeout=20)
+        if _candidates(docker, label_filter) or (known_id and _candidates(docker, "id=" + known_id)):
+            raise OperationError("The owned history worker is still present.")
+    except OperationError as error:
+        preserve_primary(error, facts, "History worker")
+        raise
+    return facts
 
 
 def _attached(docker, container_id, cancelled=lambda: False):
@@ -183,12 +196,13 @@ def _receipt(stdout):
 
 def _failure(stderr, exit_code):
     """Preserve reviewed worker cause/phase/effect without forwarding stderr."""
-    from tools.containers.diagnostics import explanation
+    from tools.containers.diagnostics import explanation, extract
 
     reason = explanation(stderr, exit_code, phases={"advance", "staged_inputs"})
     return OperationError(
         f"History advance failed: "
-        f"{reason or f'exit={exit_code}; effect=unconfirmed; no admitted diagnostic'}."
+        f"{reason or f'exit={exit_code}; effect=unconfirmed; no admitted diagnostic'}.",
+        exit_code=exit_code, diagnostic=extract(stderr) if reason is not None else None,
     )
 
 
@@ -281,13 +295,18 @@ def _advance_history(docker, *, image, volume, database, rpc, cancelled):
         failure = OperationError(f"History worker communication failed (errno={error.errno}). Inspect durable progress.")
     finally:
         try:
-            _retire(docker, token, name, image, known_id)
+            from tools.containers.process_evidence import preserve_primary
+
+            facts = _retire(docker, token, name, image, known_id)
+            failure = preserve_primary(failure, facts, "History worker")
         except OperationError as error:
             cleanup = OperationError(f"Cannot confirm retirement of {name} on {docker.endpoint}. {error}")
             if failure is None:
                 failure = cleanup
             else:
                 _notice(cleanup)
+                if failure.diagnostic is None and error.diagnostic is not None:
+                    failure.diagnostic = error.diagnostic
         if cancelled() and failure is None:
             failure = OperationError("History advance was interrupted during worker retirement.")
 

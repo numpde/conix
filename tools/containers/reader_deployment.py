@@ -100,19 +100,23 @@ def _check_candidates(docker, *, project, image, token):
     for identity in ids:
         if ENGINE_ID.fullmatch(identity) is None:
             raise OperationError("Reader check returned an incomplete owned-container identity.")
-        record = _record(docker, "container", identity)
-        labels = record.get("Config", {}).get("Labels", {})
-        if (
-            record.get("Id") != identity
-            or record.get("Config", {}).get("Image") != image
-            or type(labels) is not dict
-            or labels.get("com.docker.compose.project") != project
-            or labels.get("com.docker.compose.service") != "reader"
-            or labels.get("io.conix.reader-check") != token
-        ):
-            raise OperationError("Reader check container ownership is unconfirmed.")
+        _owned_check_record(docker, identity, project=project, image=image, token=token)
     return ids
 
+
+def _owned_check_record(docker, identity, *, project, image, token):
+    record = _record(docker, "container", identity)
+    labels = record.get("Config", {}).get("Labels", {})
+    if (
+        record.get("Id") != identity
+        or record.get("Config", {}).get("Image") != image
+        or type(labels) is not dict
+        or labels.get("com.docker.compose.project") != project
+        or labels.get("com.docker.compose.service") != "reader"
+        or labels.get("io.conix.reader-check") != token
+    ):
+        raise OperationError("Reader check container ownership is unconfirmed.")
+    return record
 
 def _run_reader(docker, arguments, environment):
     """Admit the Reader record; retain unknown Docker stderr privately for recovery."""
@@ -212,7 +216,7 @@ def check(docker, *, name, image, volume, database, rpc):
     primary = None
     try:
         output = _run_reader(
-            docker, compose + ["run", "--rm", "--no-deps", "--pull", "never",
+            docker, compose + ["run", "--no-deps", "--pull", "never",
                               "-T", "--name", project + "-check", "reader"],
             environment,
         )
@@ -238,7 +242,17 @@ def check(docker, *, name, image, volume, database, rpc):
         try:
             candidates = _check_candidates(docker, project=project, image=image, token=token)
             for identity in candidates:
-                docker.run("container", "rm", "--force", identity, timeout=30)
+                from tools.containers.process_evidence import preserve_primary, retain_exit
+
+                container_record = _owned_check_record(docker, identity, project=project, image=image, token=token)
+                if container_record.get("State", {}).get("Running") is True:
+                    docker.run("container", "stop", "--time", "25", identity, timeout=35)
+                    container_record = _owned_check_record(docker, identity, project=project, image=image, token=token)
+                facts = retain_exit(docker, container_record)
+                recovered = preserve_primary(primary, facts, "Reader check")
+                if primary is None and recovered is not None:
+                    primary = recovered
+                docker.run("container", "rm", identity, timeout=30)
             if _check_candidates(docker, project=project, image=image, token=token):
                 raise OperationError("Reader check container retirement is unconfirmed.")
         except BaseException as error:
@@ -248,6 +262,9 @@ def check(docker, *, name, image, volume, database, rpc):
                 f"Reader check cleanup is unconfirmed for owned project {project}.",
                 file=sys.stderr,
             )
+
+    if primary is not None:
+        raise primary
 
     # Report successful source/role admission only after owned check work is retired.
     print(json.dumps(record, sort_keys=True))

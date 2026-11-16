@@ -21,7 +21,8 @@ import traceback
 from tools.containers import named
 from tools.containers.client import OperationError, select_endpoint
 from tools.containers.deployment import _candidate_ids
-from tools.fixtures.process import CampaignError, cancellation, clean_environment, owned_command, progress
+from tools.containers.process_evidence import require_running
+from tools.fixtures.process import CampaignError, cancellation, clean_environment, owned_command, progress, retire_deployment, retirement_failure
 from tools.wheelhouse.operations import SharedWheelhouse
 
 
@@ -211,10 +212,10 @@ class DeploymentAcceptance:
         record = json.loads(self.docker.run("container", "inspect", "--format", "{{json .}}", identity, capture=True))
         prepared = named.inspect_prepared(NAME)
         self.require(prepared is not None and record["Id"] == identity
-                     and record["State"]["Running"]
                      and record["Image"] == prepared.image
                      and record["Config"]["Cmd"] == ["-I", "-m", "conix", "run"],
                      "The installed retained process exited or changed identity.")
+        require_running(self.docker, record, "Deployment acceptance Conix")
         return identity
 
     def await_height(self, height):
@@ -351,8 +352,7 @@ class DeploymentAcceptance:
         if not self.fixture_attempted:
             return failures
         try:
-            self.make("deployment/down")
-            self.require(not _candidate_ids(self.docker, "conix-" + NAME), "Named consumer retirement is unconfirmed.")
+            retire_deployment(self.make, self.docker, NAME, self.records)
         except BaseException as error:
             return ["named consumer retirement (" + type(error).__name__ + ")"]
         if self.reader_prepare_attempted:
@@ -423,6 +423,10 @@ def run_acceptance(options, *, client_cls, pinned_images):
             failures = campaign.cleanup()
         except BaseException as error:
             failures = ["acceptance cleanup (" + type(error).__name__ + ")"]
+        if primary is None:
+            primary = retirement_failure(campaign.records)
+            if primary is not None:
+                failed_phase = "consumer retirement"
         campaign.records.update(passed=primary is None and not failures, cleanup_errors=failures)
         report = evidence / "result.json"
         report.write_text(json.dumps(campaign.records, indent=2) + "\n")
@@ -436,7 +440,9 @@ def run_acceptance(options, *, client_cls, pinned_images):
             else:
                 frame = traceback.extract_tb(primary.__traceback__)[-1]
                 detail = f"{type(primary).__name__} at {Path(frame.filename).name}:{frame.lineno}"
-            raise OperationError(f"Deployment acceptance failed during {failed_phase}: {detail}. Evidence: {evidence}") from primary
+            raise OperationError(f"Deployment acceptance failed during {failed_phase}: {detail}. Evidence: {evidence}",
+                                 exit_code=getattr(primary, "exit_code", None),
+                                 diagnostic=getattr(primary, "diagnostic", None)) from primary
         if failures:
             raise OperationError(f"Deployment acceptance cleanup is unconfirmed. Evidence: {evidence}")
         progress(f"PASS: retained deployment acceptance; evidence: {report}")

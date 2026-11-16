@@ -20,6 +20,7 @@ import tempfile
 from pathlib import Path
 
 from tools.containers.client import CONTEXT_NAME, IMAGE_ID, OperationError, select_endpoint
+from tools.containers.diagnostics import error_record
 from tools.containers.operator import Docker, ROOT, pinned_images
 
 from tools.fixtures.process import CampaignError, clean_environment, owned_command, progress
@@ -88,8 +89,9 @@ def pin_sibling_context(docker, context_name):
                 timeout=15,
                 check=False,
             )
-        except (OSError, subprocess.TimeoutExpired):
-            raise CampaignError("Could not prepare the pinned sibling Docker client context.") from None
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise CampaignError("Could not prepare the pinned sibling Docker client context.",
+                                diagnostic=error_record(error)) from error
 
         if context_result.returncode:
             raise CampaignError(f"Pinned sibling Docker context {context_args[1]} failed (exit {context_result.returncode}).")
@@ -233,8 +235,8 @@ def read_borrowed_descriptor(descriptor_file):
             descriptor_bytes = os.read(descriptor_fd, 1048577)
         finally:
             os.close(descriptor_fd)
-    except OSError:
-        raise CampaignError("Cannot open the selected private fixture descriptor.") from None
+    except OSError as error:
+        raise CampaignError("Cannot open the selected private fixture descriptor.", diagnostic=error_record(error)) from error
 
     if len(descriptor_bytes) > 1048576:
         raise CampaignError("Private fixture descriptor exceeds its byte limit.")
@@ -682,11 +684,21 @@ def main():
                 if cleanup_failures:
                     failure_detail += " Cleanup is ALSO unconfirmed."
 
-                raise CampaignError(f"Generic acceptance campaign failed: {failure_detail}") from primary_failure
+                raise CampaignError(f"Generic acceptance campaign failed: {failure_detail}",
+                                    exit_code=getattr(primary_failure, "exit_code", None),
+                                    diagnostic=error_record(primary_failure)) from primary_failure
 
             raise CampaignError("Generic acceptance campaign completed but cleanup could not be confirmed.")
-    except (CampaignError, FixtureError, OperationError, OSError, ValueError) as error:
+    except (CampaignError, FixtureError, OperationError) as error:
+        print(error_record(error).decode("ascii"), file=sys.stderr)
         raise SystemExit(f"Conix generic acceptance refused or failed: {error}") from None
+    except (OSError, ValueError) as error:
+        from tools.containers.diagnostics import PHASES, explanation
+
+        diagnostic = error_record(error)
+        print(diagnostic.decode("ascii"), file=sys.stderr)
+        detail = explanation(diagnostic, None, phases=PHASES)
+        raise SystemExit("Conix generic acceptance failed: " + detail) from None
 
 
 if __name__ == "__main__":

@@ -23,8 +23,9 @@ from tools.containers import named
 from tools.containers.client import OperationError, select_endpoint
 from tools.containers.deployment import _candidate_ids
 from tools.containers.diagnostics import PHASES, error_record, explanation
+from tools.containers.process_evidence import failure, require_running, retain_exit
 from tools.fixtures.deployment import campaign_lock
-from tools.fixtures.process import cancellation, clean_environment, owned_command, progress
+from tools.fixtures.process import cancellation, clean_environment, owned_command, progress, retire_deployment, retirement_failure
 from tools.wheelhouse.operations import SharedWheelhouse
 
 ROOT = named.ROOT
@@ -243,7 +244,7 @@ class StressCapture:
                 and record["Config"]["Image"] == (self.runner if service in ("gateway", "observer") else self.images["postgres"]),
                 "Capture service changed immutable identity or owner.")
         if running:
-            require(record["State"]["Running"] is True, "Capture service exited during the observation window.")
+            require_running(self.docker, record, "Capture " + service)
         return ids[0], record
 
     def preflight(self):
@@ -408,7 +409,7 @@ class StressCapture:
                                            ids[0], capture=True))
         prepared = named.inspect_prepared(self.name)
         require(prepared is not None, "The original prepared Conix identity is unavailable.")
-        require(record["Id"] == ids[0] and record["State"]["Running"] is True
+        require(record["Id"] == ids[0]
                 and record["Image"] == prepared.image
                 and record["Config"]["Cmd"] == ["-I", "-m", "conix", "run"]
                 and record["Config"]["User"] == "65532:65532"
@@ -416,6 +417,7 @@ class StressCapture:
                 and set(record["NetworkSettings"]["Networks"]) == {
                     self.project + "_tests", self.project + "_rpc"},
                 "Original Conix process identity or grants changed.")
+        require_running(self.docker, record, "Retained Conix")
         return ids[0]
 
     @contextmanager
@@ -543,16 +545,15 @@ class StressCapture:
             require(time.monotonic() < retirement_deadline,
                     "Observer worker retirement remained unconfirmed.")
             time.sleep(0.1)
-        require(self.container("observer")[1]["State"]["ExitCode"] == 0,
-                "Independent observer exited without a clean archive/receipt.")
+        observer_record = self.container("observer")[1]
+        if observer_record["State"]["ExitCode"]:
+            raise failure(retain_exit(self.docker, observer_record), "Independent observer")
 
     def stop(self):
         """Retire the original process before closing either independent recorder."""
         self.phase = "retirement before export"
         if self.profile_created:
-            self.make("deployment/down")
-            require(not _candidate_ids(self.docker, "conix-" + self.name),
-                    "Original Conix retirement is unconfirmed.")
+            retire_deployment(self.make, self.docker, self.name, self.records)
         self.consumer_retired = True
         first_failure = None
         if self.fixture_attempted:
@@ -570,10 +571,10 @@ class StressCapture:
                     # partial archive must remain available for owned export.
                     self.retired.add(name)
                     self.records.setdefault("worker_exits", {})[name] = exit_code
+                    facts = retain_exit(self.docker, record)
+                    self.records.setdefault("worker_evidence", {})[name] = facts
                     if exit_code:
-                        first_failure = first_failure or OperationError(
-                            "Capture recorder " + name + " exited unsuccessfully."
-                        )
+                        first_failure = first_failure or failure(facts, "Capture recorder " + name)
                 except BaseException as error:
                     first_failure = first_failure or error
         if first_failure is not None:
@@ -756,9 +757,7 @@ class StressCapture:
             try:
                 if not self.consumer_retired:
                     if self.profile_created:
-                        self.make("deployment/down")
-                        require(not _candidate_ids(self.docker, "conix-" + self.name),
-                                "Original Conix still owns fixture dependencies.")
+                        retire_deployment(self.make, self.docker, self.name, self.records)
                     self.consumer_retired = True
                 for service in ("gateway", "observer"):
                     ids = self.docker.run(
@@ -772,6 +771,8 @@ class StressCapture:
                     identity, record = self.container(service)
                     if record["State"]["Running"]:
                         self.docker.run("container", "stop", "--time", "25", identity, timeout=35)
+                        identity, record = self.container(service)
+                    retain_exit(self.docker, record)
                 self.verify_fixture_ownership()
                 self.compose_run("down", "--remove-orphans", "--timeout", "30", timeout=90)
                 for name in ("pgdata", "application", "observer"):
@@ -914,6 +915,10 @@ def run_capture(options, *, client_cls, pinned_images):
                 failures = ["fixture: " + type(error).__name__]
                 if primary is None:
                     primary, failed_phase = error, "cleanup"
+            if primary is None:
+                primary = retirement_failure(capture.records)
+                if primary is not None:
+                    failed_phase = "consumer retirement"
             if primary is not None:
                 capture.records["capture"] = "partial"
                 capture.records["primary_failure"] = type(primary).__name__

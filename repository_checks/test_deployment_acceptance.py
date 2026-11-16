@@ -113,6 +113,7 @@ class DeploymentAcceptanceContracts(unittest.TestCase):
             campaign = self.campaign(Path(directory))
             campaign.fixture_attempted = campaign.prepare_attempted = True
             campaign.make = Mock(side_effect=OperationError("Consumer retirement was not confirmed."))
+            campaign.docker.run.return_value = "a" * 64 + "\n"
             campaign.child = Mock()
             failures = campaign.cleanup()
             self.assertEqual(len(failures), 1)
