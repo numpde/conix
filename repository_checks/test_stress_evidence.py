@@ -14,7 +14,7 @@ from tools.containers.client import OperationError
 from tools.fixtures.process import CampaignError
 from tools.fixtures.stress_evidence import Completion, OWNER, bundle_inputs, run_completion
 from tools.containers.diagnostics import PREFIX, admitted
-from tools.fixtures.stress_capture import json_record
+from tools.fixtures.stress_capture import SOURCE_FILE, json_record
 from tools.fixtures.stress_protocol import BUNDLE_INPUTS
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -151,8 +151,7 @@ class StressEvidenceContracts(unittest.TestCase):
             self.assertTrue(docker.removed)
             self.assertFalse(owner.records["cleanup"])
 
-    def test_receipt_publication_failure_cannot_replace_the_original_producer_failure(self):
-        """Disk failure after cleanup stays secondary to the admitted child error."""
+    def assert_primary_survives_publication(self, stage):
         diagnostic = PREFIX + b'{"phase":"verification","cause":"RpcUnavailable","effect":"unconfirmed"}'
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -161,8 +160,12 @@ class StressEvidenceContracts(unittest.TestCase):
                 member = tarfile.TarInfo("catalog.toml")
                 member.size = 1
                 bundle.addfile(member, io.BytesIO(b"x"))
+                member = tarfile.TarInfo("source.json")
+                source = SOURCE_FILE.read_bytes()
+                member.size = len(source)
+                bundle.addfile(member, io.BytesIO(source))
             options = SimpleNamespace(stress_completion_seconds="60", stress_exchanges="4096",
-                                      stress_archive_bytes="1048576", capture_dir="retained", context="agentic", runner_image=IMAGE)
+                                      stress_archive_bytes="1048576", capture_dir="out/customer-EXAMPLEONLY-key/legacy-id", context="agentic", runner_image=IMAGE)
             docker = SimpleNamespace(require_rootless_engine=lambda: None, require_role=lambda *args: None)
             primary = CampaignError("Original producer failure.", exit_code=7, diagnostic=diagnostic)
             def fail_worker(*args):
@@ -170,7 +173,7 @@ class StressEvidenceContracts(unittest.TestCase):
             owner = SimpleNamespace(records={"status": "unavailable", "cleanup": {}},
                                     worker=fail_worker, cleanup=lambda: None)
             def publication(path, record):
-                if path.name == "admission.json":
+                if stage == "admission" and path.name == "admission.json":
                     raise PermissionError("EXAMPLEONLY private publication path")
                 json_record(path, record)
             with patch("tools.fixtures.stress_evidence.ROOT", root), \
@@ -178,6 +181,7 @@ class StressEvidenceContracts(unittest.TestCase):
                  patch("tools.fixtures.stress_evidence.select_endpoint", return_value="selected"), \
                  patch("tools.fixtures.stress_evidence.Completion", return_value=owner), \
                  patch("tools.fixtures.stress_evidence.json_record", side_effect=publication), \
+                 patch("tools.fixtures.stress_evidence.publish_report", side_effect=PermissionError("EXAMPLEONLY private report path")), \
                  patch("tools.fixtures.stress_evidence.progress") as report:
                 with self.assertRaises(OperationError) as caught:
                     run_completion(options, client_cls=lambda *args: docker)
@@ -189,6 +193,14 @@ class StressEvidenceContracts(unittest.TestCase):
             output = "\n".join(call.args[0] for call in report.call_args_list)
             self.assertIn("publication failed", output)
             self.assertNotIn("EXAMPLEONLY", output)
+
+    def test_receipt_publication_failure_cannot_replace_the_original_producer_failure(self):
+        """Disk failure after cleanup stays secondary to the admitted child error."""
+        self.assert_primary_survives_publication("admission")
+
+    def test_public_review_failure_cannot_replace_the_original_producer_failure(self):
+        """Publishing a summary has no authority to overwrite the first failure."""
+        self.assert_primary_survives_publication("review")
 
 
 if __name__ == "__main__":

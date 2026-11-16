@@ -347,6 +347,7 @@ class CaptureFailureReportingContracts(unittest.TestCase):
                 patch.object(stress_capture, "cancellation", return_value=nullcontext()),
                 patch.object(stress_capture, "select_endpoint", return_value="unix:///selected"),
                 patch.object(stress_capture, "StressCapture", return_value=run),
+                patch.object(stress_capture, "publish_report", return_value=base / "qualification/report.json"),
                 patch.object(stress_capture, "progress", side_effect=shown.append),
             ):
                 with self.assertRaises(OperationError) as caught:

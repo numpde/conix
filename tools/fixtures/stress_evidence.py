@@ -23,8 +23,9 @@ from tools.containers.diagnostics import PHASES, error_record, explanation
 from tools.containers.process_evidence import failure, retain_attached_exit
 from tools.fixtures.deployment import campaign_lock
 from tools.fixtures.process import CampaignError, cancellation, owned_command, progress
-from tools.fixtures.stress_capture import check_file, json_record, put_private, require
+from tools.fixtures.stress_capture import SOURCE_FILE, check_file, json_record, put_private, require
 from tools.fixtures.stress_protocol import CAPTURE_INPUTS, RECEIPT
+from tools.fixtures.stress_artifacts import PRIVATE_RUNS, allocate_run, publish_report, source_subject
 
 ROOT = named.ROOT
 OWNER = "io.conix.stress-evidence-owner"
@@ -256,7 +257,10 @@ def run_completion(options, *, client_cls):
         (payload, hashes) = bundle_inputs(options.capture_dir)
     except (ValueError, KeyError, TypeError) as error:
         raise OperationError("Retained capture selection is malformed; no acquisition was started.", diagnostic=error_record(error)) from error
-    root = ROOT / "out/rpc-evidence"
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r") as bundle:
+        source = json.loads(bundle.extractfile("source.json").read(65537))
+    subject = source_subject(source, SOURCE_FILE)
+    root = ROOT / PRIVATE_RUNS
     with campaign_lock(root), cancellation(), tempfile.TemporaryDirectory(prefix="conix-evidence-client-") as temporary:
         config = Path(temporary)
         put_private(config / "config.json", b'{"auths":{},"proxies":{}}\n')
@@ -264,8 +268,7 @@ def run_completion(options, *, client_cls):
         docker.require_rootless_engine()
         docker.require_role(options.runner_image, "test-runner")
         owner = secrets.token_hex(12)
-        folder = root / owner
-        folder.mkdir(mode=0o700)
+        folder = allocate_run(ROOT, subject, "evidence-completion")
         with tarfile.open(fileobj=io.BytesIO(payload), mode="r") as bundle:
             projected = bundle.extractfile("catalog.toml").read(65537)
         require(len(projected) <= 65536, "Projected catalog exceeds its transport byte grant.")
@@ -310,13 +313,27 @@ def run_completion(options, *, client_cls):
             publication_failure = error
             if primary is None:
                 primary = error
+        report = None
+        report_failure = None
+        if published:
+            try:
+                report = publish_report(ROOT, folder, completion.records)
+            except BaseException as error:
+                report_failure = error
+                if primary is None:
+                    primary = error
         try:
             if publication_failure is not None:
                 detail = explanation(error_record(publication_failure), None, phases=PHASES)
                 progress("Evidence admission publication failed: " + detail)
+            if report_failure is not None:
+                detail = explanation(error_record(report_failure), None, phases=PHASES)
+                progress("Review report publication failed: " + detail)
             receipt = folder / ("admission.json" if published else "operation.json")
             status = completion.records["status"] if published else "unavailable"
             progress("Stress evidence " + status + "; private receipt: " + str(receipt))
+            if report is not None:
+                progress("Review report: " + str(report.relative_to(ROOT)))
             for (resource, outcome) in completion.records["cleanup"].items():
                 detail = explanation(outcome["diagnostic"].encode("ascii"), outcome["exit_code"], phases=PHASES)
                 progress("Completion " + resource + " cleanup is unconfirmed: " + detail)

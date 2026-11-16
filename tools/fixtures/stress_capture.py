@@ -26,6 +26,7 @@ from tools.containers.diagnostics import PHASES, error_record, explanation
 from tools.containers.process_evidence import failure, require_running, retain_exit
 from tools.fixtures.deployment import campaign_lock
 from tools.fixtures.process import cancellation, clean_environment, owned_command, progress, retire_deployment, retirement_failure
+from tools.fixtures.stress_artifacts import PRIVATE_RUNS, allocate_run, publish_report, source_subject
 from tools.wheelhouse.operations import SharedWheelhouse
 
 ROOT = named.ROOT
@@ -155,10 +156,9 @@ class StressCapture:
         self.owner = secrets.token_hex(12)
         self.name = "stress-" + self.owner
         self.project = "conix-stress-" + self.owner
-        self.folder = root / self.owner
-        self.folder.mkdir(mode=0o700)
-        self.profile_dir = ROOT / "config/deployments" / self.name
         self.source, self.profile, self.source_raw, self.abi = selected_source()
+        self.folder = allocate_run(root, source_subject(self.source, SOURCE_FILE), "capture")
+        self.profile_dir = ROOT / "config/deployments" / self.name
         self.environment = docker.docker_environment.copy()
         self.environment.update({
             "CONIX_STRESS_OWNER": self.owner,
@@ -850,7 +850,7 @@ def run_capture(options, *, client_cls, pinned_images):
             "Use the reviewed Fuji profile's selected Docker Engine.")
     require(not options.wheelhouse or options.wheelhouse == profile["wheelhouse"],
             "Use the reviewed Fuji profile's selected wheelhouse.")
-    root = ROOT / "out/rpc-recordings"
+    root = ROOT / PRIVATE_RUNS
     with campaign_lock(root), cancellation():
         endpoint = select_endpoint(profile["docker_context"], "command line", working_dir=ROOT)
         import tempfile
@@ -859,7 +859,7 @@ def run_capture(options, *, client_cls, pinned_images):
             put_private(config / "config.json", b'{"auths":{},"proxies":{}}\n')
             docker = client_cls(endpoint, config)
             docker.require_rootless_engine()
-            capture = StressCapture(docker, pinned_images(), options, root, selection)
+            capture = StressCapture(docker, pinned_images(), options, ROOT, selection)
             primary = None
             failed_phase = None
             try:
@@ -925,11 +925,25 @@ def run_capture(options, *, client_cls, pinned_images):
                 capture.records["failed_phase"] = failed_phase or capture.phase
             if failures:
                 capture.records["cleanup"] = failures
+            receipt_published = False
             try:
                 json_record(capture.folder / "manifest.json", capture.records)
+                receipt_published = True
             except BaseException as error:
                 if primary is None:
                     primary, failed_phase = error, "manifest publication"
+            report = None
+            if receipt_published:
+                try:
+                    report = publish_report(ROOT, capture.folder, capture.records)
+                except BaseException as error:
+                    if primary is None:
+                        primary, failed_phase = error, "review report publication"
+                    else:
+                        try:
+                            progress("Review report publication failed: " + _primary_summary(error, "review report publication"))
+                        except OSError:
+                            pass
 
             # Report status and cleanup uncertainty separately. The final
             # diagnostic describes the *first* primary failure, even if
@@ -937,6 +951,8 @@ def run_capture(options, *, client_cls, pinned_images):
             try:
                 progress("Stress capture " + capture.records["capture"] +
                          "; private receipt: " + str(capture.folder / "manifest.json"))
+                if report is not None:
+                    progress("Review report: " + str(report.relative_to(ROOT)))
             except OSError:
                 pass
             for failure in failures:
